@@ -275,6 +275,34 @@ final class PinyinEngine {
             }
         }
 
+        // 1.6) 短输入（1~2 字母）的「最常用补全」：词库构建时按真实词频预排好的。
+        //      键 = 输入 + \u{7f}，绕开前缀扫描的字母序偏差（打 n 该出「你 年 那」，不是 na 开头的冷词）
+        if input.count <= 2 {
+            if let ai = exactIndex(input + "\u{7f}") {
+                for (i, w) in candidatesAt(ai).enumerated() {
+                    let s = 940_000 - i * 150
+                    if let old = scored[w], old.score >= s { continue }
+                    scored[w] = (s, input.count)
+                }
+            }
+        }
+
+        // 1.7) 简拼 / 混拼：把输入切成「完整音节 + 单字母首字母」的所有组合，
+        //      折算成首字母缩写再去缩写表取词。一次覆盖三种打法：
+        //        全拼 nihao      → 精确键命中（上面 1) 已覆盖）
+        //        简拼 nh / bjdx  → 缩写键命中
+        //        混拼 zme / zenm / nhao → 切出来的缩写仍是 zm / nh
+        if input.count >= 2 && input.count <= 16 {
+            for ini in initialKeys(input) {
+                guard let ai = exactIndex("\u{7f}" + ini) else { continue }
+                for (i, w) in candidatesAt(ai).enumerated() {
+                    let s = 560_000 - i * 400
+                    if let old = scored[w], old.score >= s { continue }
+                    scored[w] = (s, input.count)
+                }
+            }
+        }
+
         // 2) 词格切分（长句靠它）
         if input.count <= 32 {
             for (phrase, sc, used) in lattice(Array(input)) {
@@ -285,6 +313,38 @@ final class PinyinEngine {
         }
 
         return finish(&scored, literal: input)
+    }
+
+    /// 把输入串切成「完整音节」或「单字母首字母」的所有组合，
+    /// 返回每种组合折算出的首字母缩写（简拼 / 混拼查词用）。
+    /// 例：zme -> [zm, zme]；zenm -> [zm, ...]；bjdx -> [bjdx]
+    private func initialKeys(_ input: String) -> [String] {
+        let chars = Array(input)
+        let n = chars.count
+        var memo = [Int: Set<String>]()
+
+        func go(_ start: Int) -> Set<String> {
+            if let m = memo[start] { return m }
+            if start >= n { memo[start] = [""]; return [""] }
+            var out = Set<String>()
+            // 取一个完整音节
+            let maxLen = min(6, n - start)
+            var len = 2
+            while len <= maxLen {
+                let sub = String(chars[start..<(start + len)])
+                if syllableSet.contains(sub), let first = sub.first {
+                    for tail in go(start + len) { out.insert(String(first) + tail) }
+                }
+                len += 1
+            }
+            // 单字母当首字母（简拼靠这条）
+            for tail in go(start + 1) { out.insert(String(chars[start]) + tail) }
+            if out.count > 24 { out = Set(out.sorted().prefix(24)) }
+            memo[start] = out
+            return out
+        }
+
+        return go(0).filter { $0.count >= 2 && $0.count <= 8 }
     }
 
     // MARK: - 9 键

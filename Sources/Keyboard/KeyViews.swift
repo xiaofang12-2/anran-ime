@@ -1,24 +1,29 @@
 import SwiftUI
 import UIKit
+import AudioToolbox
 
-/// 触感反馈：字母轻震、功能键重一点
-enum Haptics {
-    private static let light = UIImpactFeedbackGenerator(style: .light)
-    private static let medium = UIImpactFeedbackGenerator(style: .medium)
-
-    static func tap() { light.impactOccurred() }
-    static func bump() { medium.impactOccurred() }
-}
-
-/// 按键音（对标系统键盘，默认开）
+/// 按键音：加载键盘自带的「扣字」音效（click.wav），默认开。
+/// 走 AudioServices 播系统音，不占音频会话，键盘扩展里最稳。
 enum KeySound {
+    private static var soundID: SystemSoundID = 0
+
     static var enabled: Bool {
         get { UserDefaults.standard.object(forKey: "anran_kb_sound") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "anran_kb_sound") }
     }
 
     static func play() {
-        if enabled { UIDevice.current.playInputClick() }
+        guard enabled else { return }
+        if soundID == 0 {
+            guard let url = Bundle.main.url(forResource: "click", withExtension: "wav") else {
+                UIDevice.current.playInputClick()
+                return
+            }
+            var sid: SystemSoundID = 0
+            AudioServicesCreateSystemSoundID(url as CFURL, &sid)
+            soundID = sid
+        }
+        AudioServicesPlaySystemSound(soundID)
     }
 }
 
@@ -59,13 +64,11 @@ struct KeyCap: View {
                     if consumed { return }
                     if !pressed {
                         pressed = true
-                        Haptics.tap()
                         KeySound.play()
                     }
                     if let s = spec.swipe, v.translation.height < -28 {
                         consumed = true
                         pressed = false
-                        Haptics.bump()
                         onSwipe?(s)
                     }
                 }
@@ -129,13 +132,11 @@ struct RepeatKey: View {
                     if v.translation.height < -40 {
                         consumed = true
                         stop()
-                        Haptics.bump()
                         onSwipeUp?()
                         return
                     }
                     if !pressed {
                         pressed = true
-                        Haptics.tap()
                         KeySound.play()
                         onFire()
                         start()
@@ -189,14 +190,12 @@ struct SpaceKey: View {
                     if consumed { return }
                     if !pressed {
                         pressed = true
-                        Haptics.tap()
                         KeySound.play()
                     }
                     if abs(v.translation.width) > 24 {
                         consumed = true
                         let steps = Int(v.translation.width / 24)
                         if steps != 0 {
-                            Haptics.bump()
                             onMove(steps)
                         }
                     }
@@ -303,7 +302,6 @@ struct CandidateBar: View {
                                 .contentShape(Rectangle())
                                 .onTapGesture { onPick(shown[i]) }
                                 .onLongPressGesture(minimumDuration: 0.45) {
-                                    Haptics.bump()
                                     onForget(shown[i].word)
                                 }
                             if i < shown.count - 1 { divider }

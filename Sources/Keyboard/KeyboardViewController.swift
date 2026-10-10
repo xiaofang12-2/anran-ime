@@ -62,23 +62,15 @@ final class KeyboardViewController: UIInputViewController {
         textDocumentProxy.adjustTextPosition(byCharacterOffset: delta)
     }
 
-    /// 拼音串落到输入框里做占位（marked text），选字时被替换掉
+    /// 拼音串只在键盘自己的候选栏里显示，不往宿主输入框里写占位文本。
+    /// （用户明确要求：字母待在输入法内，平台输入框里只落最终汉字）
     func setComposing(_ text: String) {
-        if text.isEmpty {
-            textDocumentProxy.unmarkText()
-        } else {
-            textDocumentProxy.setMarkedText(
-                text,
-                selectedRange: NSRange(location: text.utf16.count, length: 0))
-        }
+        _ = text
     }
 
-    /// 上屏一个词：把占位文本换成它再解除占位
+    /// 上屏一个词：直接插进宿主输入框
     func commit(_ text: String) {
-        textDocumentProxy.setMarkedText(
-            text,
-            selectedRange: NSRange(location: text.utf16.count, length: 0))
-        textDocumentProxy.unmarkText()
+        textDocumentProxy.insertText(text)
     }
 
     override func viewWillAppear(_ animated: Bool) {
