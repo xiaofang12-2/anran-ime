@@ -1,24 +1,29 @@
 import SwiftUI
 import UIKit
+import AudioToolbox
 
-/// 触感反馈：字母轻震、功能键重一点
-enum Haptics {
-    private static let light = UIImpactFeedbackGenerator(style: .light)
-    private static let medium = UIImpactFeedbackGenerator(style: .medium)
-
-    static func tap() { light.impactOccurred() }
-    static func bump() { medium.impactOccurred() }
-}
-
-/// 按键音（对标系统键盘，默认开）
+/// 按键音：加载键盘自带的「扣字」音效（click.wav），默认开。
+/// 走 AudioServices 播系统音，不占音频会话，键盘扩展里最稳。
 enum KeySound {
+    private static var soundID: SystemSoundID = 0
+
     static var enabled: Bool {
         get { UserDefaults.standard.object(forKey: "anran_kb_sound") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "anran_kb_sound") }
     }
 
     static func play() {
-        if enabled { UIDevice.current.playInputClick() }
+        guard enabled else { return }
+        if soundID == 0 {
+            guard let url = Bundle.main.url(forResource: "click", withExtension: "wav") else {
+                UIDevice.current.playInputClick()
+                return
+            }
+            var sid: SystemSoundID = 0
+            AudioServicesCreateSystemSoundID(url as CFURL, &sid)
+            soundID = sid
+        }
+        AudioServicesPlaySystemSound(soundID)
     }
 }
 
@@ -59,13 +64,11 @@ struct KeyCap: View {
                     if consumed { return }
                     if !pressed {
                         pressed = true
-                        Haptics.tap()
                         KeySound.play()
                     }
                     if let s = spec.swipe, v.translation.height < -28 {
                         consumed = true
                         pressed = false
-                        Haptics.bump()
                         onSwipe?(s)
                     }
                 }
@@ -129,13 +132,11 @@ struct RepeatKey: View {
                     if v.translation.height < -40 {
                         consumed = true
                         stop()
-                        Haptics.bump()
                         onSwipeUp?()
                         return
                     }
                     if !pressed {
                         pressed = true
-                        Haptics.tap()
                         KeySound.play()
                         onFire()
                         start()
@@ -189,14 +190,12 @@ struct SpaceKey: View {
                     if consumed { return }
                     if !pressed {
                         pressed = true
-                        Haptics.tap()
                         KeySound.play()
                     }
                     if abs(v.translation.width) > 24 {
                         consumed = true
                         let steps = Int(v.translation.width / 24)
                         if steps != 0 {
-                            Haptics.bump()
                             onMove(steps)
                         }
                     }
@@ -248,22 +247,36 @@ struct KeyRow: View {
     }
 }
 
-/// 候选栏：拼音串/「联想」在左，候选往后排，首个候选加重
+/// 候选栏：左头是 26/9 键切换，拼音串（或「联想」）挨着它，候选往后排，首个候选加重。
+/// 长按某个候选 = 把它从用户词频里抹掉（自己纠错，对标百度的「删除记忆」）。
 struct CandidateBar: View {
     let composing: String
     let candidates: [PinyinCandidate]
-    let onPick: (String) -> Void
+    let mode: KBMode
+    let onPick: (PinyinCandidate) -> Void
+    let onToggleMode: () -> Void
+    let onForget: (String) -> Void
 
-    private var shown: [PinyinCandidate] { Array(candidates.prefix(30)) }
+    private var shown: [PinyinCandidate] { Array(candidates.prefix(40)) }
 
     var body: some View {
-        Group {
+        HStack(spacing: 0) {
+            Text(mode == .qwerty ? "9键" : "26键")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Color(red: 0.28, green: 0.31, blue: 0.38))
+                .frame(width: 46)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { onToggleMode() }
+
+            divider
+
             if shown.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "text.book.closed")
                         .font(.system(size: 15))
                         .foregroundColor(.secondary)
-                    Text("思想库（阶段 2 接上）")
+                    Text("思想库")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -278,20 +291,20 @@ struct CandidateBar: View {
                             .padding(.horizontal, 10)
                         divider
                         ForEach(shown.indices, id: \.self) { i in
-                            Button(action: { onPick(shown[i].word) }) {
-                                HStack(spacing: 0) {
-                                    Text(shown[i].word)
-                                        .font(.system(size: i == 0 ? 21 : 19,
-                                                      weight: i == 0 ? .semibold : .regular))
-                                        .foregroundColor(shown[i].literal
-                                                         ? Color(red: 0.34, green: 0.38, blue: 0.46)
-                                                         : .black)
-                                        .padding(.horizontal, 10)
-                                    if i < shown.count - 1 { divider }
-                                }
+                            Text(shown[i].word)
+                                .font(.system(size: i == 0 ? 22 : 19,
+                                              weight: i == 0 ? .semibold : .regular))
+                                .foregroundColor(shown[i].literal
+                                                 ? Color(red: 0.34, green: 0.38, blue: 0.46)
+                                                 : .black)
+                                .padding(.horizontal, 11)
                                 .frame(height: KBMetrics.barHeight)
-                            }
-                            .buttonStyle(.plain)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onPick(shown[i]) }
+                                .onLongPressGesture(minimumDuration: 0.45) {
+                                    onForget(shown[i].word)
+                                }
+                            if i < shown.count - 1 { divider }
                         }
                     }
                 }
