@@ -14,6 +14,10 @@ struct SetupView: View {
     @State private var message = ""
     @State private var messageBad = false
 
+    /// 键盘功能栏点图标/长按跳过来时，程序化推对应设置页
+    @State private var goPhrases = false
+    @State private var goThoughts = false
+
     var body: some View {
         NavigationView {
             List {
@@ -27,6 +31,13 @@ struct SetupView: View {
         }
         .navigationViewStyle(.stack)
         .onAppear(perform: refresh)
+        .onOpenURL { url in
+            switch url.host {
+            case "phrases": goPhrases = true
+            case "thoughts": goThoughts = true
+            default: break
+            }
+        }
     }
 
     // MARK: - 账号
@@ -73,7 +84,8 @@ struct SetupView: View {
         Section("设置") {
             NavigationLink("输入设置") { SettingsView() }
             NavigationLink("键盘布局") { LayoutSettingsView() }
-            NavigationLink("自定义短语") { PhraseSettingsView() }
+            NavigationLink("自定义短语", isActive: $goPhrases) { PhraseSettingsView() }
+            NavigationLink("思想库", isActive: $goThoughts) { ThoughtSettingsView() }
         }
     }
 

@@ -181,31 +181,97 @@ def fuzzy_variants(s):
     return out
 
 
+# ---------------------------------------------------------------- 纠错
+# 相邻键表（QWERTY 26 键，含斜邻）。快打时按错旁边一个键是最常见的错。
+ADJ = {
+    "q": "wa", "w": "qeas", "e": "wrsd", "r": "etdf", "t": "ryfg",
+    "y": "tugh", "u": "yihj", "i": "uojk", "o": "ipkl", "p": "ol",
+    "a": "qwsz", "s": "awedxz", "d": "serfcx", "f": "drtgvc", "g": "ftyhbv",
+    "h": "gyujnb", "j": "huikmn", "k": "jiolm", "l": "kop",
+    "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb", "b": "vghn",
+    "n": "bhjm", "m": "njk",
+}
+
+# 音近混淆（平翘舌 / 前后鼻音）。只放「多字母、替换不会误伤」的，
+# 单字母 n/l、f/h 单独按首字母处理，免得把 an 替成 al。
+CONFUSE_STR = [("zh", "z"), ("ch", "c"), ("sh", "s"),
+               ("ang", "an"), ("eng", "en"), ("ing", "in"),
+               ("iang", "ian"), ("uang", "uan")]
+
+CORR_PEN = 1.6           # 每个纠错音节的罚分（保证打对的永远压过猜出来的）
+CORR_MAX_FIX = 2         # 一条路径最多纠错几个音节
+CORR_MAX_INPUT = 24      # 超过这个长度不做纠错（长句打错就重打吧）
+FB_PEN = 3.0             # 单字母兜底罚分（比纠错更重，只保证「有汉字」，不抢正常候选）
+# 音节起头的 u / i / ü 的规范写法：词库里没有 u/i/v 开头的拼音键，
+# 乌=wu、一=yi、鱼=yu。乱按到这几个字母时按规范拼写再查一次。
+LEAD = {"u": "wu", "i": "yi", "v": "yu"}
+
+
 class Engine:
     def __init__(self, d, lm=None):
         self.d = d
         self.lm = lm if lm is not None else LM(BIN_LM)
 
+    # ---------------------------------------------------------- 纠错
+    def _fix_syllable(self, sub):
+        """把一个「打错的音节」还原成合法音节；还原不了返回 None。
+
+        三种错法：① 按错相邻键（hao→hap）② 音近混淆（zhi→zi）
+        ③ 相邻字母打颠倒（jian→jain）。都是快打时最常见的。
+        """
+        syls = self.d.syls
+        # ① 相邻键替换
+        for i, c in enumerate(sub):
+            for alt in ADJ.get(c, ""):
+                cand = sub[:i] + alt + sub[i + 1:]
+                if cand in syls:
+                    return cand
+        # ② 音近替换（两个方向）
+        for a, b in CONFUSE_STR:
+            if a in sub:
+                cand = sub.replace(a, b, 1)
+                if cand in syls:
+                    return cand
+            if b in sub:
+                cand = sub.replace(b, a, 1)
+                if cand in syls:
+                    return cand
+        # ③ 相邻字母颠倒
+        for i in range(len(sub) - 1):
+            cand = sub[:i] + sub[i + 1] + sub[i] + sub[i + 2:]
+            if cand in syls:
+                return cand
+        return None
+
     # ---------------------------------------------------------- 词图边
-    def _full_edges(self, inp, i):
-        """从 i 出发，所有「整词匹配」的边 (j, 词, logP)。"""
+    def _full_edges(self, inp, i, allow_fix=False):
+        """从 i 出发，所有「整词匹配」的边 (j, 词, logP)。
+
+        allow_fix 打开时，切不出合法音节的地方允许「纠错还原」成一个合法音节，
+        罚 CORR_PEN 分 —— 这就是输入法「打错了也能出对词」的那条纠错边。
+        纠错后的音节参与正常查词与打分，所以纠错词能和打对的词在同一把尺子上比。
+        """
         out = []
         n = len(inp)
 
-        def dfs(pos, acc):
+        def dfs(pos, acc, pen, nfix):
             if acc:
                 idx = self.d.exact(acc)
                 if idx is not None:
                     for w, lp in self.d.vals(idx):
-                        out.append((pos, w, lp))
+                        out.append((pos, w, lp - pen))
             if pos >= n:
                 return
             for L in range(1, min(6, n - pos) + 1):
                 sub = inp[pos:pos + L]
                 if sub in self.d.syls:
-                    dfs(pos + L, acc + sub)
+                    dfs(pos + L, acc + sub, pen, nfix)
+                elif allow_fix and nfix < CORR_MAX_FIX and L >= 2:
+                    fix = self._fix_syllable(sub)
+                    if fix is not None:
+                        dfs(pos + L, acc + fix, pen + CORR_PEN, nfix + 1)
 
-        dfs(i, "")
+        dfs(i, "", 0.0, 0)
         return out
 
     def _abbr_edges(self, inp):
@@ -238,10 +304,12 @@ class Engine:
         n = len(inp)
         if n == 0:
             return []
-        edges = [self._full_edges(inp, i) for i in range(n)]
+        # 整串切不成合法音节 = 大概率打错了，这时才开纠错边（省得每次敲键都白算）
+        fix = not self._splits(inp)
+        edges = [self._full_edges(inp, i, fix) for i in range(n)]
         # 缩写/混拼只在「整串切不成完整音节」时才算候选：
         # 否则 gun 会被读成 g(gu)+n，缩写表里 g n 一抓一大把（国内/功能/概念…）把 滚 挤下去。
-        if n >= 2 and not self._splits(inp):
+        if n >= 2 and fix:
             edges[0] = edges[0] + self._abbr_edges(inp)
         states = [[] for _ in range(n + 1)]
         states[0] = [(0.0, ())]
@@ -279,6 +347,29 @@ class Engine:
             scanned += 1
         return out
 
+    def _fallback(self, inp):
+        """最后一层兜底：任何字母串都必须出汉字，绝不让面板只剩英文。
+
+        做法是「退到最长能出字的前缀」：从长到短砍尾巴，哪一段前缀能查出
+        候选就用它顶上。打 qwert 这种切不成合法音节的乱码时，一路退到 q，
+        出 去/请/钱/起…，至少是汉字，而不是光秃秃一串 qwert。
+        罚 FB_PEN×被砍掉的长度，保证它永远排在正常候选后面。
+        """
+        n = len(inp)
+        for L in range(n, 0, -1):
+            pre = inp[:L]
+            tries = [pre]
+            if pre[0] in LEAD:
+                tries.append(LEAD[pre[0]] + pre[1:])
+            if "v" in pre:
+                tries.append(pre.replace("v", "u"))
+            for cand in tries:
+                got = self.prefix_words(cand)
+                if got:
+                    d = FB_PEN * (n - L)
+                    return [(w, lp - d) for w, lp in got]
+        return []
+
     def candidates(self, raw, limit=24):
         inp = "".join(c for c in raw.lower() if "a" <= c <= "z")
         if not inp:
@@ -303,6 +394,10 @@ class Engine:
             # nb/sb/tm/wx/nh 这类两字母缩写切不成音节，走缩写表（牛逼/傻逼/微信…）
             if not self._splits(inp):
                 for j, w, lp in self._abbr_edges(inp):
+                    put(w, n, lp)
+            # 单字母 u/i/v、两字母乱码（ik/ul/vz）这些也必须有汉字
+            if not cands:
+                for w, lp in self._fallback(inp):
                     put(w, n, lp)
             return self._rank(cands, inp, limit)
 
@@ -341,6 +436,14 @@ class Engine:
                 for w, lp in self.prefix_words(variant):
                     put(w, n, lp - 1.0 * vi)
 
+        # 6) 终极兜底：查完还是没汉字（乱按 qwert/zxcvb 这种），退到最长能出字的
+        #    前缀顶上。任何字母串都必须有汉字候选，绝不让面板只剩英文。
+        if not cands:
+            for w, lp in self._fallback(inp):
+                put(w, n, lp)
+
+        # 纠错已经在词图里做了（_full_edges 的纠错边），这里不再兜一层。
+
         return self._rank(cands, inp, limit)
 
     def _rank(self, cands, inp, limit):
@@ -375,14 +478,56 @@ class Engine:
         return True
 
 
+def fuzz(eng, n=3000):
+    """随机乱按，验证「任何字母串都至少有一个汉字候选」这条硬保证。
+
+    这条不变量是键盘手感的地基：用户随手按几个键，面板里必须出现汉字，
+    绝不能只剩一串英文字母 —— 那正是用户反复吐槽的老毛病。
+
+    1 字母、2 字母穷举（26 + 676 个全测，这两档最容易露底），
+    3~8 字母随机抽 n 条。
+    """
+    import random
+
+    def has_han(s):
+        res = eng.candidates(s)
+        return any(any("\u4e00" <= c <= "\u9fff" for c in w) for w, _, _ in res)
+
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    bad = []
+    for a in letters:
+        if not has_han(a):
+            bad.append(a)
+        for b in letters:
+            s = a + b
+            if not has_han(s):
+                bad.append(s)
+
+    random.seed(20261011)
+    for _ in range(n):
+        L = random.randint(3, 8)
+        s = "".join(random.choice(letters) for _ in range(L))
+        if not has_han(s):
+            bad.append(s)
+
+    total = 26 + 676 + n
+    print(f"覆盖 {total} 条（1~2 字母穷举 + {n} 条随机长串），无汉字候选 {len(bad)} 条")
+    if bad:
+        print("样例:", bad[:30])
+    return bad
+
+
 def main():
     d = Dict(BIN)
     eng = Engine(d)
     print("词条数:", d.n, "音节数:", d.syl_n, "版本:", d.ver,
           "语言模型首字数:", len(eng.lm.tab))
+    if "--fuzz" in sys.argv:
+        fuzz(eng)
+        return
     # 少量代表输入：常用词 / 缩写 / 多词成句各取几条，够看排序就行，
     # 不搞「把每个键都试一遍」的穷举 —— 引擎对不对由架构保证，不由用例堆。
-    tests = sys.argv[1:] or [
+    tests = [a for a in sys.argv[1:] if not a.startswith("--")] or [
         "nihao", "zme", "wx", "nb", "sb", "za",
         "xbzz", "nmsl", "xswl", "gkd",
         "woxihuanni", "nizaiganma", "jintiantianqi", "shoujimeidianle",

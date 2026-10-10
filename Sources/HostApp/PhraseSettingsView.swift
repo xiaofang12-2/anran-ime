@@ -20,8 +20,16 @@ struct PhraseSettingsView: View {
                 }
                 ForEach(book.items) { p in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(p.code)
-                            .font(.subheadline.bold())
+                        HStack(spacing: 6) {
+                            Text(p.code)
+                                .font(.subheadline.bold())
+                            Text("第\(p.position)位")
+                                .font(.caption2)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor))
+                        }
                         Text(p.text)
                             .font(.footnote)
                             .foregroundColor(.secondary)
@@ -40,7 +48,8 @@ struct PhraseSettingsView: View {
             } header: {
                 Text("短语")
             } footer: {
-                Text("点条目可编辑，左滑可删除。触发码建议用字母，别用中文。")
+                Text("点条目可编辑，左滑可删除。触发码建议用字母，别用中文。\n"
+                     + "「位置」= 命中后排在候选第几位，1 就是排第一位。")
             }
 
             Section {
@@ -105,6 +114,21 @@ private struct PhraseEditView: View {
                 }
                 Section("展开内容") {
                     TextField("如 张三 13800000000 北京市朝阳区", text: $phrase.text)
+                }
+                Section {
+                    Stepper(value: $phrase.position, in: 1...9) {
+                        HStack {
+                            Text("位置")
+                            Spacer()
+                            Text("第\(phrase.position)位")
+                                .font(.footnote.monospacedDigit())
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("位置")
+                } footer: {
+                    Text("命中后排在候选第几位，1 = 排到第一位。")
                 }
             }
             .navigationTitle(phrase.code.isEmpty ? "添加短语" : "编辑短语")

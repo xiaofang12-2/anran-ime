@@ -51,8 +51,8 @@ final class PinyinEngine {
     /// 词图打分的「上下文项」（对标 librime grammar.h 的 Grammar::Evaluate）。
     private var lm: [String: [String: Double]] = [:]
 
-    /// 自定义短语：触发码 -> 展开文本（主程序下发，见 PhraseStore）
-    private var phrases: [(code: String, text: String)] = []
+    /// 自定义短语：触发码 -> 展开文本 + 命中后落位（主程序下发，见 PhraseStore）
+    private var phrases: [(code: String, text: String, position: Int)] = []
 
     private var ready = false
 
@@ -81,6 +81,13 @@ final class PinyinEngine {
     private static let lmFloor = -12.0
     private static let lmRef = -3.5
     private static let lmWeight = 0.3
+
+    /// 终极兜底：任何字母串都必须出汉字，绝不让面板只剩英文。
+    /// 音节起头的 u / i / ü 的规范写法 —— 词库里没有 u/i/v 开头的拼音键，
+    /// 乌=wu、一=yi、鱼=yu，乱按到这几个字母时按规范拼写再查一次。
+    private static let leadMap: [Character: String] = ["u": "wu", "i": "yi", "v": "yu"]
+    /// 兜底候选的罚分系数：罚 fbPen×被砍掉的长度，保证它永远排在正常候选后面
+    private static let fbPen = 3.0
 
     private func decodeLogp(_ a: Character, _ b: Character) -> Double {
         let hi = Int(a.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
@@ -237,7 +244,7 @@ final class PinyinEngine {
     /// 主程序下发的自定义短语；换一批就作废缓存重算
     func setPhrases(_ list: [Phrase]) {
         phrases = list
-            .map { ($0.cleanCode, $0.text) }
+            .map { ($0.cleanCode, $0.text, max(1, $0.position)) }
             .filter { !$0.0.isEmpty && !$0.1.isEmpty }
         cacheKey = ""
         cacheResult = []
@@ -315,9 +322,10 @@ final class PinyinEngine {
             cands[text] = (cov, lp)
         }
 
-        // 0) 自定义短语：触发码精确命中直接顶最前
-        for (code, text) in phrases where code == input {
-            put(text, n, 1_000_000)
+        // 0) 自定义短语：触发码精确命中，按设置的「位置」落进候选
+        var phraseHits: [(text: String, position: Int)] = []
+        for p in phrases where p.code == input {
+            phraseHits.append((p.text, p.position))
         }
 
         // 1~2 字母：吃「短输入补全表」。它按打字概率预排（单字优先），
@@ -330,7 +338,11 @@ final class PinyinEngine {
             if !splitsIntoSyllables(input) {
                 for e in abbrEdges(input) { put(e.word, n, e.logp) }
             }
-            return rank(&cands, input, limit: set.candidateCount)
+            // 单字母 u/i/v、两字母乱码（ik/ul/vz）这些也必须有汉字
+            if cands.isEmpty {
+                for c in fallback(input) { put(c.word, n, c.logp) }
+            }
+            return rank(&cands, input, limit: set.candidateCount, phraseHits: phraseHits)
         }
 
         // 2) 前缀补全词：拼音以 input 开头的词（你好 → 你好啊/你好吗）
@@ -370,14 +382,20 @@ final class PinyinEngine {
             }
         }
 
-        // 7) 用户自己记下的词：同样的拼音直接顶到最前
+        // 7) 终极兜底：查完还是没汉字（乱按 qwert/zxcvb 这种），退到最长能出字的
+        //    前缀顶上。任何字母串都必须有汉字候选，绝不让面板只剩英文。
+        if cands.isEmpty {
+            for c in fallback(input) { put(c.word, n, c.logp) }
+        }
+
+        // 8) 用户自己记下的词：同样的拼音直接顶到最前
         if let uw = userWords[input] {
             for (i, w) in uw.enumerated() {
                 put(w, n, 900_000 - Double(i))
             }
         }
 
-        return rank(&cands, input, limit: set.candidateCount)
+        return rank(&cands, input, limit: set.candidateCount, phraseHits: phraseHits)
     }
 
     // MARK: - 词图
@@ -501,10 +519,43 @@ final class PinyinEngine {
         return out
     }
 
+    /// 最后一层兜底：任何字母串都必须出汉字，绝不让面板只剩英文。
+    ///
+    /// 做法是「退到最长能出字的前缀」：从长到短砍尾巴，哪一段前缀能查出候选
+    /// 就用它顶上。打 qwert 这种切不成合法音节的乱码时，一路退到 q，出
+    /// 去/请/钱/起…，至少是汉字，而不是光秃秃一串 qwert。
+    /// 罚 fbPen×被砍掉的长度，保证它永远排在正常候选后面。
+    private func fallback(_ inp: String) -> [(word: String, logp: Double)] {
+        let chars = Array(inp)
+        let n = chars.count
+        var len = n
+        while len >= 1 {
+            let pre = String(chars[0..<len])
+            var tries = [pre]
+            if let lead = PinyinEngine.leadMap[chars[0]] {
+                tries.append(lead + String(chars[1..<len]))
+            }
+            if pre.contains("v" as Character) {
+                tries.append(pre.replacingOccurrences(of: "v", with: "u"))
+            }
+            for cand in tries {
+                let got = prefixWords(cand)
+                if !got.isEmpty {
+                    let d = PinyinEngine.fbPen * Double(n - len)
+                    return got.map { (word: $0.word, logp: $0.logp - d) }
+                }
+            }
+            len -= 1
+        }
+        return []
+    }
+
     // MARK: - 收尾：排序、截断、英文候选
 
     private func rank(_ cands: inout [String: (cov: Int, lp: Double)],
-                      _ inp: String, limit: Int) -> [PinyinCandidate] {
+                      _ inp: String, limit: Int,
+                      phraseHits: [(text: String, position: Int)] = [])
+        -> [PinyinCandidate] {
         // 用户词频加权：用得多的词往前提（只影响同覆盖度内的排序）
         if !userFreq.isEmpty {
             for (w, c) in userFreq {
@@ -527,6 +578,13 @@ final class PinyinEngine {
         let cap = max(10, min(limit, 60))
         var result = items.prefix(cap).map {
             PinyinCandidate(word: $0.text, score: Int($0.lp * 1000), consumed: $0.cov)
+        }
+        // 自定义短语按「位置」插进候选：位置 1 = 排第一（对标百度/搜狗）
+        for hit in phraseHits.sorted(by: { $0.position < $1.position }) {
+            result.removeAll { $0.word == hit.text }
+            let idx = max(0, min(hit.position - 1, result.count))
+            result.insert(PinyinCandidate(word: hit.text, score: 2_000_000,
+                                          consumed: n), at: idx)
         }
         if !inp.isEmpty, !result.contains(where: { $0.word == inp }) {
             result.append(PinyinCandidate(word: inp, score: Int.min,

@@ -8,6 +8,9 @@ struct Phrase: Codable, Identifiable, Equatable {
     var code: String = ""
     /// 展开内容，例如 张三 13800000000 北京市朝阳区
     var text: String = ""
+    /// 命中后排在候选第几位（1 起）。1 = 排到第一位
+    /// 对标电脑端百度/搜狗的自定义短语「位置」
+    var position: Int = 1
 
     var cleanCode: String {
         code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -27,6 +30,8 @@ struct PhraseBook: Codable, Equatable {
         var seen = Set<String>()
         var out: [Phrase] = []
         for p in items.reversed() {
+            var p = p
+            p.position = max(1, p.position)
             let c = p.cleanCode
             guard !c.isEmpty, !p.text.isEmpty, !seen.contains(c) else { continue }
             seen.insert(c)

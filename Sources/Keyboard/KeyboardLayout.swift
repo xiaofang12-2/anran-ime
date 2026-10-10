@@ -5,6 +5,13 @@ enum KBLayer {
     case letters, numbers, symbols
 }
 
+/// 顶部功能栏点开的浮层面板（对标百度：点图标在键盘上方冒出一块）
+enum KBPanel {
+    case none
+    case clipboard
+    case thought
+}
+
 /// 一个键的动作
 enum KeyAction {
     case letter(String)      // 字母键（吃 shift 影响）
@@ -59,16 +66,24 @@ enum KBMetrics {
     static var fontScale: CGFloat { CGFloat(cfg.fontScale) }
 
     static let barHeight: CGFloat = 45
+    /// 顶部功能栏（图标 + 剪贴板/短语/思想库 + 收起）
+    static let funcBarHeight: CGFloat = 40
+    /// 剪贴板面板高度
+    static let panelHeight: CGFloat = 38
+    /// 思想库输入框面板高度
+    static let thoughtPanelHeight: CGFloat = 96
     static let topInset: CGFloat = 6
 
     /// 字母/数字/符号三层都是 4 行
     static let rows = 4
 
-    static func totalHeight(rows: Int) -> CGFloat {
-        topInset + barHeight + rowGap
+    /// extra = 展开的面板额外占的高度（思想库/剪贴板）
+    static func totalHeight(rows: Int, extra: CGFloat = 0) -> CGFloat {
+        topInset + bottomInset
+            + funcBarHeight + barHeight
             + keyHeight * CGFloat(rows)
-            + rowGap * CGFloat(max(rows - 1, 0))
-            + bottomInset
+            + rowGap * CGFloat(2 + max(rows - 1, 0))
+            + extra
     }
 }
 

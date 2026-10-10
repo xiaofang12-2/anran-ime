@@ -9,6 +9,8 @@ final class KeyboardViewController: UIInputViewController {
 
     private var hosting: UIHostingController<KeyboardRootView>?
     private var heightConstraint: NSLayoutConstraint?
+    /// 展开的浮层面板额外占的高度（剪贴板/思想库），跟着行高一起算总高
+    private var extraHeight: CGFloat = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -37,10 +39,16 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 主程序改了键高/间距后调一次，把键盘高度跟着重算，否则行会被裁掉
     func setRows(_ n: Int) {
-        let h = KBMetrics.totalHeight(rows: n)
+        let h = KBMetrics.totalHeight(rows: n, extra: extraHeight)
         guard let c = heightConstraint, abs(c.constant - h) > 0.5 else { return }
         c.constant = h
         view.setNeedsLayout()
+    }
+
+    /// 功能栏点开/收起浮层面板时调一次，把多出来的高度算进键盘总高
+    func setExtraHeight(_ extra: CGFloat) {
+        extraHeight = extra
+        setRows(KBMetrics.rows)
     }
 
     // MARK: - 往当前 app 的输入框里塞字
@@ -97,8 +105,18 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 跳到主程序登录（主程序声明了 anranime:// 这个 scheme）
     func openHostApp() {
-        guard let url = URL(string: "anranime://login") else { return }
+        openHost("login")
+    }
+
+    /// 跳到主程序某个页面：anranime://phrases / anranime://thoughts
+    func openHost(_ path: String) {
+        guard let url = URL(string: "anranime://" + path) else { return }
         extensionContext?.open(url, completionHandler: nil)
+    }
+
+    /// 功能栏右上角的收起按钮：把键盘收下去
+    func dismissKeyboardNow() {
+        dismissKeyboard()
     }
 }
 

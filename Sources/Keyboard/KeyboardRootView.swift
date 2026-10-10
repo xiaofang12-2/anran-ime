@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 键盘界面
 ///
@@ -22,6 +23,12 @@ struct KeyboardRootView: View {
     /// 配置/短语从主程序接过来后 +1，逼界面按新尺寸重画
     @State private var cfgRev = 0
 
+    // 顶部功能栏 / 浮层面板
+    @State private var panel: KBPanel = .none
+    @State private var thoughtQuery = ""
+    @State private var clipboardText = ""
+    @State private var thoughts: [ThoughtItem] = []
+
     var body: some View {
         Group {
             if authorized { keyboard } else { gate }
@@ -40,6 +47,26 @@ struct KeyboardRootView: View {
 
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
+            FunctionBar(thoughtOn: panel == .thought,
+                        clipboardOn: panel == .clipboard,
+                        onClipboard: toggleClipboard,
+                        onPhrase: { controller.openHost("phrases") },
+                        onThought: toggleThought,
+                        onThoughtLongPress: { controller.openHost("thoughts") },
+                        onCollapse: { controller.dismissKeyboardNow() })
+
+            if panel == .clipboard {
+                ClipboardPanel(text: clipboardText,
+                               onInsert: insertClipboard,
+                               onClose: closePanel)
+            }
+            if panel == .thought {
+                ThoughtPanel(query: thoughtQuery,
+                             matches: thoughtMatches,
+                             onInsert: insertThought,
+                             onClose: closePanel)
+            }
+
             CandidateBar(composing: composing,
                          candidates: candidates,
                          onPick: pick,
@@ -54,6 +81,83 @@ struct KeyboardRootView: View {
         }
     }
 
+    // MARK: - 功能栏 / 面板
+
+    /// 面板开合：把多出来的高度报给键盘容器，否则展开的行会被裁掉
+    private func setPanel(_ p: KBPanel) {
+        panel = p
+        let extra: CGFloat
+        switch p {
+        case .none: extra = 0
+        case .clipboard: extra = KBMetrics.panelHeight + KBMetrics.rowGap
+        case .thought: extra = KBMetrics.thoughtPanelHeight + KBMetrics.rowGap
+        }
+        controller.setExtraHeight(extra)
+    }
+
+    private func toggleClipboard() {
+        if panel == .clipboard {
+            setPanel(.none)
+        } else {
+            clipboardText = UIPasteboard.general.string ?? ""
+            setPanel(.clipboard)
+        }
+    }
+
+    private func toggleThought() {
+        if panel == .thought {
+            setPanel(.none)
+        } else {
+            thoughtQuery = ""
+            setPanel(.thought)
+        }
+    }
+
+    private func closePanel() {
+        setPanel(.none)
+    }
+
+    /// 思想库命中：关键词或内容里带查询串
+    private var thoughtMatches: [ThoughtItem] {
+        let q = thoughtQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return Array(thoughts.prefix(12)) }
+        return Array(thoughts.filter {
+            $0.cleanKeyword.contains(q) || $0.content.lowercased().contains(q)
+        }.prefix(12))
+    }
+
+    private func insertClipboard(_ text: String) {
+        controller.commit(text)
+        closePanel()
+    }
+
+    private func insertThought(_ content: String) {
+        controller.commit(content)
+    }
+
+    /// 思想库面板展开时，字母键喂给面板的输入框（键盘扩展里没法再弹系统键盘，
+    /// 所以面板的输入只能由键盘自己的键来喂 —— 跟百度翻译框一个道理）
+    private func handleThoughtKey(_ spec: KeySpec) {
+        switch spec.action {
+        case .letter(let c):
+            thoughtQuery += c
+        case .text(let t):
+            thoughtQuery += t
+        case .backspace:
+            if !thoughtQuery.isEmpty { thoughtQuery.removeLast() }
+        case .space:
+            thoughtQuery += " "
+        case .ret:
+            if let first = thoughtMatches.first { controller.commit(first.content) }
+        case .globe:
+            controller.advanceToNextInputMode()
+        case .toLayer(let l):
+            layer = l
+        default:
+            break
+        }
+    }
+
     private var rows: [[KeySpec]] {
         KeyboardLayout.rows(layer: layer,
                             shift: shiftOn || capsLock,
@@ -63,6 +167,7 @@ struct KeyboardRootView: View {
     // MARK: - 按键分发
 
     private func handle(_ spec: KeySpec) {
+        if panel == .thought { handleThoughtKey(spec); return }
         switch spec.action {
         case .letter(let c):
             if shiftOn || capsLock {
@@ -279,6 +384,7 @@ struct KeyboardRootView: View {
 
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
+        thoughts = ThoughtStore.current.flatItems
         applyLearnResetIfNeeded()
 
         if changed {

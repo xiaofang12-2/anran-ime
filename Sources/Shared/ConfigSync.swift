@@ -10,6 +10,7 @@ struct SyncBundle: Codable, Equatable {
     var layout: KBConfig?
     var phrases: PhraseBook?
     var settings: IMESettings?
+    var thoughts: ThoughtBook?
     var rev: Int = 0
 
     static let prefix = "ANRAN-SYNC::"
@@ -29,15 +30,18 @@ enum ConfigSync {
     @discardableResult
     static func publish(layout: KBConfig? = nil,
                         phrases: PhraseBook? = nil,
-                        settings: IMESettings? = nil) -> Bool {
+                        settings: IMESettings? = nil,
+                        thoughts: ThoughtBook? = nil) -> Bool {
         if let l = layout { KBConfigStore.saveLocal(l) }
         if let p = phrases { PhraseStore.saveLocal(p) }
         if let s = settings { IMESettingsStore.saveLocal(s) }
+        if let t = thoughts { ThoughtStore.saveLocal(t) }
 
         var bundle = SyncBundle(
             layout: KBConfigStore.current.sanitized,
             phrases: PhraseStore.current.sanitized,
-            settings: IMESettingsStore.current.sanitized)
+            settings: IMESettingsStore.current.sanitized,
+            thoughts: ThoughtStore.current.sanitized)
         bundle.rev = Int(Date().timeIntervalSince1970)
         guard let d = try? JSONEncoder().encode(bundle),
               let s = String(data: d, encoding: .utf8) else { return false }
@@ -57,6 +61,7 @@ enum ConfigSync {
         if let l = bundle.layout { KBConfigStore.saveLocal(l) }
         if let p = bundle.phrases { PhraseStore.saveLocal(p) }
         if let s = bundle.settings { IMESettingsStore.saveLocal(s) }
+        if let t = bundle.thoughts { ThoughtStore.saveLocal(t) }
         appliedRev = bundle.rev
         return true
     }

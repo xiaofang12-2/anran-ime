@@ -305,3 +305,200 @@ struct CandidateBar: View {
             .frame(width: 0.5, height: 20)
     }
 }
+
+/// 顶部功能栏（对标百度输入法）：
+///   左 = 软件图标   中 = 剪贴板 / 自定义短语 / 思想库   右 = 收起键盘
+/// 点图标触发对应动作；思想库图标再点一次收起面板；长按图标跳主程序对应设置。
+struct FunctionBar: View {
+
+    let thoughtOn: Bool
+    let clipboardOn: Bool
+    let onClipboard: () -> Void
+    let onPhrase: () -> Void
+    let onThought: () -> Void
+    let onThoughtLongPress: () -> Void
+    let onCollapse: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            logo
+            Spacer(minLength: 6)
+            icon("doc.on.clipboard", active: clipboardOn,
+                 tap: onClipboard, longPress: nil)
+            icon("text.badge.plus", active: false,
+                 tap: onPhrase, longPress: nil)
+            icon("lightbulb", active: thoughtOn,
+                 tap: onThought, longPress: onThoughtLongPress)
+            Spacer(minLength: 6)
+            icon("keyboard.chevron.compact.down", active: false,
+                 tap: onCollapse, longPress: nil)
+        }
+        .frame(height: KBMetrics.funcBarHeight)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.white.opacity(0.65)))
+    }
+
+    private var logo: some View {
+        Group {
+            if let img = FunctionBar.logoImage {
+                Image(uiImage: img).resizable().scaledToFill()
+            } else {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 18))
+                    .foregroundColor(Color(white: 0.30))
+            }
+        }
+        .frame(width: 26, height: 26)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private func icon(_ symbol: String, active: Bool,
+                      tap: @escaping () -> Void,
+                      longPress: (() -> Void)?) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .medium))
+            .foregroundColor(active ? .white : Color(white: 0.28))
+            .frame(width: 42, height: KBMetrics.funcBarHeight)
+            .background(active ? Color(red: 0.20, green: 0.50, blue: 0.95)
+                               : Color.clear)
+            .contentShape(Rectangle())
+            .onTapGesture { tap() }
+            .onLongPressGesture(minimumDuration: 0.5) { longPress?() }
+    }
+
+    /// 软件图标：键盘 target 里随包带的 ime_logo.png
+    private static let logoImage: UIImage? = {
+        if let url = Bundle.main.url(forResource: "ime_logo", withExtension: "png"),
+           let d = try? Data(contentsOf: url) {
+            return UIImage(data: d)
+        }
+        return UIImage(named: "ime_logo")
+    }()
+}
+
+/// 剪贴板面板：显示当前剪贴板内容，点一下整段上屏
+struct ClipboardPanel: View {
+
+    let text: String
+    let onInsert: (String) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.on.clipboard")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary)
+            Text(text.isEmpty ? "剪贴板是空的" : text)
+                .font(.system(size: 14))
+                .lineLimit(1)
+                .foregroundColor(text.isEmpty ? .secondary : .black)
+            Spacer(minLength: 6)
+            if !text.isEmpty {
+                Button("插入") { onInsert(text) }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(red: 0.20, green: 0.50, blue: 0.95))
+            }
+            Button { onClose() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 15))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: KBMetrics.panelHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white))
+    }
+}
+
+/// 思想库面板：跟百度「翻译」一样，点功能栏图标就在键盘上方冒出一个输入框。
+/// 输入关键词 → 列出命中的「关键词 / 内容」，点内容直接上屏。
+/// 注意：键盘扩展里没法再弹一个系统键盘，所以这个输入框的字符由键盘自己的键喂进来，
+/// 这里只做展示（含闪烁光标），不做真正的 UITextField。
+struct ThoughtPanel: View {
+
+    let query: String
+    let matches: [ThoughtItem]
+    let onInsert: (String) -> Void
+    let onClose: () -> Void
+
+    @State private var caretOn = true
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 0) {
+                    Text(query)
+                        .font(.system(size: 15))
+                        .foregroundColor(.black)
+                    Rectangle()
+                        .fill(Color(red: 0.20, green: 0.50, blue: 0.95))
+                        .frame(width: 1.5, height: 18)
+                        .opacity(caretOn ? 1 : 0)
+                }
+                if query.isEmpty {
+                    Text("输入关键词…")
+                        .font(.system(size: 15))
+                        .foregroundColor(.secondary)
+                }
+                Spacer(minLength: 6)
+                Button { onClose() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white))
+
+            if !matches.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(matches) { it in
+                            Button { onInsert(it.content) } label: {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(it.keyword)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.black)
+                                    Text(it.content)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.white))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .frame(height: 46)
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(white: 0.95)))
+        .onAppear {
+            caretOn = true
+            withAnimation(.easeInOut(duration: 0.5).repeatForever()) {
+                caretOn.toggle()
+            }
+        }
+    }
+}
