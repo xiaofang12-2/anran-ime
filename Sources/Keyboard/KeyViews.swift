@@ -248,22 +248,36 @@ struct KeyRow: View {
     }
 }
 
-/// 候选栏：拼音串/「联想」在左，候选往后排，首个候选加重
+/// 候选栏：左头是 26/9 键切换，拼音串（或「联想」）挨着它，候选往后排，首个候选加重。
+/// 长按某个候选 = 把它从用户词频里抹掉（自己纠错，对标百度的「删除记忆」）。
 struct CandidateBar: View {
     let composing: String
     let candidates: [PinyinCandidate]
+    let mode: KBMode
     let onPick: (String) -> Void
+    let onToggleMode: () -> Void
+    let onForget: (String) -> Void
 
-    private var shown: [PinyinCandidate] { Array(candidates.prefix(30)) }
+    private var shown: [PinyinCandidate] { Array(candidates.prefix(40)) }
 
     var body: some View {
-        Group {
+        HStack(spacing: 0) {
+            Text(mode == .qwerty ? "9键" : "26键")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Color(red: 0.28, green: 0.31, blue: 0.38))
+                .frame(width: 46)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { onToggleMode() }
+
+            divider
+
             if shown.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "text.book.closed")
                         .font(.system(size: 15))
                         .foregroundColor(.secondary)
-                    Text("思想库（阶段 2 接上）")
+                    Text("思想库")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -278,20 +292,21 @@ struct CandidateBar: View {
                             .padding(.horizontal, 10)
                         divider
                         ForEach(shown.indices, id: \.self) { i in
-                            Button(action: { onPick(shown[i].word) }) {
-                                HStack(spacing: 0) {
-                                    Text(shown[i].word)
-                                        .font(.system(size: i == 0 ? 21 : 19,
-                                                      weight: i == 0 ? .semibold : .regular))
-                                        .foregroundColor(shown[i].literal
-                                                         ? Color(red: 0.34, green: 0.38, blue: 0.46)
-                                                         : .black)
-                                        .padding(.horizontal, 10)
-                                    if i < shown.count - 1 { divider }
-                                }
+                            Text(shown[i].word)
+                                .font(.system(size: i == 0 ? 22 : 19,
+                                              weight: i == 0 ? .semibold : .regular))
+                                .foregroundColor(shown[i].literal
+                                                 ? Color(red: 0.34, green: 0.38, blue: 0.46)
+                                                 : .black)
+                                .padding(.horizontal, 11)
                                 .frame(height: KBMetrics.barHeight)
-                            }
-                            .buttonStyle(.plain)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onPick(shown[i].word) }
+                                .onLongPressGesture(minimumDuration: 0.45) {
+                                    Haptics.bump()
+                                    onForget(shown[i].word)
+                                }
+                            if i < shown.count - 1 { divider }
                         }
                     }
                 }

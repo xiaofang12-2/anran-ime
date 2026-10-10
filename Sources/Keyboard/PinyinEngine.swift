@@ -4,12 +4,16 @@ import Foundation
 struct PinyinCandidate {
     let word: String
     let score: Int
+    /// 这条候选吃掉了输入串里多少个字符（用来做「部分上屏」：
+    /// 打「jintianx」选出「今天」后，剩下的「x」继续留在拼音串里接着拼）
+    let consumed: Int
     /// 是不是「原样英文」候选（中英混输时把拼音串本身也能直接上屏）
     let literal: Bool
 
-    init(word: String, score: Int, literal: Bool = false) {
+    init(word: String, score: Int, consumed: Int = 0, literal: Bool = false) {
         self.word = word
         self.score = score
+        self.consumed = consumed
         self.literal = literal
     }
 }
@@ -22,13 +26,13 @@ enum KBMode: String {
 
 /// 本地拼音引擎
 ///
-/// 词库 `Support/dict/pinyin.bin` 用 `mappedIfSafe` 内存映射，不整块读进堆 ——
-/// 键盘扩展只有 30~60MB 内存，这是硬约束。
+/// 词库 `Support/dict/pinyin.bin`（26 万词条）用 `mappedIfSafe` 内存映射，
+/// 不整块读进堆 —— 键盘扩展只有 30~60MB 内存，这是硬约束。
 /// 联想表 `Support/dict/assoc.bin` 很小（字 -> 常用后继字），启动一次性读进字典。
 ///
 /// 出候选的路子：
-///   1. 前缀/完全匹配（含模糊音变体）
-///   2. 音节切分拼词（26 键）
+///   1. 前缀/完全匹配（含模糊音变体）—— 短输入靠它，命中即高优先
+///   2. 词格切分（26 键）—— 长句靠它，按「词」而不是「字」拼，长词得分远高于散字
 ///   3. 9 键数字串按音节展开
 /// 再叠加「用户词频」加权，用得多的词自动往前提。
 final class PinyinEngine {
@@ -53,7 +57,14 @@ final class PinyinEngine {
 
     // 用户词频（越用越准）
     private var userFreq: [String: Int] = [:]
+    /// 用户自己记下的「拼音 -> 词」，打同样拼音时它们永远排在词典前面
+    private var userWords: [String: [String]] = [:]
     private let userQueue = DispatchQueue(label: "anran.ime.userfreq")
+
+    private struct UserData: Codable {
+        var freq: [String: Int]
+        var words: [String: [String]]
+    }
 
     private init() {
         loadUser()
@@ -180,12 +191,40 @@ final class PinyinEngine {
         return assoc[String(last)] ?? []
     }
 
-    /// 记一笔用户选择，下次同拼音时往前提
-    func learn(_ word: String) {
+    /// 记一笔用户选择，下次同拼音时往前提；同时把「拼音 -> 词」记下来，
+    /// 下次打同一个拼音，这个词直接排在词典前面（百度那种越用越顺手的记忆）
+    func learn(_ word: String, pinyin: String = "") {
         let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !w.isEmpty, w.count <= 8 else { return }
         userFreq[w, default: 0] += 1
-        let snapshot = userFreq
+
+        let py = pinyin.lowercased().filter { $0 >= "a" && $0 <= "z" }
+        if !py.isEmpty, py.count <= 32 {
+            var list = userWords[py] ?? []
+            if let i = list.firstIndex(of: w) { list.remove(at: i) }
+            list.insert(w, at: 0)
+            if list.count > 8 { list = Array(list.prefix(8)) }
+            userWords[py] = list
+        }
+
+        cacheKey = ""            // 下次重算，让刚学的词立刻往前提
+        persistUser()
+    }
+
+    /// 抹掉某个词的用户记忆（长按候选纠错用）
+    func forget(_ word: String) {
+        let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !w.isEmpty else { return }
+        userFreq.removeValue(forKey: w)
+        for (py, list) in userWords where list.contains(w) {
+            userWords[py] = list.filter { $0 != w }
+        }
+        cacheKey = ""
+        persistUser()
+    }
+
+    private func persistUser() {
+        let snapshot = UserData(freq: userFreq, words: userWords)
         userQueue.async {
             if let d = try? JSONEncoder().encode(snapshot) {
                 SharedStore.write("ime_user.json", d)
@@ -199,7 +238,7 @@ final class PinyinEngine {
         let input = raw.lowercased().filter { $0 >= "a" && $0 <= "z" }
         if input.isEmpty { return [] }
 
-        var scored = [String: Int]()
+        var scored = [String: (score: Int, used: Int)]()
 
         // 1) 前缀/完全匹配，带模糊音变体
         for (vi, variant) in fuzzyVariants(input).enumerated() {
@@ -217,20 +256,29 @@ final class PinyinEngine {
                 for idx in 0..<take {
                     let s = base - idx * 120
                     let w = cands[idx]
-                    if let old = scored[w], old >= s { continue }
-                    scored[w] = s
+                    if let old = scored[w], old.score >= s { continue }
+                    scored[w] = (s, input.count)
                 }
                 i += 1
                 scanned += 1
             }
         }
 
-        // 2) 音节切分（只在原串上做，避免组合爆炸）
-        if input.count <= 24 {
-            for (phrase, sc) in segment(Array(input)) {
+        // 1.5) 用户自己记下的词：同样的拼音直接顶到最前
+        if let uw = userWords[input] {
+            for (i, w) in uw.enumerated() {
+                let s = 950_000 - i * 1_000
+                if let old = scored[w], old.score >= s { continue }
+                scored[w] = (s, input.count)
+            }
+        }
+
+        // 2) 词格切分（长句靠它）
+        if input.count <= 32 {
+            for (phrase, sc, used) in lattice(Array(input)) {
                 let s = 300_000 + sc
-                if let old = scored[phrase], old >= s { continue }
-                scored[phrase] = s
+                if let old = scored[phrase], old.score >= s { continue }
+                scored[phrase] = (s, used)
             }
         }
 
@@ -242,26 +290,128 @@ final class PinyinEngine {
     private func t9Candidates(_ raw: String) -> [PinyinCandidate] {
         let digits = String(raw.filter { $0 >= "0" && $0 <= "9" })
         if digits.isEmpty { return [] }
-        var scored = [String: Int]()
-        for (phrase, sc) in t9Segment(Array(digits)) {
+        var scored = [String: (score: Int, used: Int)]()
+        for (phrase, sc, used) in t9Lattice(Array(digits)) {
             let s = 320_000 + sc
-            if let old = scored[phrase], old >= s { continue }
-            scored[phrase] = s
+            if let old = scored[phrase], old.score >= s { continue }
+            scored[phrase] = (s, used)
+        }
+        // 用户记下的词：数字串对上它的拼音就顶到最前
+        for (py, words) in userWords where t9Digits(py) == digits {
+            for (i, w) in words.enumerated() {
+                let s = 950_000 - i * 1_000
+                if let old = scored[w], old.score >= s { continue }
+                scored[w] = (s, digits.count)
+            }
         }
         return finish(&scored, literal: digits)
     }
 
-    private func t9Segment(_ chars: [Character]) -> [(String, Int)] {
-        var memo = [Int: [(String, Int)]]()
+    // MARK: - 收尾：加权、排序、截断、英文候选
 
-        func go(_ start: Int) -> [(String, Int)] {
-            if let m = memo[start] { return m }
-            if start >= chars.count {
-                memo[start] = [("", 0)]
-                return [("", 0)]
+    private func finish(_ scored: inout [String: (score: Int, used: Int)],
+                        literal: String) -> [PinyinCandidate] {
+        // 用户词频加权
+        if !userFreq.isEmpty {
+            for (w, c) in userFreq {
+                if let old = scored[w] {
+                    scored[w] = (old.score + min(c, 60) * 1_500, old.used)
+                }
             }
-            var out: [(String, Int)] = []
-            let maxLen = min(6, chars.count - start)
+        }
+
+        var result = scored.map {
+            PinyinCandidate(word: $0.key, score: $0.value.score, consumed: $0.value.used)
+        }.sorted { a, b in
+            if a.score != b.score { return a.score > b.score }
+            if a.word.count != b.word.count { return a.word.count < b.word.count }
+            return a.word < b.word
+        }
+        if result.count > 40 { result = Array(result.prefix(40)) }
+
+        // 中英混输：拼音串本身永远排在最后，随时能直接上屏
+        if !literal.isEmpty, !result.contains(where: { $0.word == literal }) {
+            result.append(PinyinCandidate(word: literal, score: Int.min,
+                                          consumed: literal.count, literal: true))
+        }
+        return result
+    }
+
+    /// 一个「词」的得分：词越长越像真词，散字拼出来的组合天然吃亏。
+    /// 这样「今天天气」会压过「今 天 天 气」这种一字一顿的拼法。
+    private func wordScore(_ w: String, rank: Int) -> Int {
+        let rankPen = (rank == 0 ? 0 : (rank == 1 ? -90 : -170))
+        if w.count >= 2 { return 420 + w.count * 70 + rankPen }
+        return 120 + rankPen
+    }
+
+    /// 词格切分：把整串拼音切成「词」的组合。
+    /// 打一半的尾巴拼不出词时当未解析吞掉，所以边打边能出候选；
+    /// 返回值里的第三项是这条候选吃掉了多少个拼音字符（部分上屏用）。
+    private func lattice(_ chars: [Character]) -> [(String, Int, Int)] {
+        var memo = [Int: [(String, Int, Int)]]()
+        let n = chars.count
+
+        func go(_ start: Int) -> [(String, Int, Int)] {
+            if let m = memo[start] { return m }
+            if start >= n {
+                memo[start] = [("", 0, 0)]
+                return memo[start]!
+            }
+            var out: [(String, Int, Int)] = []
+            let maxLen = min(8, n - start)
+            var len = 1
+            while len <= maxLen {
+                let sub = String(chars[start..<(start + len)])
+                if let idx = exactIndex(sub) {
+                    let cands = candidatesAt(idx)
+                    let take = min(cands.count, 4)
+                    if take > 0 {
+                        let rest = go(start + len)
+                        if !rest.isEmpty {
+                            for k in 0..<take {
+                                let w = cands[k]
+                                let ws = wordScore(w, rank: k)
+                                for (rp, rs, ru) in rest {
+                                    let joined = w + rp
+                                    if joined.count > 12 { continue }
+                                    let pen = rs == 0 ? 0 : 80
+                                    out.append((joined, ws + rs - pen, len + ru))
+                                }
+                            }
+                        }
+                    }
+                }
+                len += 1
+            }
+            if out.isEmpty {
+                memo[start] = [("", 0, 0)]
+                return memo[start]!
+            }
+            if out.count > 24 {
+                out.sort { $0.1 > $1.1 }
+                out = Array(out.prefix(24))
+            }
+            memo[start] = out
+            return out
+        }
+
+        return go(0).filter { !$0.0.isEmpty }
+    }
+
+    /// 9 键词格：先按数字串展开成音节，再走同一套「词优先」打分
+    private func t9Lattice(_ chars: [Character]) -> [(String, Int, Int)] {
+        var memo = [Int: [(String, Int, Int)]]()
+        let n = chars.count
+
+        func go(_ start: Int) -> [(String, Int, Int)] {
+            if let m = memo[start] { return m }
+            if start >= n {
+                memo[start] = [("", 0, 0)]
+                return memo[start]!
+            }
+            var out: [(String, Int, Int)] = []
+            let maxLen = min(6, n - start)
             var len = 1
             while len <= maxLen {
                 let chunk = String(chars[start..<(start + len)])
@@ -273,13 +423,21 @@ final class PinyinEngine {
                     let rest = go(start + len)
                     if rest.isEmpty { continue }
                     for k in 0..<take {
-                        let base = k == 0 ? 100 : (k == 1 ? 55 : 25)
-                        for (rp, rs) in rest {
-                            out.append((cands[k] + rp, base + rs))
+                        let w = cands[k]
+                        let ws = wordScore(w, rank: k)
+                        for (rp, rs, ru) in rest {
+                            let joined = w + rp
+                            if joined.count > 12 { continue }
+                            let pen = rs == 0 ? 0 : 80
+                            out.append((joined, ws + rs - pen, len + ru))
                         }
                     }
                 }
                 len += 1
+            }
+            if out.isEmpty {
+                memo[start] = [("", 0, 0)]
+                return memo[start]!
             }
             if out.count > 24 {
                 out.sort { $0.1 > $1.1 }
@@ -289,79 +447,7 @@ final class PinyinEngine {
             return out
         }
 
-        return go(0)
-    }
-
-    // MARK: - 收尾：加权、排序、截断、英文候选
-
-    private func finish(_ scored: inout [String: Int],
-                        literal: String) -> [PinyinCandidate] {
-        // 用户词频加权
-        if !userFreq.isEmpty {
-            for (w, c) in userFreq {
-                if let base = scored[w] {
-                    scored[w] = base + min(c, 60) * 1_500
-                }
-            }
-        }
-
-        var result = scored.map { PinyinCandidate(word: $0.key, score: $0.value) }
-            .sorted { a, b in
-                if a.score != b.score { return a.score > b.score }
-                if a.word.count != b.word.count { return a.word.count < b.word.count }
-                return a.word < b.word
-            }
-        if result.count > 40 { result = Array(result.prefix(40)) }
-
-        // 中英混输：拼音串本身永远排在最后，随时能直接上屏
-        if !literal.isEmpty, !result.contains(where: { $0.word == literal }) {
-            result.append(PinyinCandidate(word: literal, score: Int.min, literal: true))
-        }
-        return result
-    }
-
-    // MARK: - 26 键音节切分
-
-    private func segment(_ chars: [Character]) -> [(String, Int)] {
-        var memo = [Int: [(String, Int)]]()
-
-        func go(_ start: Int) -> [(String, Int)] {
-            if let m = memo[start] { return m }
-            if start >= chars.count {
-                memo[start] = [("", 0)]
-                return [("", 0)]
-            }
-            var out: [(String, Int)] = []
-            let maxLen = min(6, chars.count - start)
-            var len = 1
-            while len <= maxLen {
-                let syl = String(chars[start..<(start + len)])
-                if syllableSet.contains(syl), let idx = exactIndex(syl) {
-                    let cands = candidatesAt(idx)
-                    let take = min(cands.count, 3)
-                    if take > 0 {
-                        let rest = go(start + len)
-                        if !rest.isEmpty {
-                            for k in 0..<take {
-                                let base = k == 0 ? 100 : (k == 1 ? 55 : 25)
-                                for (rp, rs) in rest {
-                                    out.append((cands[k] + rp, base + rs))
-                                }
-                            }
-                        }
-                    }
-                }
-                len += 1
-            }
-            if out.count > 16 {
-                out.sort { $0.1 > $1.1 }
-                out = Array(out.prefix(16))
-            }
-            memo[start] = out
-            return out
-        }
-
-        return go(0)
+        return go(0).filter { !$0.0.isEmpty }
     }
 
     // MARK: - 模糊音
@@ -414,9 +500,12 @@ final class PinyinEngine {
     // MARK: - 用户词频落盘
 
     private func loadUser() {
-        guard let d = SharedStore.read("ime_user.json"),
-              let o = try? JSONDecoder().decode([String: Int].self, from: d)
-        else { return }
-        userFreq = o
+        guard let d = SharedStore.read("ime_user.json") else { return }
+        if let o = try? JSONDecoder().decode(UserData.self, from: d) {
+            userFreq = o.freq
+            userWords = o.words
+        } else if let o = try? JSONDecoder().decode([String: Int].self, from: d) {
+            userFreq = o          // 兼容旧版只有词频的存档
+        }
     }
 }

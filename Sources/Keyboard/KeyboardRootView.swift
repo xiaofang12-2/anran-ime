@@ -18,6 +18,7 @@ struct KeyboardRootView: View {
     @State private var shiftOn = false
     @State private var capsLock = false
     @State private var lastShiftTap = Date.distantPast
+    @State private var lastSpaceTap = Date.distantPast
     @State private var mode: KBMode = KeyboardRootView.savedMode
 
     var body: some View {
@@ -38,7 +39,12 @@ struct KeyboardRootView: View {
 
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
-            CandidateBar(composing: composing, candidates: candidates, onPick: pick)
+            CandidateBar(composing: composing,
+                         candidates: candidates,
+                         mode: mode,
+                         onPick: pick,
+                         onToggleMode: toggleMode,
+                         onForget: forget)
             ForEach(rows.indices, id: \.self) { i in
                 KeyRow(keys: rows[i],
                        onKey: handle,
@@ -95,7 +101,16 @@ struct KeyboardRootView: View {
 
         case .space:
             if composing.isEmpty {
-                controller.insert(" ")
+                // 连点两下空格 = 句号（对标百度/系统键盘）
+                let now = Date()
+                if now.timeIntervalSince(lastSpaceTap) < 0.4 {
+                    lastSpaceTap = .distantPast
+                    controller.backspace()
+                    controller.insert("。")
+                } else {
+                    lastSpaceTap = now
+                    controller.insert(" ")
+                }
                 candidates = []
             } else {
                 commitComposing()
@@ -116,13 +131,28 @@ struct KeyboardRootView: View {
             shiftOn = false
 
         case .modeToggle:
-            commitComposing()
-            mode = (mode == .qwerty ? .t9 : .qwerty)
-            Self.savedMode = mode
-            composing = ""
+            toggleMode()
+        }
+    }
+
+    /// 26 键 <-> 9 键
+    private func toggleMode() {
+        commitComposing()
+        mode = (mode == .qwerty ? .t9 : .qwerty)
+        Self.savedMode = mode
+        composing = ""
+        candidates = []
+        layer = .letters
+        shiftOn = false
+    }
+
+    /// 长按候选：把它从用户词频里抹掉，下次不再冒头
+    private func forget(_ word: String) {
+        PinyinEngine.shared.forget(word)
+        if composing.isEmpty {
             candidates = []
-            layer = .letters
-            shiftOn = false
+        } else {
+            refresh()
         }
     }
 
@@ -177,17 +207,17 @@ struct KeyboardRootView: View {
         let word = candidates.first(where: { !$0.literal })?.word
             ?? candidates.first?.word
             ?? composing
-        applyCommit(word)
+        applyCommit(word, pinyin: composing)
     }
 
     /// 点了候选栏里的词（含联想）
     private func pick(_ word: String) {
-        applyCommit(word)
+        applyCommit(word, pinyin: composing)
     }
 
-    private func applyCommit(_ word: String) {
+    private func applyCommit(_ word: String, pinyin: String) {
         controller.commit(word)
-        PinyinEngine.shared.learn(word)
+        PinyinEngine.shared.learn(word, pinyin: pinyin)
         composing = ""
         // 上屏后立刻联想下一个字
         candidates = PinyinEngine.shared.associate(word)

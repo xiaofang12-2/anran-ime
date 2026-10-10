@@ -49,15 +49,16 @@ struct KeySpec: Identifiable {
 }
 
 /// 尺寸常量，对标 iOS 原生键盘（百度输入法同一套骨架）
+/// 键高比原生略抬一点，手指落点更松，连打不易误触
 enum KBMetrics {
-    static let rowGap: CGFloat = 6
+    static let rowGap: CGFloat = 7
     static let keyGap: CGFloat = 6
     static let sideInset: CGFloat = 3
-    static let keyHeight: CGFloat = 42
-    static let barHeight: CGFloat = 44
-    static let topInset: CGFloat = 6
-    static let bottomInset: CGFloat = 4
-    static let corner: CGFloat = 5
+    static let keyHeight: CGFloat = 47
+    static let barHeight: CGFloat = 46
+    static let topInset: CGFloat = 7
+    static let bottomInset: CGFloat = 6
+    static let corner: CGFloat = 6
 
     /// 26 键 4 行、9 键 5 行，高度按行数算
     static func totalHeight(rows: Int) -> CGFloat {
@@ -119,8 +120,14 @@ enum KeyboardLayout {
         }
         r3.append(KeySpec("backspace", "⌫", 1.4, .backspace, special: true))
         out.append(r3)
-        out.append(bottomRow(leading: KeySpec("to123", "123", 1.5, .toLayer(.numbers),
-                                              special: true)))
+        out.append([
+            KeySpec("to123", "123", 1.5, .toLayer(.numbers), special: true),
+            KeySpec("comma", "，", 1.0, .text("，"), special: true),
+            KeySpec("globe", "🌐", 1.2, .globe, special: true),
+            KeySpec("space", "空格", 4.6, .space, special: true),
+            KeySpec("period", "。", 1.0, .text("。"), special: true),
+            KeySpec("ret", "换行", 1.7, .ret, special: true),
+        ])
         return out
     }
 
@@ -146,10 +153,10 @@ enum KeyboardLayout {
         ]
     }
 
-    /// 数字/符号层的第三行：. , ? ! ' + 退格
+    /// 数字/符号层的第三行：中文标点 + 退格
     private static func symbolRow3(leading: KeySpec) -> [KeySpec] {
         var r: [KeySpec] = [leading]
-        for ch in [".", ",", "?", "!", "'"] {
+        for ch in ["，", "。", "？", "！", "、"] {
             r.append(KeySpec("P\(ch)", ch, 1, .text(ch), popup: true))
         }
         r.append(KeySpec("backspace", "⌫", 1.4, .backspace, special: true))
@@ -220,7 +227,7 @@ enum KeyboardLayout {
         let r1 = Array("[]{}#%^")
         let r2 = Array("*+=_\\|~")
         let r3 = Array("<>€£¥•")
-        let r4 = Array(".,?!'\"")
+        let r4 = Array("，。？！、；")
         return [
             r1.map { KeySpec("S\($0)", String($0), 1, .text(String($0)), popup: true) },
             r2.map { KeySpec("S\($0)", String($0), 1, .text(String($0)), popup: true) },
