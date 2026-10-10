@@ -1,35 +1,94 @@
 import SwiftUI
 import UIKit
 
-/// 键帽样式：白键 + 底部 1px 投影，按下变灰、弹起复原（对标 iOS/百度手感）
-struct KeyCapStyle: ButtonStyle {
-    let spec: KeySpec
+/// 触感反馈：字母轻震、功能键重一点
+enum Haptics {
+    private static let light = UIImpactFeedbackGenerator(style: .light)
+    private static let medium = UIImpactFeedbackGenerator(style: .medium)
 
-    func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
-        return ZStack {
+    static func tap() { light.impactOccurred() }
+    static func bump() { medium.impactOccurred() }
+}
+
+/// 按键音（对标系统键盘，默认开）
+enum KeySound {
+    static var enabled: Bool {
+        get { UserDefaults.standard.object(forKey: "anran_kb_sound") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "anran_kb_sound") }
+    }
+
+    static func play() {
+        if enabled { UIDevice.current.playInputClick() }
+    }
+}
+
+/// 普通键帽：白底 + 底部 1px 投影，按下变灰缩放，上滑可打出副字符
+struct KeyCap: View {
+    let spec: KeySpec
+    let onTap: () -> Void
+    var onSwipe: ((String) -> Void)? = nil
+
+    @State private var pressed = false
+    @State private var consumed = false
+
+    var body: some View {
+        ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
-                .fill(fill(pressed))
+                .fill(fill)
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
-            configuration.label
+            VStack(spacing: 0) {
+                Text(spec.label)
+                    .font(.system(size: spec.special ? 17 : (spec.sub != nil ? 20 : 22)))
+                    .foregroundColor(.black)
+                if let sub = spec.sub {
+                    Text(sub)
+                        .font(.system(size: 9))
+                        .foregroundColor(.black.opacity(0.5))
+                }
+            }
         }
         .scaleEffect(pressed && !spec.special ? 0.96 : 1)
         .overlay(alignment: .top) {
-            if pressed && spec.popup {
-                Text(spec.label)
-                    .font(.system(size: 28))
-                    .foregroundColor(.black)
-                    .frame(width: 42, height: 46)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white)
-                            .shadow(color: .black.opacity(0.28),
-                                    radius: 4, x: 0, y: 2))
-                    .offset(y: -50)
-                    .allowsHitTesting(false)
-            }
+            if pressed && spec.popup { bubble }
         }
         .zIndex(pressed ? 20 : 0)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    if consumed { return }
+                    if !pressed {
+                        pressed = true
+                        Haptics.tap()
+                        KeySound.play()
+                    }
+                    if let s = spec.swipe, v.translation.height < -28 {
+                        consumed = true
+                        pressed = false
+                        Haptics.bump()
+                        onSwipe?(s)
+                    }
+                }
+                .onEnded { v in
+                    if consumed { consumed = false; return }
+                    let was = pressed
+                    pressed = false
+                    if was && v.translation.height > -28 { onTap() }
+                }
+        )
+    }
+
+    private var bubble: some View {
+        Text(spec.label)
+            .font(.system(size: 28))
+            .foregroundColor(.black)
+            .frame(width: 42, height: 46)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.28), radius: 4, x: 0, y: 2))
+            .offset(y: -50)
+            .allowsHitTesting(false)
     }
 
     private func fill(_ pressed: Bool) -> Color {
@@ -42,27 +101,14 @@ struct KeyCapStyle: ButtonStyle {
     }
 }
 
-struct KeyCap: View {
-    let spec: KeySpec
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(spec.label)
-                .font(.system(size: spec.special ? 17 : 22))
-                .foregroundColor(.black)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .buttonStyle(KeyCapStyle(spec: spec))
-    }
-}
-
-/// 退格键：按下即删，按住连删
+/// 退格键：按下即删，按住连删，上滑清空整串
 struct RepeatKey: View {
     let spec: KeySpec
     let onFire: () -> Void
+    var onSwipeUp: (() -> Void)? = nil
 
     @State private var pressed = false
+    @State private var consumed = false
     @State private var timer: Timer?
 
     var body: some View {
@@ -78,32 +124,89 @@ struct RepeatKey: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
-                .onChanged { _ in
+                .onChanged { v in
+                    if consumed { return }
+                    if v.translation.height < -40 {
+                        consumed = true
+                        stop()
+                        Haptics.bump()
+                        onSwipeUp?()
+                        return
+                    }
                     if !pressed {
                         pressed = true
                         Haptics.tap()
+                        KeySound.play()
                         onFire()
-                        startRepeating()
+                        start()
                     }
                 }
                 .onEnded { _ in
-                    pressed = false
-                    stopRepeating()
+                    consumed = false
+                    stop()
                 }
         )
-        .onDisappear { stopRepeating() }
+        .onDisappear { stop() }
     }
 
-    private func startRepeating() {
-        stopRepeating()
+    private func start() {
+        stop()
         timer = Timer.scheduledTimer(withTimeInterval: 0.09, repeats: true) { _ in
             onFire()
         }
     }
 
-    private func stopRepeating() {
+    private func stop() {
         timer?.invalidate()
         timer = nil
+        pressed = false
+    }
+}
+
+/// 空格键：点一下上屏/空格，左右滑动移动光标
+struct SpaceKey: View {
+    let spec: KeySpec
+    let onTap: () -> Void
+    let onMove: (Int) -> Void
+
+    @State private var pressed = false
+    @State private var consumed = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
+                .fill(pressed ? Color(white: 0.60)
+                              : Color(red: 0.68, green: 0.70, blue: 0.74))
+                .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
+            Text(spec.label)
+                .font(.system(size: 15))
+                .foregroundColor(.black)
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    if consumed { return }
+                    if !pressed {
+                        pressed = true
+                        Haptics.tap()
+                        KeySound.play()
+                    }
+                    if abs(v.translation.width) > 24 {
+                        consumed = true
+                        let steps = Int(v.translation.width / 24)
+                        if steps != 0 {
+                            Haptics.bump()
+                            onMove(steps)
+                        }
+                    }
+                }
+                .onEnded { _ in
+                    if consumed { consumed = false; pressed = false; return }
+                    pressed = false
+                    onTap()
+                }
+        )
     }
 }
 
@@ -111,6 +214,9 @@ struct RepeatKey: View {
 struct KeyRow: View {
     let keys: [KeySpec]
     let onKey: (KeySpec) -> Void
+    let onSwipe: (KeySpec, String) -> Void
+    let onDeleteClear: () -> Void
+    let onSpaceMove: (Int) -> Void
 
     var body: some View {
         GeometryReader { geo in
@@ -129,15 +235,20 @@ struct KeyRow: View {
 
     @ViewBuilder
     private func keyView(_ spec: KeySpec) -> some View {
-        if case .backspace = spec.action {
-            RepeatKey(spec: spec) { onKey(spec) }
-        } else {
-            KeyCap(spec: spec) { onKey(spec) }
+        switch spec.action {
+        case .backspace:
+            RepeatKey(spec: spec, onFire: { onKey(spec) }, onSwipeUp: onDeleteClear)
+        case .space:
+            SpaceKey(spec: spec, onTap: { onKey(spec) }, onMove: onSpaceMove)
+        default:
+            KeyCap(spec: spec,
+                   onTap: { onKey(spec) },
+                   onSwipe: { s in onSwipe(spec, s) })
         }
     }
 }
 
-/// 候选栏：拼音串在左，候选词往后排，点一下就上屏
+/// 候选栏：拼音串/「联想」在左，候选往后排，首个候选加重
 struct CandidateBar: View {
     let composing: String
     let candidates: [PinyinCandidate]
@@ -147,7 +258,7 @@ struct CandidateBar: View {
 
     var body: some View {
         Group {
-            if composing.isEmpty {
+            if shown.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "text.book.closed")
                         .font(.system(size: 15))
@@ -161,17 +272,24 @@ struct CandidateBar: View {
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
-                        Text(composing)
-                            .font(.system(size: 15))
+                        Text(composing.isEmpty ? "联想" : composing)
+                            .font(.system(size: composing.isEmpty ? 12 : 15))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 10)
+                        divider
                         ForEach(shown.indices, id: \.self) { i in
                             Button(action: { onPick(shown[i].word) }) {
-                                Text(shown[i].word)
-                                    .font(.system(size: 19))
-                                    .foregroundColor(.black)
-                                    .padding(.horizontal, 10)
-                                    .frame(height: KBMetrics.barHeight)
+                                HStack(spacing: 0) {
+                                    Text(shown[i].word)
+                                        .font(.system(size: i == 0 ? 21 : 19,
+                                                      weight: i == 0 ? .semibold : .regular))
+                                        .foregroundColor(shown[i].literal
+                                                         ? Color(red: 0.34, green: 0.38, blue: 0.46)
+                                                         : .black)
+                                        .padding(.horizontal, 10)
+                                    if i < shown.count - 1 { divider }
+                                }
+                                .frame(height: KBMetrics.barHeight)
                             }
                             .buttonStyle(.plain)
                         }
@@ -185,12 +303,10 @@ struct CandidateBar: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.white.opacity(0.65)))
     }
-}
 
-enum Haptics {
-    private static let light = UIImpactFeedbackGenerator(style: .light)
-
-    static func tap() {
-        light.impactOccurred()
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.10))
+            .frame(width: 0.5, height: 20)
     }
 }
