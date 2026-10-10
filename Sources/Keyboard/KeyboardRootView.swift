@@ -11,19 +11,21 @@ struct KeyboardRootView: View {
     @State private var authorized = AuthStore.isLoggedIn
     @State private var hint = ""
 
-    private let letterRows: [[KeySpec]] = [
-        "qwertyuiop".map { KeySpec(char: String($0)) },
-        "asdfghjkl".map { KeySpec(char: String($0)) },
-        "zxcvbnm".map { KeySpec(char: String($0)) },
-    ]
+    // 输入状态
+    @State private var composing = ""                    // 拼音串
+    @State private var candidates: [PinyinCandidate] = []
+    @State private var layer: KBLayer = .letters
+    @State private var shiftOn = false
+    @State private var capsLock = false
+    @State private var lastShiftTap = Date.distantPast
 
     var body: some View {
         Group {
             if authorized { keyboard } else { gate }
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.horizontal, KBMetrics.sideInset)
+        .padding(.top, KBMetrics.topInset)
+        .padding(.bottom, KBMetrics.bottomInset)
         .background(Color(red: 0.82, green: 0.83, blue: 0.85))
         .onAppear(perform: check)
     }
@@ -31,50 +33,113 @@ struct KeyboardRootView: View {
     // MARK: - 已授权：正常键盘
 
     private var keyboard: some View {
-        VStack(spacing: 7) {
-            toolbar
-            ForEach(letterRows.indices, id: \.self) { i in
-                KeyRow(keys: letterRows[i]) { spec in
-                    if let c = spec.char { controller.insert(c) }
-                }
+        VStack(spacing: KBMetrics.rowGap) {
+            CandidateBar(composing: composing, candidates: candidates, onPick: pick)
+            ForEach(rows.indices, id: \.self) { i in
+                KeyRow(keys: rows[i], onKey: handle)
             }
-            bottomRow
         }
     }
 
-    /// 顶部横栏 —— 阶段 2 换成真正的「思想库」输入框
-    private var toolbar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "text.book.closed")
-                .font(.system(size: 15))
-                .foregroundColor(.secondary)
-            Text("思想库（阶段 2 接上）")
-                .font(.system(size: 14))
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 34)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.white.opacity(0.65)))
+    private var rows: [[KeySpec]] {
+        KeyboardLayout.rows(layer: layer, shift: shiftOn || capsLock)
     }
 
-    private var bottomRow: some View {
-        KeyRow(keys: [
-            KeySpec(label: "🌐", weight: 1.3, kind: .globe),
-            KeySpec(label: "空格", weight: 5.0, kind: .space),
-            KeySpec(label: "⌫", weight: 1.3, kind: .backspace),
-            KeySpec(label: "换行", weight: 1.5, kind: .ret),
-        ]) { spec in
-            switch spec.kind {
-            case .globe:     controller.advanceToNextInputMode()
-            case .space:     controller.insert(" ")
-            case .backspace: controller.backspace()
-            case .ret:       controller.newline()
-            case .char:      break
-            }
+    // MARK: - 按键分发
+
+    private func handle(_ spec: KeySpec) {
+        if case .backspace = spec.action {
+            // 退格的触感归 RepeatKey 管，连删不震
+        } else {
+            Haptics.tap()
         }
+
+        switch spec.action {
+        case .letter(let c):
+            if shiftOn || capsLock {
+                commitComposing()
+                controller.insert(c.uppercased())
+                if shiftOn && !capsLock { shiftOn = false }
+            } else {
+                composing += c
+                refresh()
+            }
+
+        case .text(let t):
+            commitComposing()
+            controller.insert(t)
+            if layer != .letters { layer = .letters }
+            shiftOn = false
+
+        case .shift:
+            tapShift()
+
+        case .backspace:
+            if composing.isEmpty {
+                controller.backspace()
+            } else {
+                composing.removeLast()
+                refresh()
+            }
+
+        case .space:
+            if composing.isEmpty {
+                controller.insert(" ")
+            } else {
+                commitComposing()
+            }
+
+        case .ret:
+            commitComposing()
+            controller.newline()
+
+        case .globe:
+            commitComposing()
+            controller.advanceToNextInputMode()
+
+        case .toLayer(let l):
+            commitComposing()
+            layer = l
+            shiftOn = false
+        }
+    }
+
+    private func tapShift() {
+        let now = Date()
+        let doubleTap = now.timeIntervalSince(lastShiftTap) < 0.35
+        lastShiftTap = now
+        if doubleTap {
+            capsLock.toggle()
+            shiftOn = false
+        } else if capsLock {
+            capsLock = false
+            shiftOn = false
+        } else {
+            shiftOn.toggle()
+        }
+    }
+
+    // MARK: - 输入态同步
+
+    /// 拼音串变了：重算候选 + 更新输入框里的占位文本
+    private func refresh() {
+        candidates = PinyinEngine.shared.candidates(for: composing)
+        controller.setComposing(composing)
+    }
+
+    /// 把当前拼音串按首选候选上屏
+    private func commitComposing() {
+        guard !composing.isEmpty else { return }
+        controller.commit(candidates.first?.word ?? composing)
+        composing = ""
+        candidates = []
+    }
+
+    /// 点了候选栏里的词
+    private func pick(_ word: String) {
+        controller.commit(word)
+        composing = ""
+        candidates = []
     }
 
     // MARK: - 未授权：授权门
@@ -118,6 +183,9 @@ struct KeyboardRootView: View {
         if authorized {
             hint = ""
             controller.refreshAuth()
+        } else {
+            composing = ""
+            candidates = []
         }
     }
 }
@@ -137,76 +205,6 @@ private struct GateButton: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color.white)
                         .shadow(color: .black.opacity(0.2),
-                                radius: 0, x: 0, y: 1))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - 键位模型
-
-struct KeySpec: Identifiable {
-    enum Kind { case char, space, backspace, ret, globe }
-
-    let id = UUID()
-    let label: String
-    let weight: CGFloat
-    let kind: Kind
-    let char: String?
-
-    init(char: String) {
-        self.label = char.uppercased()
-        self.weight = 1
-        self.kind = .char
-        self.char = char
-    }
-
-    init(label: String, weight: CGFloat, kind: Kind) {
-        self.label = label
-        self.weight = weight
-        self.kind = kind
-        self.char = nil
-    }
-}
-
-// MARK: - 一行键位（按权重分宽度）
-
-struct KeyRow: View {
-    let keys: [KeySpec]
-    let onTap: (KeySpec) -> Void
-
-    private let gap: CGFloat = 5
-
-    var body: some View {
-        GeometryReader { geo in
-            let total = keys.reduce(0) { $0 + $1.weight }
-            let unit = (geo.size.width
-                        - gap * CGFloat(max(keys.count - 1, 0))) / total
-            HStack(spacing: gap) {
-                ForEach(keys) { spec in
-                    KeyCap(label: spec.label) { onTap(spec) }
-                        .frame(width: unit * spec.weight)
-                }
-            }
-        }
-        .frame(height: 44)
-    }
-}
-
-struct KeyCap: View {
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 20))
-                .foregroundColor(.black)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.white)
-                        .shadow(color: .black.opacity(0.28),
                                 radius: 0, x: 0, y: 1))
         }
         .buttonStyle(.plain)
