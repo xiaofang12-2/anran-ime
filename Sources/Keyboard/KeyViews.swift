@@ -34,7 +34,7 @@ struct KeyCap: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
-                .fill(fill)
+                .fill(fill(pressed))
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
             VStack(spacing: 0) {
                 Text(spec.label)
