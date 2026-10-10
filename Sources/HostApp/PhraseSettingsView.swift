@@ -104,9 +104,7 @@ private struct PhraseEditView: View {
                         .autocorrectionDisabled()
                 }
                 Section("展开内容") {
-                    TextField("如 张三 13800000000 北京市朝阳区",
-                              text: $phrase.text, axis: .vertical)
-                        .lineLimit(1...5)
+                    TextField("如 张三 13800000000 北京市朝阳区", text: $phrase.text)
                 }
             }
             .navigationTitle(phrase.code.isEmpty ? "添加短语" : "编辑短语")

@@ -88,9 +88,9 @@ private struct KBPreview: View {
     let cfg: KBConfig
 
     private let rows: [[String]] = [
-        Array("qwertyuiop").map(String.init),
-        Array("asdfghjkl").map(String.init),
-        Array("zxcvbnm").map(String.init),
+        Array("qwertyuiop").map { String($0) },
+        Array("asdfghjkl").map { String($0) },
+        Array("zxcvbnm").map { String($0) },
     ]
 
     var body: some View {
