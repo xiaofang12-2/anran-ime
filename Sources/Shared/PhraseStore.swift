@@ -20,6 +20,7 @@ struct PhraseBook: Codable, Equatable {
     var rev: Int = 0
 
     static let fallback = PhraseBook()
+    static let pastePrefix = "ANRAN-PHRASE::"
 
     /// 去掉空码/空内容与重复触发码，后写的覆盖先写的
     var sanitized: PhraseBook {
