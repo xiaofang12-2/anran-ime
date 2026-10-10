@@ -18,22 +18,17 @@ struct PinyinCandidate {
     }
 }
 
-/// 键盘形态
-enum KBMode: String {
-    case qwerty   // 26 键
-    case t9       // 9 键
-}
-
 /// 本地拼音引擎
 ///
-/// 词库 `Support/dict/pinyin.bin`（26 万词条）用 `mappedIfSafe` 内存映射，
+/// 词库 `Support/dict/pinyin.bin`（40 万词条）用 `mappedIfSafe` 内存映射，
 /// 不整块读进堆 —— 键盘扩展只有 30~60MB 内存，这是硬约束。
 /// 联想表 `Support/dict/assoc.bin` 很小（字 -> 常用后继字），启动一次性读进字典。
 ///
 /// 出候选的路子：
 ///   1. 前缀/完全匹配（含模糊音变体）—— 短输入靠它，命中即高优先
-///   2. 词格切分（26 键）—— 长句靠它，按「词」而不是「字」拼，长词得分远高于散字
-///   3. 9 键数字串按音节展开
+///   2. 词格切分 —— 长句靠它，按「词」而不是「字」拼，长词得分远高于散字
+///   3. 简拼 / 混拼（首字母缩写表）
+///   4. 自定义短语（触发码精确命中直接顶最前）
 /// 再叠加「用户词频」加权，用得多的词自动往前提。
 final class PinyinEngine {
 
@@ -45,10 +40,11 @@ final class PinyinEngine {
     private var valOffTable = 0
 
     private var syllableSet = Set<String>()
-    /// (数字编码, 音节)，9 键用
-    private var t9Index: [(digits: String, syl: String)] = []
 
     private var assoc: [String: [String]] = [:]
+
+    /// 自定义短语：触发码 -> 展开文本（主程序下发，见 PhraseStore）
+    private var phrases: [(code: String, text: String)] = []
 
     private var ready = false
 
@@ -100,19 +96,13 @@ final class PinyinEngine {
         let sylCount = u32(28)
         let sylOffTable = u32(32)
         guard sylCount > 0 && sylCount < 20000 else { return }
-        var list: [String] = []
-        list.reserveCapacity(sylCount)
         var set = Set<String>()
         set.reserveCapacity(sylCount)
         for i in 0..<sylCount {
             let s = string(u32(sylOffTable + 4 * i), u32(sylOffTable + 4 * (i + 1)))
-            if !s.isEmpty {
-                list.append(s)
-                set.insert(s)
-            }
+            if !s.isEmpty { set.insert(s) }
         }
         syllableSet = set
-        t9Index = list.map { (digits: t9Digits($0), syl: $0) }
     }
 
     private func loadAssoc(_ url: URL) {
@@ -174,14 +164,23 @@ final class PinyinEngine {
 
     // MARK: - 对外出候选
 
-    func candidates(for raw: String, mode: KBMode) -> [PinyinCandidate] {
+    func candidates(for raw: String) -> [PinyinCandidate] {
         ensureLoaded()
-        let key = mode == .t9 ? "9:" + raw : "q:" + raw
+        let key = "q:" + raw
         if key == cacheKey { return cacheResult }
-        let result = mode == .t9 ? t9Candidates(raw) : qwertyCandidates(raw)
+        let result = qwertyCandidates(raw)
         cacheKey = key
         cacheResult = result
         return result
+    }
+
+    /// 主程序下发的自定义短语；换一批就作废缓存重算
+    func setPhrases(_ list: [Phrase]) {
+        phrases = list
+            .map { ($0.cleanCode, $0.text) }
+            .filter { !$0.0.isEmpty && !$0.1.isEmpty }
+        cacheKey = ""
+        cacheResult = []
     }
 
     /// 上屏后联想：拿刚上屏的末字查后继字
@@ -247,14 +246,14 @@ final class PinyinEngine {
             let penalty = vi * 300_000
             var i = lowerBound(variant)
             var scanned = 0
-            while i < entryCount && scanned < 120 {
+            while i < entryCount && scanned < 200 {
                 let k = keyAt(i)
                 if !k.hasPrefix(variant) { break }
                 let exact = (k == variant)
                 let base = (exact ? 900_000
                                   : 620_000 - (k.count - variant.count) * 2_000) - penalty
                 let cands = candidatesAt(i)
-                let take = exact ? cands.count : min(cands.count, 3)
+                let take = exact ? cands.count : min(cands.count, 5)
                 for idx in 0..<take {
                     let s = base - idx * 120
                     let w = cands[idx]
@@ -345,28 +344,6 @@ final class PinyinEngine {
         }
 
         return go(0).filter { $0.count >= 2 && $0.count <= 8 }
-    }
-
-    // MARK: - 9 键
-
-    private func t9Candidates(_ raw: String) -> [PinyinCandidate] {
-        let digits = String(raw.filter { $0 >= "0" && $0 <= "9" })
-        if digits.isEmpty { return [] }
-        var scored = [String: (score: Int, used: Int)]()
-        for (phrase, sc, used) in t9Lattice(Array(digits)) {
-            let s = 320_000 + sc
-            if let old = scored[phrase], old.score >= s { continue }
-            scored[phrase] = (s, used)
-        }
-        // 用户记下的词：数字串对上它的拼音就顶到最前
-        for (py, words) in userWords where t9Digits(py) == digits {
-            for (i, w) in words.enumerated() {
-                let s = 950_000 - i * 1_000
-                if let old = scored[w], old.score >= s { continue }
-                scored[w] = (s, digits.count)
-            }
-        }
-        return finish(&scored, literal: digits)
     }
 
     // MARK: - 收尾：加权、排序、截断、英文候选
@@ -461,57 +438,6 @@ final class PinyinEngine {
         return go(0).filter { !$0.0.isEmpty }
     }
 
-    /// 9 键词格：先按数字串展开成音节，再走同一套「词优先」打分
-    private func t9Lattice(_ chars: [Character]) -> [(String, Int, Int)] {
-        var memo = [Int: [(String, Int, Int)]]()
-        let n = chars.count
-
-        func go(_ start: Int) -> [(String, Int, Int)] {
-            if let m = memo[start] { return m }
-            if start >= n {
-                memo[start] = [("", 0, 0)]
-                return memo[start]!
-            }
-            var out: [(String, Int, Int)] = []
-            let maxLen = min(6, n - start)
-            var len = 1
-            while len <= maxLen {
-                let chunk = String(chars[start..<(start + len)])
-                for item in t9Index where item.digits.hasPrefix(chunk) {
-                    guard let idx = exactIndex(item.syl) else { continue }
-                    let cands = candidatesAt(idx)
-                    let take = min(cands.count, 3)
-                    if take == 0 { continue }
-                    let rest = go(start + len)
-                    if rest.isEmpty { continue }
-                    for k in 0..<take {
-                        let w = cands[k]
-                        let ws = wordScore(w, rank: k)
-                        for (rp, rs, ru) in rest {
-                            let joined = w + rp
-                            if joined.count > 12 { continue }
-                            let pen = rs == 0 ? 0 : 200
-                            out.append((joined, ws + rs - pen, len + ru))
-                        }
-                    }
-                }
-                len += 1
-            }
-            if out.isEmpty {
-                memo[start] = [("", 0, 0)]
-                return memo[start]!
-            }
-            if out.count > 24 {
-                out.sort { $0.1 > $1.1 }
-                out = Array(out.prefix(24))
-            }
-            memo[start] = out
-            return out
-        }
-
-        return go(0).filter { !$0.0.isEmpty }
-    }
-
     // MARK: - 模糊音
 
     /// 生成容错变体：翘舌/平舌、前后鼻音、n/l、f/h。
@@ -533,28 +459,6 @@ final class PinyinEngine {
                 nv.replaceSubrange(r, with: b)
                 if !out.contains(nv) { out.append(nv) }
             }
-        }
-        return out
-    }
-
-    // MARK: - 9 键数字编码
-
-    private static let t9Map: [Character: Character] = [
-        "a": "2", "b": "2", "c": "2",
-        "d": "3", "e": "3", "f": "3",
-        "g": "4", "h": "4", "i": "4",
-        "j": "5", "k": "5", "l": "5",
-        "m": "6", "n": "6", "o": "6",
-        "p": "7", "q": "7", "r": "7", "s": "7",
-        "t": "8", "u": "8", "v": "8",
-        "w": "9", "x": "9", "y": "9", "z": "9",
-    ]
-
-    private func t9Digits(_ s: String) -> String {
-        var out = ""
-        out.reserveCapacity(s.count)
-        for ch in s {
-            if let d = PinyinEngine.t9Map[ch] { out.append(d) }
         }
         return out
     }

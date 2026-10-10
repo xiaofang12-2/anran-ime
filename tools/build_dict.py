@@ -39,6 +39,7 @@ from pypinyin import pinyin, Style
 from pypinyin.constants import PHRASES_DICT
 
 from hot_words import TOP, COMBOS
+from colloquial import COLLOQUIAL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DICT_DIR = os.path.join(HERE, "..", "Support", "dict")
@@ -224,8 +225,24 @@ def build():
             if flat:
                 char_read[ch] = list(dict.fromkeys(flat))
 
-    char_first = {c: rs[0] for c, rs in char_read.items()}
+    # 非标准叹词读音归一：嗯=n、唔=m、哼=hng、噷=hm……
+    # 不归一的话会生成 "n" "m" "ng" 这种键，于是打「nb」会先蹦「嗯帮忙」
+    # （键 nbangmang = n+bang+mang，被当成 nb 开头的词误配）
+    SYL_FIX = {"n": "en", "m": "wu", "ng": "en", "hm": "hen", "hng": "heng", "ê": "e"}
+    for ch in list(char_read.keys()):
+        fixed = []
+        for r in char_read[ch]:
+            r = SYL_FIX.get(r, r)
+            if not r:
+                continue
+            if r not in fixed:
+                fixed.append(r)
+        if fixed:
+            char_read[ch] = fixed
+        else:
+            del char_read[ch]
 
+    char_first = {c: rs[0] for c, rs in char_read.items()}
     # 简体常用字白名单：jieba 出现过的字。用来挡繁体异体词/字
     known_chars = set()
     for w in freqs:
@@ -249,6 +266,9 @@ def build():
     # 否则短输入补全表会被这些短语塞满（打 w 先蹦「午安 完成 微信」就很难看）
     TOP_W = max_freq // 2
     COMBO_W = max_freq // 50
+    # 口语/网络语/怼人词：权重给到最高，保证简拼（xbzz/nmsl/sb/nb）时
+    # 它们压过同缩写的书面词（那边/上班/随便…）—— 这软件就是拿来扣字的
+    COLLOQ_W = max_freq
 
     table = defaultdict(dict)
 
@@ -311,8 +331,34 @@ def build():
         if CJK.match(w) and len(w) <= MAX_WORD_LEN:
             add_uv(_py_key(w, char_first, phrase_read), w, COMBO_W)
 
+    # 3.5) 口语 / 网络语 / 怼人词：显式读音，一个字一个音节。
+    #      jieba、phrase-pinyin-data 都是书面语词典，这批词根本不在里面，
+    #      打 xbzz / nmsl / gkd / xswl 一个汉字都出不来，全靠这张表补。
+    syl_valid = set()
+    for rs in char_read.values():
+        syl_valid.update(rs)
+    colloq_ok = colloq_bad = 0
+    for w, py in COLLOQUIAL:
+        if not CJK.match(w) or len(w) > MAX_WORD_LEN:
+            continue
+        syls = py.split()
+        if len(syls) != len(w):
+            colloq_bad += 1
+            continue
+        key = "".join(syls)
+        if not key.isalpha():
+            colloq_bad += 1
+            continue
+        if any(s not in syl_valid for s in syls):
+            colloq_bad += 1        # 读音里有非标准音节，宁可不要也别塞错键
+            continue
+        add_uv(key, w, COLLOQ_W)
+        colloq_ok += 1
+    print("口语词入库:", colloq_ok, " 丢弃(读音/字数不符):", colloq_bad)
+
     # 4) 短输入「最常用补全」表：1~2 字母前缀下最常用的词排前面。
-    #    单字加权 3 倍（单字是基本单位，短语不该把它挤走），长词按长度递减。
+    #    单字母只放单字（打 s 该出「是 说 上」，不是「傻逼 上班」）；
+    #    双字母放全部，单字仍加权 3 倍保证基本字优先。
     LEN_MUL = {1: 1.0, 2: 0.5}
     buckets = defaultdict(list)
     for key, d in table.items():
@@ -322,6 +368,8 @@ def build():
         for L in range(1, lim + 1):
             p = key[:L]
             for w, wt in d.items():
+                if L == 1 and len(w) > 1:
+                    continue
                 buckets[p].append((wt * LEN_MUL.get(len(w), 0.3), w))
     agg_n = 0
     for p, lst in buckets.items():

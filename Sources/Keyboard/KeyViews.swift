@@ -41,16 +41,9 @@ struct KeyCap: View {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
                 .fill(fill(pressed))
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
-            VStack(spacing: 0) {
-                Text(spec.label)
-                    .font(.system(size: spec.special ? 17 : (spec.sub != nil ? 20 : 22)))
-                    .foregroundColor(.black)
-                if let sub = spec.sub {
-                    Text(sub)
-                        .font(.system(size: 9))
-                        .foregroundColor(.black.opacity(0.5))
-                }
-            }
+            Text(spec.label)
+                .font(.system(size: (spec.special ? 17 : 22) * KBMetrics.fontScale))
+                .foregroundColor(.black)
         }
         .scaleEffect(pressed && !spec.special ? 0.96 : 1)
         .overlay(alignment: .top) {
@@ -247,52 +240,38 @@ struct KeyRow: View {
     }
 }
 
-/// 候选栏：左头是 26/9 键切换，拼音串（或「联想」）挨着它，候选往后排，首个候选加重。
+/// 候选栏：只有「拼音串 + 候选」两样，不放任何功能键（数字、思想库都不占这儿）。
 /// 长按某个候选 = 把它从用户词频里抹掉（自己纠错，对标百度的「删除记忆」）。
 struct CandidateBar: View {
     let composing: String
     let candidates: [PinyinCandidate]
-    let mode: KBMode
     let onPick: (PinyinCandidate) -> Void
-    let onToggleMode: () -> Void
     let onForget: (String) -> Void
 
     private var shown: [PinyinCandidate] { Array(candidates.prefix(40)) }
 
+    private var scale: CGFloat { KBMetrics.fontScale }
+
     var body: some View {
         HStack(spacing: 0) {
-            Text(mode == .qwerty ? "9键" : "26键")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Color(red: 0.28, green: 0.31, blue: 0.38))
-                .frame(width: 46)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture { onToggleMode() }
-
-            divider
-
             if shown.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "text.book.closed")
-                        .font(.system(size: 15))
-                        .foregroundColor(.secondary)
-                    Text("思想库")
-                        .font(.system(size: 14))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
+                // 没候选就一条空栏，只把正在打的拼音串露出来，别的不占位
+                Text(composing)
+                    .font(.system(size: 15 * scale))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                Spacer()
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         Text(composing.isEmpty ? "联想" : composing)
-                            .font(.system(size: composing.isEmpty ? 12 : 15))
+                            .font(.system(size: (composing.isEmpty ? 12 : 15) * scale))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 10)
                         divider
                         ForEach(shown.indices, id: \.self) { i in
                             Text(shown[i].word)
-                                .font(.system(size: i == 0 ? 22 : 19,
+                                .font(.system(size: (i == 0 ? 22 : 19) * scale,
                                               weight: i == 0 ? .semibold : .regular))
                                 .foregroundColor(shown[i].literal
                                                  ? Color(red: 0.34, green: 0.38, blue: 0.46)

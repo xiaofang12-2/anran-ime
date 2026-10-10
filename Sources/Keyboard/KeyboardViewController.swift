@@ -28,14 +28,14 @@ final class KeyboardViewController: UIInputViewController {
         host.didMove(toParent: self)
         hosting = host
 
-        // 26 键 4 行、9 键 5 行，高度跟着形态走
-        let h = KBMetrics.totalHeight(rows: 4)
+        // 26 键 4 行，高度按用户在「键盘布局」里调的键高算
+        let h = KBMetrics.totalHeight(rows: KBMetrics.rows)
         let c = view.heightAnchor.constraint(equalToConstant: h)
         c.isActive = true
         heightConstraint = c
     }
 
-    /// 键盘形态变了（26/9 键）就调高度，否则 9 键会被裁掉一行
+    /// 主程序改了键高/间距后调一次，把键盘高度跟着重算，否则行会被裁掉
     func setRows(_ n: Int) {
         let h = KBMetrics.totalHeight(rows: n)
         guard let c = heightConstraint, abs(c.constant - h) > 0.5 else { return }
