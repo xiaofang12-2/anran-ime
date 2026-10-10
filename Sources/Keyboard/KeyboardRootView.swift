@@ -204,24 +204,33 @@ struct KeyboardRootView: View {
     /// 把当前拼音串按首选候选上屏
     private func commitComposing() {
         guard !composing.isEmpty else { return }
-        let word = candidates.first(where: { !$0.literal })?.word
-            ?? candidates.first?.word
-            ?? composing
-        applyCommit(word, pinyin: composing)
+        let best = candidates.first(where: { !$0.literal }) ?? candidates.first
+        let word = best?.word ?? composing
+        applyCommit(word, pinyin: composing, consumed: best?.consumed ?? composing.count)
     }
 
     /// 点了候选栏里的词（含联想）
-    private func pick(_ word: String) {
-        applyCommit(word, pinyin: composing)
+    private func pick(_ c: PinyinCandidate) {
+        applyCommit(c.word, pinyin: composing, consumed: c.consumed)
     }
 
-    private func applyCommit(_ word: String, pinyin: String) {
+    /// 上屏一个词。若这条候选只吃掉了拼音串的一部分（比如打 jintianx 选了「今天」），
+    /// 剩下的「x」继续留在串里接着拼 —— 百度就是这么干的。
+    private func applyCommit(_ word: String, pinyin: String, consumed: Int) {
         controller.commit(word)
-        PinyinEngine.shared.learn(word, pinyin: pinyin)
-        composing = ""
-        // 上屏后立刻联想下一个字
-        candidates = PinyinEngine.shared.associate(word)
-            .map { PinyinCandidate(word: $0, score: 0) }
+        let used = (consumed > 0 && consumed <= pinyin.count) ? consumed : pinyin.count
+        PinyinEngine.shared.learn(word, pinyin: String(pinyin.prefix(used)))
+
+        let rest = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
+        composing = rest
+        if rest.isEmpty {
+            // 上屏后立刻联想下一个字
+            candidates = PinyinEngine.shared.associate(word)
+                .map { PinyinCandidate(word: $0, score: 0) }
+        } else {
+            controller.setComposing(rest)
+            candidates = PinyinEngine.shared.candidates(for: rest, mode: mode)
+        }
     }
 
     // MARK: - 未授权：授权门

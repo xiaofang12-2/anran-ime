@@ -254,7 +254,7 @@ struct CandidateBar: View {
     let composing: String
     let candidates: [PinyinCandidate]
     let mode: KBMode
-    let onPick: (String) -> Void
+    let onPick: (PinyinCandidate) -> Void
     let onToggleMode: () -> Void
     let onForget: (String) -> Void
 
@@ -301,7 +301,7 @@ struct CandidateBar: View {
                                 .padding(.horizontal, 11)
                                 .frame(height: KBMetrics.barHeight)
                                 .contentShape(Rectangle())
-                                .onTapGesture { onPick(shown[i].word) }
+                                .onTapGesture { onPick(shown[i]) }
                                 .onLongPressGesture(minimumDuration: 0.45) {
                                     Haptics.bump()
                                     onForget(shown[i].word)

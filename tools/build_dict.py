@@ -44,6 +44,13 @@ MAX_CAND_PER_KEY = 14
 # 5~6 字的长词只收高频的，避免长尾噪声把词库撑大
 LONG_WORD_MIN_FREQ = 800
 
+# 繁体/异体专用字：简体输入法不该把它们当候选（打 nihao 蹦出「妳」很难看）
+TRAD_VARIANT = set("妳牠祂")
+
+
+def has_trad_variant(w):
+    return any(c in TRAD_VARIANT for c in w)
+
 
 def norm(sylls):
     """pypinyin 结果 -> 无调拼音串"""
@@ -97,7 +104,7 @@ def build():
     table = {}
 
     def add(key, word, weight):
-        if not key or not word:
+        if not key or not word or has_trad_variant(word):
             return
         d = table.setdefault(key, {})
         if d.get(word, -1) < weight:
@@ -105,6 +112,8 @@ def build():
 
     # 1) 单字
     for ch, key in char_first.items():
+        if has_trad_variant(ch):
+            continue
         add(key, ch, freqs.get(ch, CHAR_DEFAULT))
 
     multi_reading = 0

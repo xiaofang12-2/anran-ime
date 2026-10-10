@@ -241,8 +241,10 @@ final class PinyinEngine {
         var scored = [String: (score: Int, used: Int)]()
 
         // 1) 前缀/完全匹配，带模糊音变体
+        //    模糊音（n/l、zh/z…）只当兜底：罚分给得比「主串前缀命中」还低，
+        //    保证打 nihao 时「利好」这类 l/n 串音永远排在「你好」后面
         for (vi, variant) in fuzzyVariants(input).enumerated() {
-            let penalty = vi * 7_000
+            let penalty = vi * 300_000
             var i = lowerBound(variant)
             var scanned = 0
             while i < entryCount && scanned < 120 {
@@ -375,7 +377,7 @@ final class PinyinEngine {
                                 for (rp, rs, ru) in rest {
                                     let joined = w + rp
                                     if joined.count > 12 { continue }
-                                    let pen = rs == 0 ? 0 : 80
+                                    let pen = rs == 0 ? 0 : 200
                                     out.append((joined, ws + rs - pen, len + ru))
                                 }
                             }
@@ -428,7 +430,7 @@ final class PinyinEngine {
                         for (rp, rs, ru) in rest {
                             let joined = w + rp
                             if joined.count > 12 { continue }
-                            let pen = rs == 0 ? 0 : 80
+                            let pen = rs == 0 ? 0 : 200
                             out.append((joined, ws + rs - pen, len + ru))
                         }
                     }
