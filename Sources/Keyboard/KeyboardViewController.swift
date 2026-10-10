@@ -44,4 +44,32 @@ final class KeyboardViewController: UIInputViewController {
     func newline() {
         textDocumentProxy.insertText("\n")
     }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshAuth()
+    }
+
+    // MARK: - 授权
+
+    /// 心跳续票据：能连上就刷新，连不上先用本机缓存撑着（离线宽限）
+    /// 只有服务端明确说禁用 / 解绑 / 无此账号，才把登录态清掉
+    func refreshAuth() {
+        guard let s = AuthStore.current, !s.ticket.isEmpty else { return }
+        AnRanAPI.shared.heartbeat(ticket: s.ticket, machine: s.machine) { res in
+            if res.ok {
+                AuthStore.save(username: s.username, ticket: res.ticket,
+                               expireAt: res.expireAt)
+            } else if ["disabled", "unbound", "no_account",
+                       "machine_mismatch"].contains(res.error) {
+                AuthStore.clear()
+            }
+        }
+    }
+
+    /// 跳到主程序登录（主程序声明了 anranime:// 这个 scheme）
+    func openHostApp() {
+        guard let url = URL(string: "anranime://login") else { return }
+        extensionContext?.open(url, completionHandler: nil)
+    }
 }

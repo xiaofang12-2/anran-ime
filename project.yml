@@ -32,11 +32,16 @@ targets:
     sources:
       - path: Sources/HostApp
       - path: Sources/Shared
+      - path: Support/server.crt
+        buildPhase: resources
+      - path: Support/Assets.xcassets
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime
         INFOPLIST_FILE: Support/HostApp/Info.plist
         CODE_SIGN_ENTITLEMENTS: Support/HostApp/HostApp.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: "NO"
     dependencies:
@@ -50,11 +55,12 @@ targets:
     sources:
       - path: Sources/Keyboard
       - path: Sources/Shared
+      - path: Support/server.crt
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime.keyboard
         INFOPLIST_FILE: Support/Keyboard/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Support/Keyboard/Keyboard.entitlements
         GENERATE_INFOPLIST_FILE: "NO"
 
 schemes:
