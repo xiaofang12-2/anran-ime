@@ -1,0 +1,68 @@
+# XcodeGen 工程定义
+# Windows 上写不了 .xcodeproj（那是二进制/巨型文本），改成 YAML
+# 云端 CI 跑一句 xcodegen generate 就把工程生成出来
+
+name: AnRanIME
+
+options:
+  bundleIdPrefix: com.anran
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # 出的是未签名包 签名交给用户手机那头的 Sideloadly
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    ENABLE_BITCODE: "NO"
+    ALWAYS_SEARCH_USER_PATHS: "NO"
+
+targets:
+  # ---------------- 主 app：设置 / 思想库 / 剪贴板 / 短语 ----------------
+  AnRanIME:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/HostApp
+      - path: Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime
+        INFOPLIST_FILE: Support/HostApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/HostApp/HostApp.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "NO"
+    dependencies:
+      - target: AnRanKeyboard
+        embed: true
+
+  # ---------------- 键盘扩展：输入法本体 ----------------
+  AnRanKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/Keyboard
+      - path: Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime.keyboard
+        INFOPLIST_FILE: Support/Keyboard/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/Keyboard/Keyboard.entitlements
+        GENERATE_INFOPLIST_FILE: "NO"
+
+schemes:
+  AnRanIME:
+    build:
+      targets:
+        AnRanIME: all
+    run:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,18 @@
+# XcodeGen 生成物（云端 CI 会自己生成，不入库）
+AnRanIME.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# 打出来的包
+Payload/
+*.ipa
+
+# 便携工具
+.tools/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db

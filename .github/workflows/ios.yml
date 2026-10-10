@@ -1,0 +1,56 @@
+name: build-ipa
+
+# 本地是 Windows 编不了 iOS，靠云 Mac 出包。
+# 触发：手动点，或推 main 分支。
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 显示可用 SDK
+        run: xcodebuild -showsdks
+
+      - name: 编译（不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project AnRanIME.xcodeproj \
+            -scheme AnRanIME \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tail -60
+
+      - name: 打成未签名 ipa
+        run: |
+          APP="build/Build/Products/Release-iphoneos/AnRanIME.app"
+          test -d "$APP"
+          rm -rf Payload AnRanIME-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry AnRanIME-unsigned.ipa Payload
+          ls -lh AnRanIME-unsigned.ipa
+          echo "--- 扩展是否打进去了 ---"
+          ls -l Payload/AnRanIME.app/PlugIns/ || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnRanIME-unsigned-ipa
+          path: AnRanIME-unsigned.ipa
+          retention-days: 30

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  键盘扩展的注册信息
+	  NSExtensionPointIdentifier 必须是 com.apple.keyboard-service 才会出现在
+	  设置 -> 通用 -> 键盘 里
+	  RequestsOpenAccess = true 才能在系统里出现「完全访问」开关，
+	  关掉它键盘就读不到自己的词库 / 思想库（沙盒隔离）
+	-->
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>IsASCIICapable</key>
+			<true/>
+			<key>PrefersRightToLeft</key>
+			<false/>
+			<key>PrimaryLanguage</key>
+			<string>zh-Hans</string>
+			<key>RequestsOpenAccess</key>
+			<true/>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.keyboard-service</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
+	</dict>
+</dict>
+</plist>
