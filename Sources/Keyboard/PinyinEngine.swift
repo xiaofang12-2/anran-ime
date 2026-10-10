@@ -20,16 +20,22 @@ struct PinyinCandidate {
 
 /// 本地拼音引擎
 ///
-/// 词库 `Support/dict/pinyin.bin`（40 万词条）用 `mappedIfSafe` 内存映射，
+/// 词库 `Support/dict/pinyin.bin`（72 万词条）用 `mappedIfSafe` 内存映射，
 /// 不整块读进堆 —— 键盘扩展只有 30~60MB 内存，这是硬约束。
-/// 联想表 `Support/dict/assoc.bin` 很小（字 -> 常用后继字），启动一次性读进字典。
+/// 语言模型 `Support/dict/assoc.bin` 是字级 bigram（上下文首字 -> 后继字），
+/// 体积很小，启动一次性读进字典。
 ///
-/// 出候选的路子：
-///   1. 前缀/完全匹配（含模糊音变体）—— 短输入靠它，命中即高优先
-///   2. 词格切分 —— 长句靠它，按「词」而不是「字」拼，长词得分远高于散字
-///   3. 简拼 / 混拼（首字母缩写表）
-///   4. 自定义短语（触发码精确命中直接顶最前）
-/// 再叠加「用户词频」加权，用得多的词自动往前提。
+/// 解码路子对标 librime / 百度输入法（见 librime `gear/poet.cc`、`gear/grammar.h`）：
+///   输入拼音
+///     -> 音节图 SyllableGraph：每个位置能切出哪些音节
+///     -> 词图 WordGraph：音节路径拼成拼音串去词典查词
+///     -> 词图上的 Beam Search：score = Σ entry_weight(词) + Σ context_penalty(词 | 前文)
+///        entry_weight 即词典里的 log P(词)；context_penalty 由字级 bigram 给出，
+///        这就是 `grammar.h` 的 Grammar::Evaluate()。
+///     -> 候选 = 全覆盖句子 + 前缀补全词
+///
+/// 词典里每条候选存的是「全局对数概率」两字节，不是名次。
+/// 所以跨键比较、句子路径打分用的是同一把尺子 —— 不再有 900000/620000 这类手写常数。
 final class PinyinEngine {
 
     static let shared = PinyinEngine()
@@ -41,7 +47,9 @@ final class PinyinEngine {
 
     private var syllableSet = Set<String>()
 
-    private var assoc: [String: [String]] = [:]
+    /// 字级 bigram 语言模型：上下文首字 -> {后继字: log P(后继 | 上下文)}。
+    /// 词图打分的「上下文项」（对标 librime grammar.h 的 Grammar::Evaluate）。
+    private var lm: [String: [String: Double]] = [:]
 
     /// 自定义短语：触发码 -> 展开文本（主程序下发，见 PhraseStore）
     private var phrases: [(code: String, text: String)] = []
@@ -60,6 +68,28 @@ final class PinyinEngine {
     private struct UserData: Codable {
         var freq: [String: Int]
         var words: [String: [String]]
+    }
+
+    // MARK: - 对数概率编码（与 build_dict.py 一一对应）
+
+    private static let logBase = 0x10
+    private static let logSpan = 0x7E - 0x10 + 1        // 111
+    private static let logN = logSpan * logSpan         // 12321
+    private static let logFloor = 24.0
+
+    // 语言模型量化参数（与 build_assoc.py 一一对应）
+    private static let lmFloor = -12.0
+    private static let lmRef = -3.5
+    private static let lmWeight = 0.3
+
+    private func decodeLogp(_ a: Character, _ b: Character) -> Double {
+        let hi = Int(a.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
+        let lo = Int(b.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
+        var q = hi * PinyinEngine.logSpan + lo
+        if q < 0 { q = 0 }
+        if q > PinyinEngine.logN - 1 { q = PinyinEngine.logN - 1 }
+        return Double(q) / Double(PinyinEngine.logN - 1) * PinyinEngine.logFloor
+            - PinyinEngine.logFloor
     }
 
     private init() {
@@ -106,18 +136,37 @@ final class PinyinEngine {
     }
 
     private func loadAssoc(_ url: URL) {
-        guard let d = try? Data(contentsOf: url), d.count > 4 else { return }
-        let text = String(decoding: d.dropFirst(4), as: UTF8.self)
-        var map = [String: [String]]()
+        // ANBG v2：magic(4) + 版本(1) + payload。
+        // payload = record 用 \u{03} 分隔；record = 首字 + \u{02} + entry 用 \u{01} 分隔；
+        // entry = 后继字 + \u{04} + 概率字节。
+        guard let d = try? Data(contentsOf: url), d.count > 5 else { return }
+        let text = String(decoding: d.dropFirst(5), as: UTF8.self)
+        var map = [String: [String: Double]]()
         for rec in text.split(separator: "\u{03}") {
             guard let sep = rec.firstIndex(of: "\u{02}") else { continue }
-            let key = String(rec[rec.startIndex..<sep])
-            guard !key.isEmpty else { continue }
+            let ctx = String(rec[rec.startIndex..<sep])
+            guard !ctx.isEmpty else { continue }
             let rest = rec[rec.index(after: sep)...]
-            let follows = rest.split(separator: "\u{01}").map(String.init)
-            if !follows.isEmpty { map[key] = follows }
+            var row = [String: Double]()
+            for ent in rest.split(separator: "\u{01}") {
+                let a = Array(ent)
+                if a.count < 2 { continue }
+                let code = Int(a[a.count - 1].unicodeScalars.first?.value ?? 0)
+                let lp = PinyinEngine.lmFloor
+                    + (Double(code) - 2) / 253.0 * (0 - PinyinEngine.lmFloor)
+                row[String(a[0..<(a.count - 1)])] = lp
+            }
+            if !row.isEmpty { map[ctx] = row }
         }
-        assoc = map
+        lm = map
+    }
+
+    /// 上下文项：上一个词的尾字接到这个词的头字，返回罚分（>= 0）。
+    /// 没见过的接续按最罕见处理 —— 否则生僻字白捡零罚分把常用字挤下去。
+    private func lmPenalty(_ ctx: Character, _ fol: Character) -> Double {
+        let lp = lm[String(ctx)]?[String(fol)] ?? PinyinEngine.lmFloor
+        if lp >= PinyinEngine.lmRef { return 0 }
+        return PinyinEngine.lmWeight * (PinyinEngine.lmRef - lp)
     }
 
     // MARK: - 二进制读取（小端）
@@ -140,10 +189,21 @@ final class PinyinEngine {
         string(u32(keyOffTable + 4 * i), u32(keyOffTable + 4 * (i + 1)))
     }
 
-    private func candidatesAt(_ i: Int) -> [String] {
+    /// 一条候选：词 + 对数概率。
+    /// 词库里每条记录编码成「两字节对数概率 + 词」，字节落在 0x10..0x7E，
+    /// 绝不会跟候选分隔符 \u{01} 撞车。
+    private func candidatesAt(_ i: Int) -> [(word: String, logp: Double)] {
         let s = string(u32(valOffTable + 4 * i), u32(valOffTable + 4 * (i + 1)))
         if s.isEmpty { return [] }
-        return s.split(separator: "\u{01}").map(String.init)
+        var out: [(String, Double)] = []
+        for rec in s.split(separator: "\u{01}", omittingEmptySubsequences: true) {
+            let a = Array(rec)
+            if a.count < 3 { continue }
+            let lp = decodeLogp(a[0], a[1])
+            let w = String(a[2...])
+            if !w.isEmpty { out.append((w, lp)) }
+        }
+        return out
     }
 
     private func lowerBound(_ prefix: String) -> Int {
@@ -183,11 +243,11 @@ final class PinyinEngine {
         cacheResult = []
     }
 
-    /// 上屏后联想：拿刚上屏的末字查后继字
+    /// 上屏后联想：拿刚上屏的末字查后继字，按接续概率从高到低
     func associate(_ committed: String) -> [String] {
         ensureLoaded()
-        guard let last = committed.last else { return [] }
-        return assoc[String(last)] ?? []
+        guard let last = committed.last, let row = lm[String(last)] else { return [] }
+        return row.sorted { $0.value > $1.value }.map { $0.key }
     }
 
     /// 记一笔用户选择，下次同拼音时往前提；同时把「拼音 -> 词」记下来，
@@ -222,6 +282,14 @@ final class PinyinEngine {
         persistUser()
     }
 
+    /// 清空全部打字学习记录（主程序「清空打字学习记录」按钮触发）
+    func clearLearning() {
+        userFreq.removeAll()
+        userWords.removeAll()
+        cacheKey = ""
+        persistUser()
+    }
+
     private func persistUser() {
         let snapshot = UserData(freq: userFreq, words: userWords)
         userQueue.async {
@@ -231,217 +299,288 @@ final class PinyinEngine {
         }
     }
 
-    // MARK: - 26 键
+    // MARK: - 26 键解码
 
     private func qwertyCandidates(_ raw: String) -> [PinyinCandidate] {
         let input = raw.lowercased().filter { $0 >= "a" && $0 <= "z" }
         if input.isEmpty { return [] }
-
-        var scored = [String: (score: Int, used: Int)]()
-
-        // 1) 前缀/完全匹配，带模糊音变体
-        //    模糊音（n/l、zh/z…）只当兜底：罚分给得比「主串前缀命中」还低，
-        //    保证打 nihao 时「利好」这类 l/n 串音永远排在「你好」后面
-        for (vi, variant) in fuzzyVariants(input).enumerated() {
-            let penalty = vi * 300_000
-            var i = lowerBound(variant)
-            var scanned = 0
-            while i < entryCount && scanned < 200 {
-                let k = keyAt(i)
-                if !k.hasPrefix(variant) { break }
-                let exact = (k == variant)
-                let base = (exact ? 900_000
-                                  : 620_000 - (k.count - variant.count) * 2_000) - penalty
-                let cands = candidatesAt(i)
-                let take = exact ? cands.count : min(cands.count, 5)
-                for idx in 0..<take {
-                    let s = base - idx * 120
-                    let w = cands[idx]
-                    if let old = scored[w], old.score >= s { continue }
-                    scored[w] = (s, input.count)
-                }
-                i += 1
-                scanned += 1
-            }
-        }
-
-        // 1.5) 用户自己记下的词：同样的拼音直接顶到最前
-        if let uw = userWords[input] {
-            for (i, w) in uw.enumerated() {
-                let s = 950_000 - i * 1_000
-                if let old = scored[w], old.score >= s { continue }
-                scored[w] = (s, input.count)
-            }
-        }
-
-        // 1.6) 短输入（1~2 字母）的「最常用补全」：词库构建时按真实词频预排好的。
-        //      键 = 输入 + \u{7f}，绕开前缀扫描的字母序偏差（打 n 该出「你 年 那」，不是 na 开头的冷词）
-        if input.count <= 2 {
-            if let ai = exactIndex(input + "\u{7f}") {
-                for (i, w) in candidatesAt(ai).enumerated() {
-                    let s = 940_000 - i * 150
-                    if let old = scored[w], old.score >= s { continue }
-                    scored[w] = (s, input.count)
-                }
-            }
-        }
-
-        // 1.7) 简拼 / 混拼：把输入切成「完整音节 + 单字母首字母」的所有组合，
-        //      折算成首字母缩写再去缩写表取词。一次覆盖三种打法：
-        //        全拼 nihao      → 精确键命中（上面 1) 已覆盖）
-        //        简拼 nh / bjdx  → 缩写键命中
-        //        混拼 zme / zenm / nhao → 切出来的缩写仍是 zm / nh
-        if input.count >= 2 && input.count <= 16 {
-            for ini in initialKeys(input) {
-                guard let ai = exactIndex("\u{7f}" + ini) else { continue }
-                for (i, w) in candidatesAt(ai).enumerated() {
-                    let s = 560_000 - i * 400
-                    if let old = scored[w], old.score >= s { continue }
-                    scored[w] = (s, input.count)
-                }
-            }
-        }
-
-        // 2) 词格切分（长句靠它）
-        if input.count <= 32 {
-            for (phrase, sc, used) in lattice(Array(input)) {
-                let s = 300_000 + sc
-                if let old = scored[phrase], old.score >= s { continue }
-                scored[phrase] = (s, used)
-            }
-        }
-
-        return finish(&scored, literal: input)
-    }
-
-    /// 把输入串切成「完整音节」或「单字母首字母」的所有组合，
-    /// 返回每种组合折算出的首字母缩写（简拼 / 混拼查词用）。
-    /// 例：zme -> [zm, zme]；zenm -> [zm, ...]；bjdx -> [bjdx]
-    private func initialKeys(_ input: String) -> [String] {
         let chars = Array(input)
         let n = chars.count
-        var memo = [Int: Set<String>]()
+        let set = IMESettingsStore.current
 
-        func go(_ start: Int) -> Set<String> {
-            if let m = memo[start] { return m }
-            if start >= n { memo[start] = [""]; return [""] }
-            var out = Set<String>()
-            // 取一个完整音节
-            let maxLen = min(6, n - start)
-            var len = 2
-            while len <= maxLen {
-                let sub = String(chars[start..<(start + len)])
-                if syllableSet.contains(sub), let first = sub.first {
-                    for tail in go(start + len) { out.insert(String(first) + tail) }
-                }
-                len += 1
-            }
-            // 单字母当首字母（简拼靠这条）
-            for tail in go(start + 1) { out.insert(String(chars[start]) + tail) }
-            if out.count > 24 { out = Set(out.sorted().prefix(24)) }
-            memo[start] = out
-            return out
+        var cands = [String: (cov: Int, lp: Double)]()
+        func put(_ text: String, _ cov: Int, _ lp: Double) {
+            if text.isEmpty || cov <= 0 { return }
+            if let old = cands[text], old.lp >= lp { return }
+            cands[text] = (cov, lp)
         }
 
-        return go(0).filter { $0.count >= 2 && $0.count <= 8 }
+        // 0) 自定义短语：触发码精确命中直接顶最前
+        for (code, text) in phrases where code == input {
+            put(text, n, 1_000_000)
+        }
+
+        // 1~2 字母：吃「短输入补全表」。它按打字概率预排（单字优先），
+        // 拿 raw logP 排会被 在线/咱们 这类长词霸榜。
+        if n <= 2 {
+            if let ai = exactIndex(input + "\u{7f}") {
+                for c in candidatesAt(ai) { put(c.word, n, c.logp) }
+            }
+            // nb/sb/tm/wx/nh 这类两字母缩写切不成音节，走缩写表
+            if !splitsIntoSyllables(input) {
+                for e in abbrEdges(input) { put(e.word, n, e.logp) }
+            }
+            return rank(&cands, input, limit: set.candidateCount)
+        }
+
+        // 2) 前缀补全词：拼音以 input 开头的词（你好 → 你好啊/你好吗）
+        for c in prefixWords(input) {
+            put(c.word, n, c.logp)
+        }
+
+        // 3) 词图 Beam Search：句子 / 前缀片段
+        let states = beam(chars)
+        for j in 1...n {
+            for (sc, ws) in states[j] {
+                if ws.isEmpty { continue }
+                // 没吃完整个输入的「单字」片段纯属噪声（打 awsl 蹦出 啊/阿）
+                if j < n && ws.count == 1 && ws[0].count == 1 { continue }
+                put(ws.joined(), j, sc)
+            }
+        }
+
+        // 4) 缩写/混拼兜底：整串切不成完整音节时才用
+        if !splitsIntoSyllables(input) {
+            for e in abbrEdges(input) { put(e.word, n, e.logp) }
+        }
+
+        // 5) 模糊音兜底：主串候选不足 3 条才掺和
+        if set.fuzzyPinyin && cands.count < 3 {
+            for (vi, variant) in fuzzyVariants(input).enumerated() where vi > 0 {
+                for c in prefixWords(variant) {
+                    put(c.word, n, c.logp - Double(vi) * 1.0)
+                }
+            }
+        }
+
+        // 6) 智能纠错兜底：整串一个前缀都对不上时，多半按错了相邻键
+        if set.smartCorrect && cands.isEmpty && n >= 3 {
+            for variant in correctedVariants(input) {
+                for c in prefixWords(variant) { put(c.word, n, c.logp) }
+            }
+        }
+
+        // 7) 用户自己记下的词：同样的拼音直接顶到最前
+        if let uw = userWords[input] {
+            for (i, w) in uw.enumerated() {
+                put(w, n, 900_000 - Double(i))
+            }
+        }
+
+        return rank(&cands, input, limit: set.candidateCount)
     }
 
-    // MARK: - 收尾：加权、排序、截断、英文候选
+    // MARK: - 词图
 
-    private func finish(_ scored: inout [String: (score: Int, used: Int)],
-                        literal: String) -> [PinyinCandidate] {
-        // 用户词频加权
-        if !userFreq.isEmpty {
-            for (w, c) in userFreq {
-                if let old = scored[w] {
-                    scored[w] = (old.score + min(c, 60) * 1_500, old.used)
-                }
+    /// 音节图 + 词图：从 start 出发，所有「整词匹配」的边 (终点, 词, logP)。
+    private func fullEdges(_ chars: [Character], _ start: Int)
+        -> [(j: Int, word: String, logp: Double)] {
+        var out: [(Int, String, Double)] = []
+        let n = chars.count
+
+        func dfs(_ pos: Int, _ acc: String) {
+            if out.count > 3000 { return }
+            if !acc.isEmpty, let idx = exactIndex(acc) {
+                for c in candidatesAt(idx) { out.append((pos, c.word, c.logp)) }
+            }
+            if pos >= n { return }
+            var L = 1
+            let maxL = min(6, n - pos)
+            while L <= maxL {
+                let sub = String(chars[pos..<(pos + L)])
+                if syllableSet.contains(sub) { dfs(pos + L, acc + sub) }
+                L += 1
             }
         }
 
-        var result = scored.map {
-            PinyinCandidate(word: $0.key, score: $0.value.score, consumed: $0.value.used)
-        }.sorted { a, b in
-            if a.score != b.score { return a.score > b.score }
-            if a.word.count != b.word.count { return a.word.count < b.word.count }
-            return a.word < b.word
-        }
-        if result.count > 40 { result = Array(result.prefix(40)) }
+        dfs(start, "")
+        return out
+    }
 
-        // 中英混输：拼音串本身永远排在最后，随时能直接上屏
-        if !literal.isEmpty, !result.contains(where: { $0.word == literal }) {
-            result.append(PinyinCandidate(word: literal, score: Int.min,
-                                          consumed: literal.count, literal: true))
+    /// 整串当缩写/混拼：把每个音节折成首字母，查 \u{7f}+缩写 表。
+    private func abbrEdges(_ inp: String) -> [(word: String, logp: Double)] {
+        let chars = Array(inp)
+        let n = chars.count
+        var out: [(String, Double)] = []
+        var seen = Set<String>()
+        var nodes = 0
+
+        func go(_ pos: Int, _ ini: String) {
+            nodes += 1
+            if nodes > 4000 { return }
+            if pos == n && ini.count >= 2 && ini.count <= 5 && !seen.contains(ini) {
+                if let idx = exactIndex("\u{7f}" + ini) {
+                    seen.insert(ini)
+                    for c in candidatesAt(idx) { out.append((c.word, c.logp)) }
+                }
+            }
+            if pos >= n || ini.count >= 5 { return }
+            go(pos + 1, ini + String(chars[pos]))
+            var L = 2
+            let maxL = min(6, n - pos)
+            while L <= maxL {
+                let sub = String(chars[pos..<(pos + L)])
+                if syllableSet.contains(sub), let f = sub.first {
+                    go(pos + L, ini + String(f))
+                }
+                L += 1
+            }
+        }
+
+        go(0, "")
+        return out
+    }
+
+    /// 词图上的 Beam Search（librime poet.cc 的 kMaxLineCandidates=7，这里取 12）。
+    private func beam(_ chars: [Character], width: Int = 12)
+        -> [[(Double, [String])]] {
+        let n = chars.count
+        if n == 0 { return [] }
+        var edges = (0..<n).map { fullEdges(chars, $0) }
+        // 缩写只在整串切不成完整音节时才算边，否则 gun 会被读成 g(gu)+n
+        // 缩写表里 g n 一抓一大把（国内/功能/概念…）把 滚 挤下去。
+        if n >= 2 && !splitsIntoSyllables(String(chars)) {
+            let ab = abbrEdges(String(chars))
+            edges[0] += ab.map { (n, $0.word, $0.logp) }
+        }
+
+        var states = [[(Double, [String])]](repeating: [], count: n + 1)
+        states[0] = [(0.0, [])]
+        for i in 0..<n {
+            var cur = states[i]
+            if cur.isEmpty { continue }
+            if cur.count > width {
+                cur.sort { $0.0 > $1.0 }
+                cur = Array(cur.prefix(width))
+                states[i] = cur
+            }
+            for (sc, ws) in cur {
+                for e in edges[i] {
+                    // grammar.h 的上下文项：上一个词的尾字接这个词的头字
+                    var pen = 0.0
+                    if let lc = ws.last?.last, let fc = e.word.first {
+                        pen = lmPenalty(lc, fc)
+                    }
+                    states[e.j].append((sc + e.logp - pen, ws + [e.word]))
+                }
+            }
+        }
+        if states[n].count > width {
+            states[n].sort { $0.0 > $1.0 }
+            states[n] = Array(states[n].prefix(width))
+        }
+        return states
+    }
+
+    /// 所有拼音以 inp 开头的词（补全候选）。
+    private func prefixWords(_ inp: String, capKeys: Int = 240, perKey: Int = 6)
+        -> [(word: String, logp: Double)] {
+        var out: [(String, Double)] = []
+        var i = lowerBound(inp)
+        var scanned = 0
+        while i < entryCount && scanned < capKeys {
+            let k = keyAt(i)
+            if !k.hasPrefix(inp) { break }
+            let comp = k.count - inp.count
+            for c in candidatesAt(i).prefix(perKey) {
+                out.append((c.word, c.logp - 0.55 * Double(comp)))
+            }
+            i += 1
+            scanned += 1
+        }
+        return out
+    }
+
+    // MARK: - 收尾：排序、截断、英文候选
+
+    private func rank(_ cands: inout [String: (cov: Int, lp: Double)],
+                      _ inp: String, limit: Int) -> [PinyinCandidate] {
+        // 用户词频加权：用得多的词往前提（只影响同覆盖度内的排序）
+        if !userFreq.isEmpty {
+            for (w, c) in userFreq {
+                if let old = cands[w] {
+                    cands[w] = (old.cov, old.lp + min(Double(c), 60.0) * 0.08)
+                }
+            }
+        }
+        let n = inp.count
+        var items = cands.map { (text: $0.key, cov: $0.value.cov, lp: $0.value.lp) }
+        // 先看覆盖度（吃完全串的排前），再看每字平均 logP（librime 的 LeftAssociateCompare 思路）
+        items.sort { a, b in
+            if a.cov != b.cov { return a.cov > b.cov }
+            let na = a.lp / Double(a.cov)
+            let nb = b.lp / Double(b.cov)
+            if na != nb { return na > nb }
+            if a.text.count != b.text.count { return a.text.count < b.text.count }
+            return a.text < b.text
+        }
+        let cap = max(10, min(limit, 60))
+        var result = items.prefix(cap).map {
+            PinyinCandidate(word: $0.text, score: Int($0.lp * 1000), consumed: $0.cov)
+        }
+        if !inp.isEmpty, !result.contains(where: { $0.word == inp }) {
+            result.append(PinyinCandidate(word: inp, score: Int.min,
+                                          consumed: n, literal: true))
         }
         return result
     }
 
-    /// 一个「词」的得分：词越长越像真词，散字拼出来的组合天然吃亏。
-    /// 这样「今天天气」会压过「今 天 天 气」这种一字一顿的拼法。
-    private func wordScore(_ w: String, rank: Int) -> Int {
-        let rankPen = (rank == 0 ? 0 : (rank == 1 ? -90 : -170))
-        if w.count >= 2 { return 420 + w.count * 70 + rankPen }
-        return 120 + rankPen
-    }
+    // MARK: - 音节切分 / 模糊音 / 纠错
 
-    /// 词格切分：把整串拼音切成「词」的组合。
-    /// 打一半的尾巴拼不出词时当未解析吞掉，所以边打边能出候选；
-    /// 返回值里的第三项是这条候选吃掉了多少个拼音字符（部分上屏用）。
-    private func lattice(_ chars: [Character]) -> [(String, Int, Int)] {
-        var memo = [Int: [(String, Int, Int)]]()
+    /// 整串能否切成「完整音节」的序列（贪心最长匹配）。
+    private func splitsIntoSyllables(_ s: String) -> Bool {
+        let chars = Array(s)
         let n = chars.count
-
-        func go(_ start: Int) -> [(String, Int, Int)] {
-            if let m = memo[start] { return m }
-            if start >= n {
-                memo[start] = [("", 0, 0)]
-                return memo[start]!
+        var i = 0
+        while i < n {
+            var hit = 0
+            var len = min(6, n - i)
+            while len >= 1 {
+                if syllableSet.contains(String(chars[i..<(i + len)])) { hit = len; break }
+                len -= 1
             }
-            var out: [(String, Int, Int)] = []
-            let maxLen = min(8, n - start)
-            var len = 1
-            while len <= maxLen {
-                let sub = String(chars[start..<(start + len)])
-                if let idx = exactIndex(sub) {
-                    let cands = candidatesAt(idx)
-                    let take = min(cands.count, 4)
-                    if take > 0 {
-                        let rest = go(start + len)
-                        if !rest.isEmpty {
-                            for k in 0..<take {
-                                let w = cands[k]
-                                let ws = wordScore(w, rank: k)
-                                for (rp, rs, ru) in rest {
-                                    let joined = w + rp
-                                    if joined.count > 12 { continue }
-                                    let pen = rs == 0 ? 0 : 200
-                                    out.append((joined, ws + rs - pen, len + ru))
-                                }
-                            }
-                        }
-                    }
-                }
-                len += 1
-            }
-            if out.isEmpty {
-                memo[start] = [("", 0, 0)]
-                return memo[start]!
-            }
-            if out.count > 24 {
-                out.sort { $0.1 > $1.1 }
-                out = Array(out.prefix(24))
-            }
-            memo[start] = out
-            return out
+            if hit == 0 { return false }
+            i += hit
         }
-
-        return go(0).filter { !$0.0.isEmpty }
+        return true
     }
 
-    // MARK: - 模糊音
+    /// 26 键邻键表：智能纠错用（按错旁边那个键是最常见的误触）。
+    private static let keyNeighbors: [Character: String] = [
+        "q": "wa",   "w": "qeas", "e": "wrsd", "r": "etdf", "t": "ryfg",
+        "y": "tugh", "u": "yihj", "i": "uojk", "o": "ipkl", "p": "ol",
+        "a": "qwsz", "s": "awedzx", "d": "serfcx", "f": "drtgvc", "g": "ftyhbv",
+        "h": "gyujnb", "j": "huikmn", "k": "jiolm", "l": "kop",
+        "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb", "b": "vghn",
+        "n": "bhjm", "m": "njk",
+    ]
 
-    /// 生成容错变体：翘舌/平舌、前后鼻音、n/l、f/h。
-    /// 变体越靠后罚分越多，保证原串永远最优先。
+    private func correctedVariants(_ s: String) -> [String] {
+        let chars = Array(s)
+        guard chars.count >= 3, chars.count <= 12 else { return [] }
+        var out: [String] = []
+        for i in 0..<chars.count {
+            guard let nb = PinyinEngine.keyNeighbors[chars[i]] else { continue }
+            for c in nb {
+                var v = chars
+                v[i] = c
+                out.append(String(v))
+            }
+        }
+        return out
+    }
+
+    /// 生成容错变体：翘舌/平舌、前后鼻音、n/l、f/h。变体越靠后罚分越多。
     private func fuzzyVariants(_ s: String) -> [String] {
         let rules: [(String, String)] = [
             ("zh", "z"), ("ch", "c"), ("sh", "s"),

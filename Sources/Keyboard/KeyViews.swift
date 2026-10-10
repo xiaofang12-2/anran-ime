@@ -2,18 +2,14 @@ import SwiftUI
 import UIKit
 import AudioToolbox
 
-/// 按键音：加载键盘自带的「扣字」音效（click.wav），默认开。
+/// 按键音：加载键盘自带的「扣字」音效（click.wav）。
+/// 开关与震动都读「输入设置」（IMESettingsStore），主程序里改了立刻生效。
 /// 走 AudioServices 播系统音，不占音频会话，键盘扩展里最稳。
 enum KeySound {
     private static var soundID: SystemSoundID = 0
 
-    static var enabled: Bool {
-        get { UserDefaults.standard.object(forKey: "anran_kb_sound") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "anran_kb_sound") }
-    }
-
     static func play() {
-        guard enabled else { return }
+        guard IMESettingsStore.current.keySound else { return }
         if soundID == 0 {
             guard let url = Bundle.main.url(forResource: "click", withExtension: "wav") else {
                 UIDevice.current.playInputClick()
@@ -24,6 +20,12 @@ enum KeySound {
             soundID = sid
         }
         AudioServicesPlaySystemSound(soundID)
+    }
+
+    /// 震动（默认关，用扣字音效替代）
+    static func vibrate() {
+        guard IMESettingsStore.current.vibration else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 }
 
@@ -58,6 +60,7 @@ struct KeyCap: View {
                     if !pressed {
                         pressed = true
                         KeySound.play()
+                        KeySound.vibrate()
                     }
                     if let s = spec.swipe, v.translation.height < -28 {
                         consumed = true

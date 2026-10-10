@@ -55,7 +55,9 @@ struct KeyboardRootView: View {
     }
 
     private var rows: [[KeySpec]] {
-        KeyboardLayout.rows(layer: layer, shift: shiftOn || capsLock)
+        KeyboardLayout.rows(layer: layer,
+                            shift: shiftOn || capsLock,
+                            swipe: IMESettingsStore.current.swipeNumber)
     }
 
     // MARK: - 按键分发
@@ -78,7 +80,7 @@ struct KeyboardRootView: View {
             controller.insert(t)
             candidates = []
             if layer != .letters { layer = .letters }
-            shiftOn = false
+            autoCap(after: t)
 
         case .shift:
             tapShift()
@@ -100,6 +102,7 @@ struct KeyboardRootView: View {
                     lastSpaceTap = .distantPast
                     controller.backspace()
                     controller.insert("。")
+                    autoCap(after: "。")
                 } else {
                     lastSpaceTap = now
                     controller.insert(" ")
@@ -113,6 +116,7 @@ struct KeyboardRootView: View {
             commitComposing()
             controller.newline()
             candidates = []
+            autoCap(after: "\n")
 
         case .globe:
             commitComposing()
@@ -166,6 +170,15 @@ struct KeyboardRootView: View {
         } else {
             shiftOn.toggle()
         }
+    }
+
+    /// 句首自动大写：打完句末标点/换行，下一个字母自动大写（对标系统/百度键盘）
+    private func autoCap(after t: String) {
+        guard IMESettingsStore.current.autoCapitalize else {
+            shiftOn = false
+            return
+        }
+        shiftOn = ["。", "！", "？", ".", "!", "?", "\n"].contains(t)
     }
 
     // MARK: - 输入态同步
@@ -260,21 +273,29 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// 从主程序接「键盘布局」与「自定义短语」：剪贴板里有更新的就换，换完重画
+    /// 从主程序接「键盘布局」「自定义短语」「输入设置」：剪贴板里有更新的整包就换，换完重画
     private func pullSettings() {
-        let layoutChanged = KBConfigStore.pullFromPasteboard()
-        let phrasesChanged = PhraseStore.pullFromPasteboard()
+        let changed = ConfigSync.pull()
 
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
+        applyLearnResetIfNeeded()
 
-        if layoutChanged {
+        if changed {
             controller.setRows(KBMetrics.rows)
-        }
-        if layoutChanged || phrasesChanged {
             cfgRev += 1
             if !composing.isEmpty { refresh() }
         }
+    }
+
+    /// 主程序点了「清空打字学习记录」：见到比本地新的令牌就清一次
+    private func applyLearnResetIfNeeded() {
+        let token = IMESettingsStore.current.clearLearnToken
+        let key = "anran_learn_reset_done"
+        let done = UserDefaults.standard.integer(forKey: key)
+        guard token > done else { return }
+        PinyinEngine.shared.clearLearning()
+        UserDefaults.standard.set(token, forKey: key)
     }
 }
 

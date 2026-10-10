@@ -14,13 +14,12 @@ struct Phrase: Codable, Identifiable, Equatable {
     }
 }
 
-/// 短语本（带版本戳，交接逻辑跟 KBConfig 一样）
+/// 短语本（带版本戳，交接逻辑跟 KBConfig 一样，见 ConfigSync）
 struct PhraseBook: Codable, Equatable {
     var items: [Phrase] = []
     var rev: Int = 0
 
     static let fallback = PhraseBook()
-    static let pastePrefix = "ANRAN-PHRASE::"
 
     /// 去掉空码/空内容与重复触发码，后写的覆盖先写的
     var sanitized: PhraseBook {

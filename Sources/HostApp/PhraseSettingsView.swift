@@ -77,7 +77,7 @@ struct PhraseSettingsView: View {
     }
 
     private func apply() {
-        if PhraseStore.publish(book) {
+        if ConfigSync.publish(phrases: book) {
             message = "已发送到键盘，去键盘上重新调出一次即可"
             messageBad = false
         } else {

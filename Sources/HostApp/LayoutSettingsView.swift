@@ -71,7 +71,7 @@ struct LayoutSettingsView: View {
     }
 
     private func apply() {
-        if KBConfigStore.publish(cfg) {
+        if ConfigSync.publish(layout: cfg) {
             message = "已发送到键盘，去键盘上重新调出一次即可"
             messageBad = false
         } else {

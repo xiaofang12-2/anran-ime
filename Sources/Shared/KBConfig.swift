@@ -1,10 +1,9 @@
 import Foundation
-import UIKit
 
 /// 键盘外观/布局参数，用户在主程序「键盘布局」里自己调。
 ///
 /// 主程序与键盘是两个沙盒，免费签名又用不了 App Groups，所以交接走剪贴板：
-/// 主程序存一次就把整份配置塞进剪贴板，键盘一开就接过去（见 KBConfigStore）。
+/// 主程序存一次就把整份配置塞进剪贴板，键盘一开就接过去（见 ConfigSync）。
 struct KBConfig: Codable, Equatable {
     /// 字母键高度
     var keyHeight: Double = 45
@@ -24,7 +23,6 @@ struct KBConfig: Codable, Equatable {
     var rev: Int = 0
 
     static let fallback = KBConfig()
-    static let pastePrefix = "ANRAN-KBCFG::"
 
     /// 取值范围，滑杆与兜底都用它，免得用户拖出个不能用的键盘
     static let ranges: [(label: String, lo: Double, hi: Double, unit: String)] = [
@@ -71,31 +69,5 @@ enum KBConfigStore {
         if let d = try? JSONEncoder().encode(c.sanitized) {
             UserDefaults.standard.set(d, forKey: key)
         }
-    }
-
-    /// 主程序用：存本机 + 塞剪贴板，键盘一开自动接
-    @discardableResult
-    static func publish(_ c: KBConfig) -> Bool {
-        var n = c.sanitized
-        n.rev = Int(Date().timeIntervalSince1970)
-        saveLocal(n)
-        guard let d = try? JSONEncoder().encode(n),
-              let s = String(data: d, encoding: .utf8) else { return false }
-        UIPasteboard.general.string = KBConfig.pastePrefix + s
-        return true
-    }
-
-    /// 键盘用：剪贴板里有更新的配置才接（按 rev 判新旧）
-    @discardableResult
-    static func pullFromPasteboard() -> Bool {
-        guard let raw = UIPasteboard.general.string,
-              raw.hasPrefix(KBConfig.pastePrefix) else { return false }
-        let json = String(raw.dropFirst(KBConfig.pastePrefix.count))
-        guard let d = json.data(using: .utf8),
-              let incoming = try? JSONDecoder().decode(KBConfig.self, from: d)
-        else { return false }
-        guard incoming.rev > current.rev else { return false }
-        saveLocal(incoming)
-        return true
     }
 }

@@ -70,7 +70,8 @@ struct SetupView: View {
     // MARK: - 个性化（键盘布局 / 自定义短语）
 
     private var personalizeSection: some View {
-        Section("个性化") {
+        Section("设置") {
+            NavigationLink("输入设置") { SettingsView() }
             NavigationLink("键盘布局") { LayoutSettingsView() }
             NavigationLink("自定义短语") { PhraseSettingsView() }
         }

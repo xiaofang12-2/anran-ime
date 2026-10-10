@@ -88,9 +88,9 @@ enum KeyboardLayout {
         "n": "6", "m": "7",
     ]
 
-    static func rows(layer: KBLayer, shift: Bool) -> [[KeySpec]] {
+    static func rows(layer: KBLayer, shift: Bool, swipe: Bool = true) -> [[KeySpec]] {
         switch layer {
-        case .letters: return letterRows(shift: shift)
+        case .letters: return letterRows(shift: shift, swipe: swipe)
         case .numbers: return numberRows
         case .symbols: return symbolRows
         }
@@ -98,21 +98,21 @@ enum KeyboardLayout {
 
     // MARK: - 字母层
 
-    static func letterRows(shift: Bool) -> [[KeySpec]] {
+    static func letterRows(shift: Bool, swipe: Bool = true) -> [[KeySpec]] {
         var out: [[KeySpec]] = []
         out.append(letterRow1.map {
             KeySpec("L\($0)", String($0).uppercased(), 1, .letter(String($0)),
-                    popup: true, swipe: letterSwipe[$0])
+                    popup: true, swipe: swipe ? letterSwipe[$0] : nil)
         })
         out.append(letterRow2.map {
             KeySpec("L\($0)", String($0).uppercased(), 1, .letter(String($0)),
-                    popup: true, swipe: letterSwipe[$0])
+                    popup: true, swipe: swipe ? letterSwipe[$0] : nil)
         })
         var r3: [KeySpec] = [KeySpec("shift", "⇧", 1.4, .shift,
                                      special: true, active: shift)]
         r3 += letterRow3.map {
             KeySpec("L\($0)", String($0).uppercased(), 1, .letter(String($0)),
-                    popup: true, swipe: letterSwipe[$0])
+                    popup: true, swipe: swipe ? letterSwipe[$0] : nil)
         }
         r3.append(KeySpec("backspace", "⌫", 1.4, .backspace, special: true))
         out.append(r3)
