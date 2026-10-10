@@ -2,11 +2,14 @@ import SwiftUI
 
 /// 键盘界面
 ///
-/// 阶段 0 版本：26 键英文布局 + 顶部横栏占位。
-/// 顶部那条横栏就是阶段 2 要放「思想库」的位置（对标百度输入法开翻译后那条）。
+/// 先过授权门：没登录（或票据过期）就只显示一块「未授权」面板，
+/// 授权通过才放出真正的键盘。这样账号被禁用/解绑后键盘立刻失效。
 struct KeyboardRootView: View {
 
     let controller: KeyboardViewController
+
+    @State private var authorized = AuthStore.isLoggedIn
+    @State private var hint = ""
 
     private let letterRows: [[KeySpec]] = [
         "qwertyuiop".map { KeySpec(char: String($0)) },
@@ -15,6 +18,19 @@ struct KeyboardRootView: View {
     ]
 
     var body: some View {
+        Group {
+            if authorized { keyboard } else { gate }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .background(Color(red: 0.82, green: 0.83, blue: 0.85))
+        .onAppear(perform: check)
+    }
+
+    // MARK: - 已授权：正常键盘
+
+    private var keyboard: some View {
         VStack(spacing: 7) {
             toolbar
             ForEach(letterRows.indices, id: \.self) { i in
@@ -24,10 +40,6 @@ struct KeyboardRootView: View {
             }
             bottomRow
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .background(Color(red: 0.82, green: 0.83, blue: 0.85))
     }
 
     /// 顶部横栏 —— 阶段 2 换成真正的「思想库」输入框
@@ -63,6 +75,71 @@ struct KeyboardRootView: View {
             case .char:      break
             }
         }
+    }
+
+    // MARK: - 未授权：授权门
+
+    private var gate: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 26))
+                .foregroundColor(.secondary)
+            Text("未授权")
+                .font(.system(size: 16, weight: .semibold))
+            Text(hint.isEmpty
+                 ? "请先在「黯然输入法」里登录账号"
+                 : hint)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
+                GateButton(label: "接取登录") {
+                    if AuthStore.importFromPasteboard(), AuthStore.isLoggedIn {
+                        hint = ""
+                        check()
+                    } else {
+                        hint = "没接到登录态，请先在主程序点「同步登录状态到键盘」"
+                    }
+                }
+                GateButton(label: "打开主程序") { controller.openHostApp() }
+                GateButton(label: "重试") { check() }
+            }
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func check() {
+        // 共享容器拿不到时，剪贴板里可能有主程序放过来的票据，先接一次
+        if !AuthStore.isLoggedIn {
+            _ = AuthStore.importFromPasteboard()
+        }
+        authorized = AuthStore.isLoggedIn
+        if authorized {
+            hint = ""
+            controller.refreshAuth()
+        }
+    }
+}
+
+private struct GateButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(.black)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white)
+                        .shadow(color: .black.opacity(0.2),
+                                radius: 0, x: 0, y: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -2,9 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.com.anran.ime</string>
-	</array>
+	<!--
+	  故意留空，别往这里加 App Groups。
+	  App Groups 是付费开发者能力，免费 Apple ID 拿不到：一旦声明，
+	  Sideloadly / SideStore 自签会直接失败（app group invalid），整包装不上。
+	  主 app 与键盘之间的登录态改走剪贴板交接（见 Sources/Shared/AuthStore.swift）。
+	-->
 </dict>
 </plist>
