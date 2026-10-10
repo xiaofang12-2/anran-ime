@@ -51,13 +51,13 @@ struct KeySpec: Identifiable {
 /// 尺寸常量，对标 iOS 原生键盘（百度输入法同一套骨架）
 /// 键高比原生略抬一点，手指落点更松，连打不易误触
 enum KBMetrics {
-    static let rowGap: CGFloat = 7
+    static let rowGap: CGFloat = 6
     static let keyGap: CGFloat = 6
     static let sideInset: CGFloat = 3
-    static let keyHeight: CGFloat = 47
-    static let barHeight: CGFloat = 46
-    static let topInset: CGFloat = 7
-    static let bottomInset: CGFloat = 6
+    static let keyHeight: CGFloat = 45
+    static let barHeight: CGFloat = 45
+    static let topInset: CGFloat = 6
+    static let bottomInset: CGFloat = 5
     static let corner: CGFloat = 6
 
     /// 26 键 4 行、9 键 5 行，高度按行数算
