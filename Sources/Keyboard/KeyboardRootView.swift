@@ -19,7 +19,8 @@ struct KeyboardRootView: View {
     @State private var capsLock = false
     @State private var lastShiftTap = Date.distantPast
     @State private var lastSpaceTap = Date.distantPast
-    @State private var mode: KBMode = KeyboardRootView.savedMode
+    /// 配置/短语从主程序接过来后 +1，逼界面按新尺寸重画
+    @State private var cfgRev = 0
 
     var body: some View {
         Group {
@@ -29,9 +30,9 @@ struct KeyboardRootView: View {
         .padding(.top, KBMetrics.topInset)
         .padding(.bottom, KBMetrics.bottomInset)
         .background(Color(red: 0.82, green: 0.83, blue: 0.85))
-        .onAppear(perform: check)
-        .onChange(of: mode) { m in
-            controller.setRows(KeyboardLayout.rowCount(mode: m))
+        .onAppear {
+            _ = cfgRev
+            check()
         }
     }
 
@@ -41,9 +42,7 @@ struct KeyboardRootView: View {
         VStack(spacing: KBMetrics.rowGap) {
             CandidateBar(composing: composing,
                          candidates: candidates,
-                         mode: mode,
                          onPick: pick,
-                         onToggleMode: toggleMode,
                          onForget: forget)
             ForEach(rows.indices, id: \.self) { i in
                 KeyRow(keys: rows[i],
@@ -56,9 +55,7 @@ struct KeyboardRootView: View {
     }
 
     private var rows: [[KeySpec]] {
-        KeyboardLayout.rows(layer: layer,
-                            shift: shiftOn || capsLock,
-                            mode: mode)
+        KeyboardLayout.rows(layer: layer, shift: shiftOn || capsLock)
     }
 
     // MARK: - 按键分发
@@ -75,10 +72,6 @@ struct KeyboardRootView: View {
                 composing += c
                 refresh()
             }
-
-        case .t9(let d):
-            composing += d
-            refresh()
 
         case .text(let t):
             commitComposing()
@@ -129,21 +122,7 @@ struct KeyboardRootView: View {
             commitComposing()
             layer = l
             shiftOn = false
-
-        case .modeToggle:
-            toggleMode()
         }
-    }
-
-    /// 26 键 <-> 9 键
-    private func toggleMode() {
-        commitComposing()
-        mode = (mode == .qwerty ? .t9 : .qwerty)
-        Self.savedMode = mode
-        composing = ""
-        candidates = []
-        layer = .letters
-        shiftOn = false
     }
 
     /// 长按候选：把它从用户词频里抹掉，下次不再冒头
@@ -163,7 +142,7 @@ struct KeyboardRootView: View {
         candidates = []
     }
 
-    /// 退格上滑：清掉整串拼音（或清掉联想）
+    /// 退格上滑：清掉整串拼音
     private func clearComposing() {
         if composing.isEmpty {
             candidates = []
@@ -191,13 +170,13 @@ struct KeyboardRootView: View {
 
     // MARK: - 输入态同步
 
-    /// 拼音串变了：重算候选 + 更新输入框里的占位文本
+    /// 拼音串变了：重算候选
     private func refresh() {
         if composing.isEmpty {
             controller.setComposing("")
             return
         }
-        candidates = PinyinEngine.shared.candidates(for: composing, mode: mode)
+        candidates = PinyinEngine.shared.candidates(for: composing)
         controller.setComposing(composing)
     }
 
@@ -229,7 +208,7 @@ struct KeyboardRootView: View {
                 .map { PinyinCandidate(word: $0, score: 0) }
         } else {
             controller.setComposing(rest)
-            candidates = PinyinEngine.shared.candidates(for: rest, mode: mode)
+            candidates = PinyinEngine.shared.candidates(for: rest)
         }
     }
 
@@ -270,8 +249,8 @@ struct KeyboardRootView: View {
         if !AuthStore.isLoggedIn {
             _ = AuthStore.importFromPasteboard()
         }
+        pullSettings()
         authorized = AuthStore.isLoggedIn
-        controller.setRows(KeyboardLayout.rowCount(mode: mode))
         if authorized {
             hint = ""
             controller.refreshAuth()
@@ -281,15 +260,20 @@ struct KeyboardRootView: View {
         }
     }
 
-    // MARK: - 形态偏好
+    /// 从主程序接「键盘布局」与「自定义短语」：剪贴板里有更新的就换，换完重画
+    private func pullSettings() {
+        let layoutChanged = KBConfigStore.pullFromPasteboard()
+        let phrasesChanged = PhraseStore.pullFromPasteboard()
 
-    private static var savedMode: KBMode {
-        get {
-            KBMode(rawValue: UserDefaults.standard.string(forKey: "anran_kb_mode") ?? "qwerty")
-                ?? .qwerty
+        KBMetrics.cfg = KBConfigStore.current
+        PinyinEngine.shared.setPhrases(PhraseStore.current.items)
+
+        if layoutChanged {
+            controller.setRows(KBMetrics.rows)
         }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "anran_kb_mode")
+        if layoutChanged || phrasesChanged {
+            cfgRev += 1
+            if !composing.isEmpty { refresh() }
         }
     }
 }

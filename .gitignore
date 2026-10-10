@@ -13,6 +13,11 @@ Payload/
 # 本地出包暂存
 _out/
 
+# 词库构建的临时备份与 Python 缓存
+Support/dict/*.bak
+__pycache__/
+*.pyc
+
 # 便携工具
 .tools/
 
