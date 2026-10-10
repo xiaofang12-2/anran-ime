@@ -57,6 +57,8 @@ targets:
       - path: Sources/Shared
       - path: Support/server.crt
         buildPhase: resources
+      - path: Support/dict/pinyin.bin
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime.keyboard

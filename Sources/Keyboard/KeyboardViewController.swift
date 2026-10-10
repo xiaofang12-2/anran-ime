@@ -3,9 +3,8 @@ import SwiftUI
 
 /// 键盘扩展入口
 ///
-/// 阶段 0 只做「能弹出 + 能敲英文字母」，用来验证整条链路：
-/// 云 Mac 编译 -> 出 ipa -> 自签安装 -> 设置里启用 -> 真机弹出。
-/// 拼音引擎（librime）和思想库留到阶段 1 / 阶段 2。
+/// 拼音引擎在 `PinyinEngine`（本地词库 + 前缀/切分出候选），
+/// 界面在 `KeyboardRootView`。这里只负责往当前输入框塞字、管占位文本与授权心跳。
 final class KeyboardViewController: UIInputViewController {
 
     private var hosting: UIHostingController<KeyboardRootView>?
@@ -28,7 +27,7 @@ final class KeyboardViewController: UIInputViewController {
         host.didMove(toParent: self)
         hosting = host
 
-        view.heightAnchor.constraint(equalToConstant: 268).isActive = true
+        view.heightAnchor.constraint(equalToConstant: KBMetrics.totalHeight).isActive = true
     }
 
     // MARK: - 往当前 app 的输入框里塞字
@@ -43,6 +42,25 @@ final class KeyboardViewController: UIInputViewController {
 
     func newline() {
         textDocumentProxy.insertText("\n")
+    }
+
+    /// 拼音串落到输入框里做占位（marked text），选字时被替换掉
+    func setComposing(_ text: String) {
+        if text.isEmpty {
+            textDocumentProxy.unmarkText()
+        } else {
+            textDocumentProxy.setMarkedText(
+                text,
+                selectedRange: NSRange(location: text.utf16.count, length: 0))
+        }
+    }
+
+    /// 上屏一个词：把占位文本换成它再解除占位
+    func commit(_ text: String) {
+        textDocumentProxy.setMarkedText(
+            text,
+            selectedRange: NSRange(location: text.utf16.count, length: 0))
+        textDocumentProxy.unmarkText()
     }
 
     override func viewWillAppear(_ animated: Bool) {
