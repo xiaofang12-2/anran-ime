@@ -8,6 +8,7 @@ import SwiftUI
 final class KeyboardViewController: UIInputViewController {
 
     private var hosting: UIHostingController<KeyboardRootView>?
+    private var heightConstraint: NSLayoutConstraint?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -27,7 +28,19 @@ final class KeyboardViewController: UIInputViewController {
         host.didMove(toParent: self)
         hosting = host
 
-        view.heightAnchor.constraint(equalToConstant: KBMetrics.totalHeight).isActive = true
+        // 26 键 4 行、9 键 5 行，高度跟着形态走
+        let h = KBMetrics.totalHeight(rows: 4)
+        let c = view.heightAnchor.constraint(equalToConstant: h)
+        c.isActive = true
+        heightConstraint = c
+    }
+
+    /// 键盘形态变了（26/9 键）就调高度，否则 9 键会被裁掉一行
+    func setRows(_ n: Int) {
+        let h = KBMetrics.totalHeight(rows: n)
+        guard let c = heightConstraint, abs(c.constant - h) > 0.5 else { return }
+        c.constant = h
+        view.setNeedsLayout()
     }
 
     // MARK: - 往当前 app 的输入框里塞字
@@ -42,6 +55,11 @@ final class KeyboardViewController: UIInputViewController {
 
     func newline() {
         textDocumentProxy.insertText("\n")
+    }
+
+    /// 空格键左右滑动：挪光标
+    func moveCursor(_ delta: Int) {
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: delta)
     }
 
     /// 拼音串落到输入框里做占位（marked text），选字时被替换掉
@@ -90,4 +108,9 @@ final class KeyboardViewController: UIInputViewController {
         guard let url = URL(string: "anranime://login") else { return }
         extensionContext?.open(url, completionHandler: nil)
     }
+}
+
+/// 让 `UIDevice.current.playInputClick()` 能出声（按键音）
+extension KeyboardViewController: UIInputViewAudioFeedback {
+    var enableInputClicksWhenVisible: Bool { true }
 }

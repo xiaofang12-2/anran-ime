@@ -18,6 +18,7 @@ struct KeyboardRootView: View {
     @State private var shiftOn = false
     @State private var capsLock = false
     @State private var lastShiftTap = Date.distantPast
+    @State private var mode: KBMode = KeyboardRootView.savedMode
 
     var body: some View {
         Group {
@@ -28,6 +29,9 @@ struct KeyboardRootView: View {
         .padding(.bottom, KBMetrics.bottomInset)
         .background(Color(red: 0.82, green: 0.83, blue: 0.85))
         .onAppear(perform: check)
+        .onChange(of: mode) { m in
+            controller.setRows(KeyboardLayout.rowCount(mode: m))
+        }
     }
 
     // MARK: - 已授权：正常键盘
@@ -36,38 +40,44 @@ struct KeyboardRootView: View {
         VStack(spacing: KBMetrics.rowGap) {
             CandidateBar(composing: composing, candidates: candidates, onPick: pick)
             ForEach(rows.indices, id: \.self) { i in
-                KeyRow(keys: rows[i], onKey: handle)
+                KeyRow(keys: rows[i],
+                       onKey: handle,
+                       onSwipe: swipe,
+                       onDeleteClear: clearComposing,
+                       onSpaceMove: { controller.moveCursor($0) })
             }
         }
     }
 
     private var rows: [[KeySpec]] {
-        KeyboardLayout.rows(layer: layer, shift: shiftOn || capsLock)
+        KeyboardLayout.rows(layer: layer,
+                            shift: shiftOn || capsLock,
+                            mode: mode)
     }
 
     // MARK: - 按键分发
 
     private func handle(_ spec: KeySpec) {
-        if case .backspace = spec.action {
-            // 退格的触感归 RepeatKey 管，连删不震
-        } else {
-            Haptics.tap()
-        }
-
         switch spec.action {
         case .letter(let c):
             if shiftOn || capsLock {
                 commitComposing()
                 controller.insert(c.uppercased())
+                candidates = []
                 if shiftOn && !capsLock { shiftOn = false }
             } else {
                 composing += c
                 refresh()
             }
 
+        case .t9(let d):
+            composing += d
+            refresh()
+
         case .text(let t):
             commitComposing()
             controller.insert(t)
+            candidates = []
             if layer != .letters { layer = .letters }
             shiftOn = false
 
@@ -77,6 +87,7 @@ struct KeyboardRootView: View {
         case .backspace:
             if composing.isEmpty {
                 controller.backspace()
+                candidates = []
             } else {
                 composing.removeLast()
                 refresh()
@@ -85,6 +96,7 @@ struct KeyboardRootView: View {
         case .space:
             if composing.isEmpty {
                 controller.insert(" ")
+                candidates = []
             } else {
                 commitComposing()
             }
@@ -92,6 +104,7 @@ struct KeyboardRootView: View {
         case .ret:
             commitComposing()
             controller.newline()
+            candidates = []
 
         case .globe:
             commitComposing()
@@ -101,6 +114,33 @@ struct KeyboardRootView: View {
             commitComposing()
             layer = l
             shiftOn = false
+
+        case .modeToggle:
+            commitComposing()
+            mode = (mode == .qwerty ? .t9 : .qwerty)
+            Self.savedMode = mode
+            composing = ""
+            candidates = []
+            layer = .letters
+            shiftOn = false
+        }
+    }
+
+    /// 字母键上滑：直接把副字符（数字）打出去
+    private func swipe(_ spec: KeySpec, _ ch: String) {
+        commitComposing()
+        controller.insert(ch)
+        candidates = []
+    }
+
+    /// 退格上滑：清掉整串拼音（或清掉联想）
+    private func clearComposing() {
+        if composing.isEmpty {
+            candidates = []
+        } else {
+            composing = ""
+            candidates = []
+            controller.setComposing("")
         }
     }
 
@@ -123,23 +163,35 @@ struct KeyboardRootView: View {
 
     /// 拼音串变了：重算候选 + 更新输入框里的占位文本
     private func refresh() {
-        candidates = PinyinEngine.shared.candidates(for: composing)
+        if composing.isEmpty {
+            controller.setComposing("")
+            return
+        }
+        candidates = PinyinEngine.shared.candidates(for: composing, mode: mode)
         controller.setComposing(composing)
     }
 
     /// 把当前拼音串按首选候选上屏
     private func commitComposing() {
         guard !composing.isEmpty else { return }
-        controller.commit(candidates.first?.word ?? composing)
-        composing = ""
-        candidates = []
+        let word = candidates.first(where: { !$0.literal })?.word
+            ?? candidates.first?.word
+            ?? composing
+        applyCommit(word)
     }
 
-    /// 点了候选栏里的词
+    /// 点了候选栏里的词（含联想）
     private func pick(_ word: String) {
+        applyCommit(word)
+    }
+
+    private func applyCommit(_ word: String) {
         controller.commit(word)
+        PinyinEngine.shared.learn(word)
         composing = ""
-        candidates = []
+        // 上屏后立刻联想下一个字
+        candidates = PinyinEngine.shared.associate(word)
+            .map { PinyinCandidate(word: $0, score: 0) }
     }
 
     // MARK: - 未授权：授权门
@@ -180,12 +232,25 @@ struct KeyboardRootView: View {
             _ = AuthStore.importFromPasteboard()
         }
         authorized = AuthStore.isLoggedIn
+        controller.setRows(KeyboardLayout.rowCount(mode: mode))
         if authorized {
             hint = ""
             controller.refreshAuth()
         } else {
             composing = ""
             candidates = []
+        }
+    }
+
+    // MARK: - 形态偏好
+
+    private static var savedMode: KBMode {
+        get {
+            KBMode(rawValue: UserDefaults.standard.string(forKey: "anran_kb_mode") ?? "qwerty")
+                ?? .qwerty
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "anran_kb_mode")
         }
     }
 }
