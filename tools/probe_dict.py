@@ -38,6 +38,10 @@ BEAM = 12
 # 前缀补全惩罚：补全得越多，越靠后（打 nihao 时 你好 要压过 你好吗 这种长词）。
 COMP_PEN = 0.55
 
+# 缩写/混拼惩罚：整串切不成音节时缩写只是「猜」，真音节读法必须压过它。
+# 与 PinyinEngine.abbrPen 保持一致。
+ABBR_PEN = 3.2
+
 # librime grammar.h：路径得分 = Σ entry_weight(词) + Σ context_penalty(词 | 前文)。
 # entry_weight 就是词库里的 log P(词)；context_penalty 由语言模型给出。
 # 这里用字级 bigram（assoc.bin）近似：上一个词的尾字 -> 这个词的头字，
@@ -181,27 +185,8 @@ def fuzzy_variants(s):
     return out
 
 
-# ---------------------------------------------------------------- 纠错
-# 相邻键表（QWERTY 26 键，含斜邻）。快打时按错旁边一个键是最常见的错。
-ADJ = {
-    "q": "wa", "w": "qeas", "e": "wrsd", "r": "etdf", "t": "ryfg",
-    "y": "tugh", "u": "yihj", "i": "uojk", "o": "ipkl", "p": "ol",
-    "a": "qwsz", "s": "awedxz", "d": "serfcx", "f": "drtgvc", "g": "ftyhbv",
-    "h": "gyujnb", "j": "huikmn", "k": "jiolm", "l": "kop",
-    "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb", "b": "vghn",
-    "n": "bhjm", "m": "njk",
-}
-
-# 音近混淆（平翘舌 / 前后鼻音）。只放「多字母、替换不会误伤」的，
-# 单字母 n/l、f/h 单独按首字母处理，免得把 an 替成 al。
-CONFUSE_STR = [("zh", "z"), ("ch", "c"), ("sh", "s"),
-               ("ang", "an"), ("eng", "en"), ("ing", "in"),
-               ("iang", "ian"), ("uang", "uan")]
-
-CORR_PEN = 1.6           # 每个纠错音节的罚分（保证打对的永远压过猜出来的）
-CORR_MAX_FIX = 2         # 一条路径最多纠错几个音节
-CORR_MAX_INPUT = 24      # 超过这个长度不做纠错（长句打错就重打吧）
-FB_PEN = 3.0             # 单字母兜底罚分（比纠错更重，只保证「有汉字」，不抢正常候选）
+# ---------------------------------------------------------------- 兜底
+FB_PEN = 3.0             # 单字母兜底罚分（只保证「有汉字」，不抢正常候选）
 # 音节起头的 u / i / ü 的规范写法：词库里没有 u/i/v 开头的拼音键，
 # 乌=wu、一=yi、鱼=yu。乱按到这几个字母时按规范拼写再查一次。
 LEAD = {"u": "wu", "i": "yi", "v": "yu"}
@@ -212,82 +197,49 @@ class Engine:
         self.d = d
         self.lm = lm if lm is not None else LM(BIN_LM)
 
-    # ---------------------------------------------------------- 纠错
-    def _fix_syllable(self, sub):
-        """把一个「打错的音节」还原成合法音节；还原不了返回 None。
-
-        三种错法：① 按错相邻键（hao→hap）② 音近混淆（zhi→zi）
-        ③ 相邻字母打颠倒（jian→jain）。都是快打时最常见的。
-        """
-        syls = self.d.syls
-        # ① 相邻键替换
-        for i, c in enumerate(sub):
-            for alt in ADJ.get(c, ""):
-                cand = sub[:i] + alt + sub[i + 1:]
-                if cand in syls:
-                    return cand
-        # ② 音近替换（两个方向）
-        for a, b in CONFUSE_STR:
-            if a in sub:
-                cand = sub.replace(a, b, 1)
-                if cand in syls:
-                    return cand
-            if b in sub:
-                cand = sub.replace(b, a, 1)
-                if cand in syls:
-                    return cand
-        # ③ 相邻字母颠倒
-        for i in range(len(sub) - 1):
-            cand = sub[:i] + sub[i + 1] + sub[i] + sub[i + 2:]
-            if cand in syls:
-                return cand
-        return None
-
     # ---------------------------------------------------------- 词图边
-    def _full_edges(self, inp, i, allow_fix=False):
+    def _full_edges(self, inp, i):
         """从 i 出发，所有「整词匹配」的边 (j, 词, logP)。
 
-        allow_fix 打开时，切不出合法音节的地方允许「纠错还原」成一个合法音节，
-        罚 CORR_PEN 分 —— 这就是输入法「打错了也能出对词」的那条纠错边。
-        纠错后的音节参与正常查词与打分，所以纠错词能和打对的词在同一把尺子上比。
+        与 PinyinEngine.swift 的 fullEdges 完全一致：只走合法音节，
+        不做纠错边（键盘端纠错只在候选为空时用 correctedVariants 兜底）。
         """
         out = []
         n = len(inp)
 
-        def dfs(pos, acc, pen, nfix):
+        def dfs(pos, acc):
+            if len(out) > 3000:
+                return
             if acc:
                 idx = self.d.exact(acc)
                 if idx is not None:
                     for w, lp in self.d.vals(idx):
-                        out.append((pos, w, lp - pen))
+                        out.append((pos, w, lp))
             if pos >= n:
                 return
             for L in range(1, min(6, n - pos) + 1):
                 sub = inp[pos:pos + L]
                 if sub in self.d.syls:
-                    dfs(pos + L, acc + sub, pen, nfix)
-                elif allow_fix and nfix < CORR_MAX_FIX and L >= 2:
-                    fix = self._fix_syllable(sub)
-                    if fix is not None:
-                        dfs(pos + L, acc + fix, pen + CORR_PEN, nfix + 1)
+                    dfs(pos + L, acc + sub)
 
-        dfs(i, "", 0.0, 0)
+        dfs(i, "")
         return out
 
     def _abbr_edges(self, inp):
-        """整串当缩写/混拼：把每个音节折成首字母，查 \x7f+缩写 表。"""
+        """整串当缩写/混拼：把每个音节折成首字母，查 \x7f+缩写 表。
+        缩写最长放到 8 个字母（wsmbzd 这类六七个首字母的梗也得能出字）。"""
         n = len(inp)
         out = []
         seen = set()
 
         def go(pos, ini):
-            if pos == n and 2 <= len(ini) <= 5 and ini not in seen:
+            if pos == n and 2 <= len(ini) <= 8 and ini not in seen:
                 idx = self.d.exact(MARK + ini)
                 if idx is not None:
                     seen.add(ini)
                     for w, lp in self.d.vals(idx):
                         out.append((n, w, lp))
-            if pos >= n or len(ini) >= 5:
+            if pos >= n or len(ini) >= 8:
                 return
             go(pos + 1, ini + inp[pos])
             for L in range(2, min(6, n - pos) + 1):
@@ -298,19 +250,52 @@ class Engine:
         go(0, "")
         return out
 
+    def _tail_completions(self, inp, tail_max=40, tail_pen=1.0):
+        """末音节补全：末段只打了半个音节时，把它补成所有可能的完整音节。
+
+        打 zad：最长能切成音节的前缀是 za，剩下 d 是个半截音节，
+        补成 di/de/da… 里 de 能拼出「咋的」—— 百度/搜狗打 zad 出「咋的」就是这个道理。
+        按「补得越少越靠前、同长按字典序」排，避免 Set 随机序把 de 挤出去。
+        """
+        chars = list(inp)
+        n = len(chars)
+        cut = 0
+        i = 0
+        while i < n:
+            hit = 0
+            for L in range(min(6, n - i), 0, -1):
+                if "".join(chars[i:i + L]) in self.d.syls:
+                    hit = L
+                    break
+            if hit == 0:
+                break
+            i += hit
+            cut = i
+        if not (0 < cut < n):
+            return []
+        prefix = "".join(chars[:cut])
+        rest = "".join(chars[cut:])
+        if len(rest) > 4:
+            return []
+        sufs = sorted((s for s in self.d.syls if len(s) > len(rest) and s.startswith(rest)),
+                      key=lambda s: (len(s), s))[:tail_max]
+        out = []
+        for syl in sufs:
+            d = tail_pen * (len(syl) - len(rest))
+            for w, lp in self.prefix_words(prefix + syl):
+                out.append((w, lp - d))
+        return out
+
     # ---------------------------------------------------------- 解码
     def beam(self, inp, beam=BEAM):
         """词图上的 Beam Search。返回每个位置的 (总logP, 词元组)。"""
         n = len(inp)
         if n == 0:
             return []
-        # 整串切不成合法音节 = 大概率打错了，这时才开纠错边（省得每次敲键都白算）
-        fix = not self._splits(inp)
-        edges = [self._full_edges(inp, i, fix) for i in range(n)]
-        # 缩写/混拼只在「整串切不成完整音节」时才算候选：
-        # 否则 gun 会被读成 g(gu)+n，缩写表里 g n 一抓一大把（国内/功能/概念…）把 滚 挤下去。
-        if n >= 2 and fix:
-            edges[0] = edges[0] + self._abbr_edges(inp)
+        # 与 PinyinEngine.swift 保持一致：词图只用「整词匹配」的边。
+        # 缩写/混拼单独在 candidates() 里罚 ABBR_PEN 加入，绝不混进 beam ——
+        # 否则打 zad 时缩写「zd→知道」会以满分压过末音节补全读出的「咋的」。
+        edges = [self._full_edges(inp, i) for i in range(n)]
         states = [[] for _ in range(n + 1)]
         states[0] = [(0.0, ())]
         for i in range(n):
@@ -394,7 +379,7 @@ class Engine:
             # nb/sb/tm/wx/nh 这类两字母缩写切不成音节，走缩写表（牛逼/傻逼/微信…）
             if not self._splits(inp):
                 for j, w, lp in self._abbr_edges(inp):
-                    put(w, n, lp)
+                    put(w, n, lp - ABBR_PEN)
             # 单字母 u/i/v、两字母乱码（ik/ul/vz）这些也必须有汉字
             if not cands:
                 for w, lp in self._fallback(inp):
@@ -416,17 +401,17 @@ class Engine:
                     continue
                 put("".join(ws), j, sc)
 
-        # 3) 短输入补全表（1~2 字母，按真实词频预排好）
-        if n <= 2:
-            ai = self.d.exact(inp + MARK)
-            if ai is not None:
-                for w, lp in self.d.vals(ai):
-                    put(w, n, lp)
+        # 3) 末音节补全：末段只打了半个音节（zad → za+d → zade 咋的）。
+        #    这是全拼的一部分，跟简拼开关无关。
+        if not self._splits(inp):
+            for w, lp in self._tail_completions(inp):
+                put(w, n, lp)
 
-        # 4) 缩写表兜底（整串切不成完整音节时）
+        # 4) 缩写表兜底（整串切不成完整音节时）。缩写是「猜」，罚 ABBR_PEN
+        #    保证真音节读法（含末音节补全）压过它。
         if 2 <= n <= 16 and not self._splits(inp):
             for j, w, lp in self._abbr_edges(inp):
-                put(w, n, lp)
+                put(w, n, lp - ABBR_PEN)
 
         # 5) 模糊音兜底
         if len(cands) < 3:

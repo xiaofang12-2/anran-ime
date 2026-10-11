@@ -18,6 +18,15 @@ Support/dict/*.bak
 __pycache__/
 *.pyc
 
+# 本地调试脚本与构建日志
+tools/_*.py
+tools/*.log
+tools/build_log.txt
+
+# Rime 方案数据（CI 拉鼠须管 SharedSupport 填进来，几十 MB，不入库）
+Support/rime/*
+!Support/rime/.gitkeep
+
 # 便携工具
 .tools/
 

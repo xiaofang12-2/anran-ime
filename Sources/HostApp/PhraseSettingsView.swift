@@ -2,13 +2,11 @@ import SwiftUI
 
 /// 「自定义短语」管理页：打触发码直接出内容（如 dz → 地址、sfz → 身份证号）。
 ///
-/// 与键盘交接同样走剪贴板：改完点「应用到键盘」，键盘下次弹出时接过去。
+/// 改动即时存本机并推给键盘（见 ConfigSync），不用再点「应用到键盘」。
 struct PhraseSettingsView: View {
 
     @State private var book = PhraseStore.current
     @State private var draft: Phrase?
-    @State private var message = ""
-    @State private var messageBad = false
 
     var body: some View {
         List {
@@ -49,18 +47,7 @@ struct PhraseSettingsView: View {
                 Text("短语")
             } footer: {
                 Text("点条目可编辑，左滑可删除。触发码建议用字母，别用中文。\n"
-                     + "「位置」= 命中后排在候选第几位，1 就是排第一位。")
-            }
-
-            Section {
-                Button("应用到键盘") { apply() }
-            } footer: {
-                if message.isEmpty {
-                    Text("点「应用到键盘」后，去键盘上重新调出一次即可生效。")
-                } else {
-                    Text(message)
-                        .foregroundColor(messageBad ? .red : .secondary)
-                }
+                     + "「位置」= 命中后排在候选第几位，1 就是排第一位。改动即时生效。")
             }
         }
         .navigationTitle("自定义短语")
@@ -69,6 +56,11 @@ struct PhraseSettingsView: View {
             PhraseEditView(phrase: p) { saved in
                 upsert(saved)
             }
+        }
+        .onChange(of: book) { newValue in
+            // 改一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
+            PhraseStore.saveLocal(newValue)
+            ConfigSync.publish(phrases: newValue)
         }
     }
 
@@ -80,19 +72,6 @@ struct PhraseSettingsView: View {
             items.append(p)
         }
         book.items = items
-        // 立刻存本机，避免用户没点「应用到键盘」就退出丢改动
-        PhraseStore.saveLocal(book)
-        message = ""
-    }
-
-    private func apply() {
-        if ConfigSync.publish(phrases: book) {
-            message = "已发送到键盘，去键盘上重新调出一次即可"
-            messageBad = false
-        } else {
-            message = "发送失败，请重试"
-            messageBad = true
-        }
     }
 }
 

@@ -44,7 +44,7 @@ import jieba
 from pypinyin import pinyin, Style
 from pypinyin.constants import PHRASES_DICT
 
-from colloquial import COLLOQUIAL, STRONG
+from colloquial import COLLOQUIAL, STRONG, STRONG_TOP
 from core_words import CORE, CORE_TOP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -62,9 +62,9 @@ CHAR_MIN_FREQ = 100          # 单字词频低于此值的当噪声丢掉（楽/
 READING_PENALTY = 8          # 多音字：非首读音降权，免得「有 wěi」这种生僻音压过常用音
 AGG_PREFIX_LEN = 2
 AGG_TOP = 48
-ABBR_TOP = 24
+ABBR_TOP = 32
 ABBR_MIN_SYL = 2
-ABBR_MAX_SYL = 5
+ABBR_MAX_SYL = 6
 MARK = "\u007f"              # a~z 输入永远带不上这个字符，用来放「引擎专用表」
 
 RIME_MAX = 10000             # 归一后词频上限
@@ -411,6 +411,9 @@ def build():
     CHAR_DEFAULT = max(1, max_freq // 200000)
     PHRASE_ONLY = 40                                  # 只有读音、没有词频的词
     COLLOQ_W = max_freq + 1                           # 强优先口语词（骂人/网络梗）：压过一切
+    # 顶级优先：缩写位撞车时压过 STRONG 同侪。要拉开「真倍数」——
+    # 两字节对数概率的量化精度约 0.002，+1/+2 会被压成同一个码值分不出胜负。
+    COLLOQ_TOP_W = max_freq * 8
     COVER_W = max(1, int(max_freq * 0.30))            # 覆盖面口语词：语料里没有才用，给中等权重不抢位
 
     table = defaultdict(dict)
@@ -421,7 +424,7 @@ def build():
     # 于是「咱们给」被塞进 zme 槽，打 zme（怎么）先蹦出它。
     ABBR_SRC = defaultdict(dict)
 
-    def add(key, word, weight, cat, syls=None):
+    def add(key, word, weight, cat, syls=None, abbr_weight=None):
         if not key or not word or has_trad_variant(word) or not key.isascii() or not key.isalpha():
             return
         d = table[key]
@@ -433,12 +436,15 @@ def build():
             ini = "".join(s[0] for s in syls)
             if len(ini) == len(syls) and ini.isalpha():
                 slot = ABBR_SRC[ini]
-                if slot.get(word, -1) < weight:
-                    slot[word] = weight
+                # 缩写槽可以单独给权重：顶级优先词只在「缩写撞车」时才压人，
+                # 全拼键（如 shenmegui）仍用常规权重，免得打 shenme 先蹦「什么鬼」。
+                aw = weight if abbr_weight is None else abbr_weight
+                if slot.get(word, -1) < aw:
+                    slot[word] = aw
 
-    def add_uv(key, word, weight, cat, syls=None):
+    def add_uv(key, word, weight, cat, syls=None, abbr_weight=None):
         """ü 词：主键用 v（nv），再补一份 u 变体（nu）降权，兼容两种打法"""
-        add(key, word, weight, cat, syls)
+        add(key, word, weight, cat, syls, abbr_weight)
         if "v" in key:
             add(key.replace("v", "u"), word, max(1, weight // 3), cat, syls)
 
@@ -511,12 +517,20 @@ def build():
                 or any(s not in syl_valid for s in syls)):
             colloq_bad += 1
             continue
-        if w in STRONG:
+        if w in STRONG_TOP:
+            # 顶级权重只挂在「缩写槽」上：xsl 这种缩写撞车位靠它分胜负；
+            # 全拼键仍给常规强优先权重，否则打 shenme 会被「什么鬼」的前缀补全顶掉「什么」。
             wt = COLLOQ_W
+            aw = COLLOQ_TOP_W
+            colloq_strong += 1
+        elif w in STRONG:
+            wt = COLLOQ_W
+            aw = COLLOQ_W
             colloq_strong += 1
         else:
             wt = FREQ.get(w, COVER_W)
-        add_uv(key, w, wt, "colloq", syls)
+            aw = wt
+        add_uv(key, w, wt, "colloq", syls, abbr_weight=aw)
         colloq_ok += 1
     print("核心词入库:", colloq_ok, "其中强优先:", colloq_strong, "丢弃(读音/字数不符):", colloq_bad)
 
@@ -552,6 +566,9 @@ def build():
             p = key[:L]
             for w, wt in d.items():
                 if L == 1 and len(w) > 1:
+                    continue
+                # 顶级优先词权重太大，不进两字母补全表 —— 否则打 ha/sm 会被 好兄弟/什么鬼 顶掉常用单字
+                if wt > COLLOQ_W:
                     continue
                 buckets[p].append((wt * LEN_MUL.get(len(w), 0.3), wt, w))
     agg_n = 0

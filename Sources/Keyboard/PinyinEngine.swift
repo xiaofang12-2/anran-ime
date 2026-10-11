@@ -9,12 +9,19 @@ struct PinyinCandidate {
     let consumed: Int
     /// 是不是「原样英文」候选（中英混输时把拼音串本身也能直接上屏）
     let literal: Bool
+    /// 来自 librime 的第几条候选（选中时要回灌给它学词）；自研层为 nil
+    let rimeIndex: Int?
+    /// 自研缩写表命中的策展词（口语/梗/怼人），合并时顶到 librime 前面
+    let isPriority: Bool
 
-    init(word: String, score: Int, consumed: Int = 0, literal: Bool = false) {
+    init(word: String, score: Int, consumed: Int = 0, literal: Bool = false,
+         rimeIndex: Int? = nil, isPriority: Bool = false) {
         self.word = word
         self.score = score
         self.consumed = consumed
         self.literal = literal
+        self.rimeIndex = rimeIndex
+        self.isPriority = isPriority
     }
 }
 
@@ -89,6 +96,15 @@ final class PinyinEngine {
     /// 兜底候选的罚分系数：罚 fbPen×被砍掉的长度，保证它永远排在正常候选后面
     private static let fbPen = 3.0
 
+    /// 缩写/混拼候选的罚分：整串切不成音节时缩写只是「猜」，
+    /// 只要存在「真音节读出来的词」（含末音节补全），真读法必须压过猜的。
+    /// 打 zad 时 za+di 读出的「咋的」要压过 zd 缩写出的「知道」。
+    private static let abbrPen = 3.2
+    /// 末音节补全的罚分：每补一个字母罚一点，保证补全候选排在「本来就完整」的候选后面
+    private static let tailPen = 1.0
+    /// 末音节补全最多展开多少个候选音节
+    private static let tailMax = 40
+
     private func decodeLogp(_ a: Character, _ b: Character) -> Double {
         let hi = Int(a.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
         let lo = Int(b.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
@@ -107,20 +123,25 @@ final class PinyinEngine {
 
     private func ensureLoaded() {
         if ready { return }
-        ready = true
 
         let bundle = Bundle(for: PinyinEngine.self)
         let binURL = bundle.url(forResource: "pinyin", withExtension: "bin")
             ?? Bundle.main.url(forResource: "pinyin", withExtension: "bin")
         if let url = binURL,
            let d = try? Data(contentsOf: url, options: .mappedIfSafe),
-           d.count > 44 {
+           d.count > 44, d.prefix(4) == Data("ANPY".utf8) {
             data = d
             entryCount = u32(8)
             keyOffTable = u32(12)
             valOffTable = u32(16)
             loadSyllables()
+        } else {
+            // 词库没读到就别把 ready 立起来 —— 否则整块键盘永远只剩英文字母。
+            // 下次敲键会再试一遍（例如扩展刚起来时 bundle 还没就绪）。
+            return
         }
+        ready = true
+        cacheKey = ""
 
         let assocURL = bundle.url(forResource: "assoc", withExtension: "bin")
             ?? Bundle.main.url(forResource: "assoc", withExtension: "bin")
@@ -250,6 +271,13 @@ final class PinyinEngine {
         cacheResult = []
     }
 
+    /// 输入串命中的自定义短语（合并层按「位置」把它们插回该在的名次用）
+    func phraseHits(for raw: String) -> [(text: String, position: Int)] {
+        let input = raw.lowercased().filter { $0 >= "a" && $0 <= "z" }
+        guard !input.isEmpty else { return [] }
+        return phrases.filter { $0.code == input }.map { ($0.text, $0.position) }
+    }
+
     /// 上屏后联想：拿刚上屏的末字查后继字，按接续概率从高到低
     func associate(_ committed: String) -> [String] {
         ensureLoaded()
@@ -315,11 +343,11 @@ final class PinyinEngine {
         let n = chars.count
         let set = IMESettingsStore.current
 
-        var cands = [String: (cov: Int, lp: Double)]()
-        func put(_ text: String, _ cov: Int, _ lp: Double) {
+        var cands = [String: (cov: Int, lp: Double, pri: Bool)]()
+        func put(_ text: String, _ cov: Int, _ lp: Double, pri: Bool = false) {
             if text.isEmpty || cov <= 0 { return }
             if let old = cands[text], old.lp >= lp { return }
-            cands[text] = (cov, lp)
+            cands[text] = (cov, lp, pri)
         }
 
         // 0) 自定义短语：触发码精确命中，按设置的「位置」落进候选
@@ -328,6 +356,8 @@ final class PinyinEngine {
             phraseHits.append((p.text, p.position))
         }
 
+        let splitOK = splitsIntoSyllables(input)
+
         // 1~2 字母：吃「短输入补全表」。它按打字概率预排（单字优先），
         // 拿 raw logP 排会被 在线/咱们 这类长词霸榜。
         if n <= 2 {
@@ -335,8 +365,8 @@ final class PinyinEngine {
                 for c in candidatesAt(ai) { put(c.word, n, c.logp) }
             }
             // nb/sb/tm/wx/nh 这类两字母缩写切不成音节，走缩写表
-            if !splitsIntoSyllables(input) {
-                for e in abbrEdges(input) { put(e.word, n, e.logp) }
+            if set.abbrevInput && !splitOK {
+                for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true) }
             }
             // 单字母 u/i/v、两字母乱码（ik/ul/vz）这些也必须有汉字
             if cands.isEmpty {
@@ -361,12 +391,22 @@ final class PinyinEngine {
             }
         }
 
-        // 4) 缩写/混拼兜底：整串切不成完整音节时才用
-        if !splitsIntoSyllables(input) {
-            for e in abbrEdges(input) { put(e.word, n, e.logp) }
+        // 4) 末音节补全：末段只打了半个音节（zad → za + d → zadi 咋的；
+        //    nih → ni + h → nihao 你好）。这是全拼的一部分，跟简拼开关无关。
+        if !splitOK {
+            for v in tailCompletions(input) {
+                let d = PinyinEngine.tailPen * Double(v.count - n)
+                for c in prefixWords(v) { put(c.word, n, c.logp - d) }
+            }
         }
 
-        // 5) 模糊音兜底：主串候选不足 3 条才掺和
+        // 5) 缩写/混拼：整串切不成完整音节时才用（xbzz / nmsl / wsnb / wosnb）。
+        //    缩写是「猜」，罚 abbrPen 保证真音节读法压过它。
+        if set.abbrevInput && !splitOK {
+            for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true) }
+        }
+
+        // 6) 模糊音兜底：主串候选不足 3 条才掺和
         if set.fuzzyPinyin && cands.count < 3 {
             for (vi, variant) in fuzzyVariants(input).enumerated() where vi > 0 {
                 for c in prefixWords(variant) {
@@ -375,20 +415,20 @@ final class PinyinEngine {
             }
         }
 
-        // 6) 智能纠错兜底：整串一个前缀都对不上时，多半按错了相邻键
+        // 7) 智能纠错兜底：整串一个前缀都对不上时，多半按错了相邻键
         if set.smartCorrect && cands.isEmpty && n >= 3 {
             for variant in correctedVariants(input) {
                 for c in prefixWords(variant) { put(c.word, n, c.logp) }
             }
         }
 
-        // 7) 终极兜底：查完还是没汉字（乱按 qwert/zxcvb 这种），退到最长能出字的
+        // 8) 终极兜底：查完还是没汉字（乱按 qwert/zxcvb 这种），退到最长能出字的
         //    前缀顶上。任何字母串都必须有汉字候选，绝不让面板只剩英文。
         if cands.isEmpty {
             for c in fallback(input) { put(c.word, n, c.logp) }
         }
 
-        // 8) 用户自己记下的词：同样的拼音直接顶到最前
+        // 9) 用户自己记下的词：同样的拼音直接顶到最前
         if let uw = userWords[input] {
             for (i, w) in uw.enumerated() {
                 put(w, n, 900_000 - Double(i))
@@ -426,6 +466,7 @@ final class PinyinEngine {
     }
 
     /// 整串当缩写/混拼：把每个音节折成首字母，查 \u{7f}+缩写 表。
+    /// 缩写最长放到 8 个字母（wsmbzd 这类六七个首字母的梗也得能出字）。
     private func abbrEdges(_ inp: String) -> [(word: String, logp: Double)] {
         let chars = Array(inp)
         let n = chars.count
@@ -435,14 +476,14 @@ final class PinyinEngine {
 
         func go(_ pos: Int, _ ini: String) {
             nodes += 1
-            if nodes > 4000 { return }
-            if pos == n && ini.count >= 2 && ini.count <= 5 && !seen.contains(ini) {
+            if nodes > 6000 { return }
+            if pos == n && ini.count >= 2 && ini.count <= 8 && !seen.contains(ini) {
                 if let idx = exactIndex("\u{7f}" + ini) {
                     seen.insert(ini)
                     for c in candidatesAt(idx) { out.append((c.word, c.logp)) }
                 }
             }
-            if pos >= n || ini.count >= 5 { return }
+            if pos >= n || ini.count >= 8 { return }
             go(pos + 1, ini + String(chars[pos]))
             var L = 2
             let maxL = min(6, n - pos)
@@ -460,17 +501,13 @@ final class PinyinEngine {
     }
 
     /// 词图上的 Beam Search（librime poet.cc 的 kMaxLineCandidates=7，这里取 12）。
+    /// 边的展开是「惰性」的：只有 states[i] 非空（即这个位置真的能到达）才去算
+    /// fullEdges(chars, i)。乱按的串大部分位置根本走不到，这样能省掉大量无用 DFS。
     private func beam(_ chars: [Character], width: Int = 12)
         -> [[(Double, [String])]] {
         let n = chars.count
         if n == 0 { return [] }
-        var edges = (0..<n).map { fullEdges(chars, $0) }
-        // 缩写只在整串切不成完整音节时才算边，否则 gun 会被读成 g(gu)+n
-        // 缩写表里 g n 一抓一大把（国内/功能/概念…）把 滚 挤下去。
-        if n >= 2 && !splitsIntoSyllables(String(chars)) {
-            let ab = abbrEdges(String(chars))
-            edges[0] += ab.map { (n, $0.word, $0.logp) }
-        }
+        var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
         var states = [[(Double, [String])]](repeating: [], count: n + 1)
         states[0] = [(0.0, [])]
@@ -482,8 +519,16 @@ final class PinyinEngine {
                 cur = Array(cur.prefix(width))
                 states[i] = cur
             }
+            let edges: [(j: Int, word: String, logp: Double)]
+            if let cached = edgeCache[i] {
+                edges = cached
+            } else {
+                let e = fullEdges(chars, i)
+                edgeCache[i] = e
+                edges = e
+            }
             for (sc, ws) in cur {
-                for e in edges[i] {
+                for e in edges {
                     // grammar.h 的上下文项：上一个词的尾字接这个词的头字
                     var pen = 0.0
                     if let lc = ws.last?.last, let fc = e.word.first {
@@ -498,6 +543,44 @@ final class PinyinEngine {
             states[n] = Array(states[n].prefix(width))
         }
         return states
+    }
+
+    /// 末音节补全：末段只打了半个音节时，把它补成所有可能的完整音节。
+    ///
+    /// 打 zad：最长能切成音节的前缀是 za，剩下 d 是个半截音节，
+    /// 补成 di/de/da… 里 di 能拼出「咋的」—— 这就是百度/搜狗打 zad 出「咋的」的道理。
+    /// 整串本来就切得开（nihao）或末段压根不是任何音节的开头（zme/wsnb）时返回空。
+    private func tailCompletions(_ inp: String) -> [String] {
+        let chars = Array(inp)
+        let n = chars.count
+        var cut = 0
+        var i = 0
+        while i < n {
+            var hit = 0
+            var len = min(6, n - i)
+            while len >= 1 {
+                if syllableSet.contains(String(chars[i..<(i + len)])) { hit = len; break }
+                len -= 1
+            }
+            if hit == 0 { break }
+            i += hit
+            cut = i
+        }
+        guard cut > 0, cut < n else { return [] }
+        let prefix = String(chars[0..<cut])
+        let rest = String(chars[cut..<n])
+        guard rest.count <= 4 else { return [] }
+        // 按「补得越少越靠前、同长按字典序」排 —— Set 遍历顺序是随机的，
+        // 不排的话 de/di 这种短音节可能被挤出 tailMax，打 zad 就漏了「咋的」。
+        var sufs: [String] = []
+        for syl in syllableSet where syl.count > rest.count && syl.hasPrefix(rest) {
+            sufs.append(syl)
+        }
+        sufs.sort { a, b in
+            if a.count != b.count { return a.count < b.count }
+            return a < b
+        }
+        return sufs.prefix(PinyinEngine.tailMax).map { prefix + $0 }
     }
 
     /// 所有拼音以 inp 开头的词（补全候选）。
@@ -560,12 +643,12 @@ final class PinyinEngine {
         if !userFreq.isEmpty {
             for (w, c) in userFreq {
                 if let old = cands[w] {
-                    cands[w] = (old.cov, old.lp + min(Double(c), 60.0) * 0.08)
+                    cands[w] = (old.cov, old.lp + min(Double(c), 60.0) * 0.08, old.pri)
                 }
             }
         }
         let n = inp.count
-        var items = cands.map { (text: $0.key, cov: $0.value.cov, lp: $0.value.lp) }
+        var items = cands.map { (text: $0.key, cov: $0.value.cov, lp: $0.value.lp, pri: $0.value.pri) }
         // 先看覆盖度（吃完全串的排前），再看每字平均 logP（librime 的 LeftAssociateCompare 思路）
         items.sort { a, b in
             if a.cov != b.cov { return a.cov > b.cov }
@@ -577,7 +660,8 @@ final class PinyinEngine {
         }
         let cap = max(10, min(limit, 60))
         var result = items.prefix(cap).map {
-            PinyinCandidate(word: $0.text, score: Int($0.lp * 1000), consumed: $0.cov)
+            PinyinCandidate(word: $0.text, score: Int($0.lp * 1000),
+                            consumed: $0.cov, isPriority: $0.pri)
         }
         // 自定义短语按「位置」插进候选：位置 1 = 排第一（对标百度/搜狗）
         for hit in phraseHits.sorted(by: { $0.position < $1.position }) {

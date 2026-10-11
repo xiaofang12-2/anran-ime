@@ -2,13 +2,11 @@ import SwiftUI
 
 /// 「键盘布局」设置页：26 键每个键的高矮、宽窄、间距、圆角、字号，用户自己拖。
 ///
-/// 免费签名用不了 App Groups，改完点「应用到键盘」把整份配置塞剪贴板，
-/// 键盘下一次弹出时自己接过去（见 KBConfigStore）。
+/// 拖一下即时存本机并推给键盘（见 KBConfigStore / ConfigSync），
+/// 去键盘上重新调出一次就能看到，不用再点「应用到键盘」。
 struct LayoutSettingsView: View {
 
     @State private var cfg = KBConfigStore.current
-    @State private var message = ""
-    @State private var messageBad = false
 
     var body: some View {
         List {
@@ -30,23 +28,18 @@ struct LayoutSettingsView: View {
             }
 
             Section {
-                Button("应用到键盘") { apply() }
-                Button("恢复默认", role: .destructive) {
-                    cfg = KBConfig()
-                    message = "已恢复默认，记得点「应用到键盘」"
-                    messageBad = false
-                }
+                Button("恢复默认", role: .destructive) { cfg = KBConfig() }
             } footer: {
-                if message.isEmpty {
-                    Text("点「应用到键盘」后，去键盘上重新调出一次即可生效。")
-                } else {
-                    Text(message)
-                        .foregroundColor(messageBad ? .red : .secondary)
-                }
+                Text("改动即时生效，去键盘上重新调出一次即可看到。")
             }
         }
         .navigationTitle("键盘布局")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: cfg) { newValue in
+            // 拖一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
+            KBConfigStore.saveLocal(newValue)
+            ConfigSync.publish(layout: newValue)
+        }
     }
 
     // MARK: - 一行滑杆
@@ -68,16 +61,6 @@ struct LayoutSettingsView: View {
     private func fmt(_ v: Double) -> String {
         let s = String(format: "%.1f", v)
         return s.hasSuffix(".0") ? String(s.dropLast(2)) : s
-    }
-
-    private func apply() {
-        if ConfigSync.publish(layout: cfg) {
-            message = "已发送到键盘，去键盘上重新调出一次即可"
-            messageBad = false
-        } else {
-            message = "发送失败，请重试"
-            messageBad = true
-        }
     }
 }
 

@@ -418,9 +418,11 @@ struct ClipboardPanel: View {
 /// 输入关键词 → 列出命中的「关键词 / 内容」，点内容直接上屏。
 /// 注意：键盘扩展里没法再弹一个系统键盘，所以这个输入框的字符由键盘自己的键喂进来，
 /// 这里只做展示（含闪烁光标），不做真正的 UITextField。
+/// 拼音串（composing）一并露在输入框右侧，候选在下方候选栏里选。
 struct ThoughtPanel: View {
 
     let query: String
+    let composing: String
     let matches: [ThoughtItem]
     let onInsert: (String) -> Void
     let onClose: () -> Void
@@ -437,12 +439,17 @@ struct ThoughtPanel: View {
                     Text(query)
                         .font(.system(size: 15))
                         .foregroundColor(.black)
+                    if !composing.isEmpty {
+                        Text(composing)
+                            .font(.system(size: 15))
+                            .foregroundColor(Color(red: 0.20, green: 0.50, blue: 0.95))
+                    }
                     Rectangle()
                         .fill(Color(red: 0.20, green: 0.50, blue: 0.95))
                         .frame(width: 1.5, height: 18)
                         .opacity(caretOn ? 1 : 0)
                 }
-                if query.isEmpty {
+                if query.isEmpty && composing.isEmpty {
                     Text("输入关键词…")
                         .font(.system(size: 15))
                         .foregroundColor(.secondary)

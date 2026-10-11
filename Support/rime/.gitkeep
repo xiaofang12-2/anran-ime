@@ -1,0 +1,2 @@
+# Rime 中州韵方案数据放这里（CI 从鼠须管 SharedSupport 拉，见 .github/workflows/ios.yml）
+# 体积大（几十 MB），不入库。本地没这个数据时软件自动走自研兜底引擎。

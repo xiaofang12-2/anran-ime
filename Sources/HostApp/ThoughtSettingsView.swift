@@ -2,14 +2,12 @@ import SwiftUI
 
 /// 「思想库」管理页：建库 → 加关键词 → 填内容。
 /// 键盘上点功能栏的思想库图标，输入关键词就能把内容打出去（对标电脑端思想库）。
-/// 与其它配置一样，改完点「应用到键盘」走剪贴板交接（见 ConfigSync）。
+/// 改动即时存本机并推给键盘（见 ConfigSync），不用再点「应用到键盘」。
 struct ThoughtSettingsView: View {
 
     @State private var book = ThoughtStore.current
     @State private var newLibName = ""
     @State private var showNewLib = false
-    @State private var message = ""
-    @State private var messageBad = false
 
     var body: some View {
         List {
@@ -22,16 +20,40 @@ struct ThoughtSettingsView: View {
                 ForEach(book.libraries) { lib in
                     NavigationLink(destination: ThoughtLibraryView(book: $book,
                                                                    libraryID: lib.id)) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(lib.name)
-                                .font(.subheadline.bold())
-                            Text("\(lib.items.count) 个关键词")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(lib.name)
+                                    .font(.subheadline.bold())
+                                Text("\(lib.items.count) 个关键词")
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            if book.activeID == lib.id {
+                                Text("使用中")
+                                    .font(.caption2)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.accentColor))
+                            }
                         }
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            book.libraries.removeAll { $0.id == lib.id }
+                            if book.activeID == lib.id { book.activeID = nil }
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                        Button {
+                            book.activeID = lib.id
+                        } label: {
+                            Label("使用", systemImage: "checkmark.circle")
+                        }
+                        .tint(.blue)
+                    }
                 }
-                .onDelete { book.libraries.remove(atOffsets: $0) }
 
                 Button {
                     newLibName = ""
@@ -42,19 +64,8 @@ struct ThoughtSettingsView: View {
             } header: {
                 Text("思想库")
             } footer: {
-                Text("左滑删除。建好库后进去加关键词和内容，"
-                     + "键盘上点思想库图标输入关键词即可上屏。")
-            }
-
-            Section {
-                Button("应用到键盘") { apply() }
-            } footer: {
-                if message.isEmpty {
-                    Text("点「应用到键盘」后，去键盘上重新调出一次即可生效。")
-                } else {
-                    Text(message)
-                        .foregroundColor(messageBad ? .red : .secondary)
-                }
+                Text("左滑一本库有「使用 / 删除」。点「使用」后键盘只认这一本；"
+                     + "进去加关键词和内容，键盘上点思想库图标输入关键词即可上屏。")
             }
         }
         .navigationTitle("思想库")
@@ -65,27 +76,20 @@ struct ThoughtSettingsView: View {
                            text: $newLibName,
                            confirm: "创建") { createLibrary() }
         }
-        .onChange(of: book) { _ in
-            ThoughtStore.saveLocal(book)
-            message = ""
+        .onChange(of: book) { newValue in
+            // 改一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
+            ThoughtStore.saveLocal(newValue)
+            ConfigSync.publish(thoughts: newValue)
         }
     }
 
     private func createLibrary() {
         let name = newLibName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        book.libraries.append(ThoughtLibrary(name: name))
+        let lib = ThoughtLibrary(name: name)
+        book.libraries.append(lib)
+        if book.activeID == nil { book.activeID = lib.id }
         newLibName = ""
-    }
-
-    private func apply() {
-        if ConfigSync.publish(thoughts: book) {
-            message = "已发送到键盘，去键盘上重新调出一次即可"
-            messageBad = false
-        } else {
-            message = "发送失败，请重试"
-            messageBad = true
-        }
     }
 }
 

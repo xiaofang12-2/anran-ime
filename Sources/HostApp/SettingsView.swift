@@ -57,17 +57,6 @@ struct SettingsView: View {
                 Text("清掉键盘记住的「越用越靠前」词频，词库本身不动。")
             }
 
-            Section {
-                Button("应用到键盘") { apply() }
-            } footer: {
-                if message.isEmpty {
-                    Text("点「应用到键盘」后，去键盘上重新调出一次即可生效。")
-                } else {
-                    Text(message)
-                        .foregroundColor(messageBad ? .red : .secondary)
-                }
-            }
-
             Section("关于") {
                 HStack {
                     Text("版本")
@@ -79,9 +68,10 @@ struct SettingsView: View {
         }
         .navigationTitle("输入设置")
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: s) { _ in
-            // 改一下就存本机，免得没点「应用到键盘」就退出丢改动
-            IMESettingsStore.saveLocal(s)
+        .onChange(of: s) { newValue in
+            // 改一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
+            IMESettingsStore.saveLocal(newValue)
+            ConfigSync.publish(settings: newValue)
         }
     }
 
@@ -110,17 +100,6 @@ struct SettingsView: View {
         IMESettingsStore.saveLocal(s)
         if ConfigSync.publish(settings: s) {
             message = "已发送，去键盘上重新调出一次即清空"
-            messageBad = false
-        } else {
-            message = "发送失败，请重试"
-            messageBad = true
-        }
-    }
-
-    private func apply() {
-        IMESettingsStore.saveLocal(s)
-        if ConfigSync.publish(settings: s) {
-            message = "已发送到键盘，去键盘上重新调出一次即可"
             messageBad = false
         } else {
             message = "发送失败，请重试"

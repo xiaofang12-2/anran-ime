@@ -26,6 +26,9 @@ struct KeyboardRootView: View {
     // 顶部功能栏 / 浮层面板
     @State private var panel: KBPanel = .none
     @State private var thoughtQuery = ""
+    @State private var thoughtComposing = ""                 // 面板里的拼音串
+    @State private var thoughtCands: [PinyinCandidate] = []
+    @State private var thoughtLine = 0                       // 命中内容输出到第几行
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
 
@@ -62,15 +65,25 @@ struct KeyboardRootView: View {
             }
             if panel == .thought {
                 ThoughtPanel(query: thoughtQuery,
+                             composing: thoughtComposing,
                              matches: thoughtMatches,
                              onInsert: insertThought,
                              onClose: closePanel)
             }
 
-            CandidateBar(composing: composing,
-                         candidates: candidates,
-                         onPick: pick,
-                         onForget: forget)
+            if panel == .thought {
+                // 面板里的拼音候选走同一根候选栏（键盘扩展弹不出系统键盘，
+                // 面板的输入只能由键盘自己的键喂进来，候选也在这儿选）
+                CandidateBar(composing: thoughtComposing,
+                             candidates: thoughtCands,
+                             onPick: pickThought,
+                             onForget: { _ in })
+            } else {
+                CandidateBar(composing: composing,
+                             candidates: candidates,
+                             onPick: pick,
+                             onForget: forget)
+            }
             ForEach(rows.indices, id: \.self) { i in
                 KeyRow(keys: rows[i],
                        onKey: handle,
@@ -90,7 +103,9 @@ struct KeyboardRootView: View {
         switch p {
         case .none: extra = 0
         case .clipboard: extra = KBMetrics.panelHeight + KBMetrics.rowGap
-        case .thought: extra = KBMetrics.thoughtPanelHeight + KBMetrics.rowGap
+        // 思想库面板：输入框面板 + 一根候选栏（面板里打拼音要在候选栏选汉字）
+        case .thought: extra = KBMetrics.thoughtPanelHeight
+            + KBMetrics.barHeight + KBMetrics.rowGap * 2
         }
         controller.setExtraHeight(extra)
     }
@@ -109,6 +124,9 @@ struct KeyboardRootView: View {
             setPanel(.none)
         } else {
             thoughtQuery = ""
+            thoughtComposing = ""
+            thoughtCands = []
+            thoughtLine = 0
             setPanel(.thought)
         }
     }
@@ -136,19 +154,39 @@ struct KeyboardRootView: View {
     }
 
     /// 思想库面板展开时，字母键喂给面板的输入框（键盘扩展里没法再弹系统键盘，
-    /// 所以面板的输入只能由键盘自己的键来喂 —— 跟百度翻译框一个道理）
+    /// 所以面板的输入只能由键盘自己的键来喂 —— 跟百度翻译框一个道理）。
+    /// 字母先进拼音串，候选栏里选汉字落进输入框；回车 = 命中内容逐行上屏。
     private func handleThoughtKey(_ spec: KeySpec) {
         switch spec.action {
         case .letter(let c):
-            thoughtQuery += c
+            thoughtComposing += c
+            refreshThoughtCands()
         case .text(let t):
             thoughtQuery += t
+            thoughtComposing = ""
+            thoughtCands = []
+            thoughtLine = 0
         case .backspace:
-            if !thoughtQuery.isEmpty { thoughtQuery.removeLast() }
+            if !thoughtComposing.isEmpty {
+                thoughtComposing.removeLast()
+                refreshThoughtCands()
+            } else if !thoughtQuery.isEmpty {
+                thoughtQuery.removeLast()
+                thoughtLine = 0
+            }
         case .space:
-            thoughtQuery += " "
+            if !thoughtComposing.isEmpty {
+                commitThoughtComposing()
+            } else {
+                thoughtQuery += " "
+                thoughtLine = 0
+            }
         case .ret:
-            if let first = thoughtMatches.first { controller.commit(first.content) }
+            if !thoughtComposing.isEmpty {
+                commitThoughtComposing()
+            } else {
+                outputThoughtLine()
+            }
         case .globe:
             controller.advanceToNextInputMode()
         case .toLayer(let l):
@@ -156,6 +194,44 @@ struct KeyboardRootView: View {
         default:
             break
         }
+    }
+
+    private func refreshThoughtCands() {
+        thoughtCands = thoughtComposing.isEmpty
+            ? []
+            : PinyinEngine.shared.candidates(for: thoughtComposing)
+    }
+
+    /// 候选栏里点汉字：落进思想库输入框
+    private func pickThought(_ c: PinyinCandidate) {
+        guard !c.literal else { return }
+        thoughtQuery += c.word
+        thoughtComposing = ""
+        thoughtCands = []
+        thoughtLine = 0
+    }
+
+    /// 把面板拼音串按首选候选落进输入框
+    private func commitThoughtComposing() {
+        guard let best = thoughtCands.first(where: { !$0.literal }) else {
+            thoughtComposing = ""
+            thoughtCands = []
+            return
+        }
+        pickThought(best)
+    }
+
+    /// 回车：把命中关键词的内容按行一句一句上屏（对标电脑端思想库）
+    private func outputThoughtLine() {
+        guard let hit = thoughtMatches.first else { return }
+        let lines = hit.content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !lines.isEmpty else { return }
+        let i = min(thoughtLine, lines.count - 1)
+        let line = lines[i]
+        if !line.isEmpty { controller.commit(line) }
+        thoughtLine = min(thoughtLine + 1, lines.count - 1)
     }
 
     private var rows: [[KeySpec]] {
@@ -170,8 +246,10 @@ struct KeyboardRootView: View {
         if panel == .thought { handleThoughtKey(spec); return }
         switch spec.action {
         case .letter(let c):
-            if shiftOn || capsLock {
-                commitComposing()
+            // 只有「拼音串是空的、且手动按了 ⇧ / 大写锁」才把字母当英文直接上屏。
+            // 只要有拼音串在，shift 一律不影响 —— 中文拼音本来就小写，
+            // 这样即使 shift 被误点亮，也绝不会把字母吐进宿主输入框。
+            if (shiftOn || capsLock) && composing.isEmpty {
                 controller.insert(c.uppercased())
                 candidates = []
                 if shiftOn && !capsLock { shiftOn = false }
@@ -277,13 +355,12 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// 句首自动大写：打完句末标点/换行，下一个字母自动大写（对标系统/百度键盘）
+    /// 句末标点后不再自动点亮大写 —— 中文键盘自动大写没意义，
+    /// 反而会在标点后把下一个字母当英文直接上屏（「打字出字母」的另一来源）。
+    /// 需要英文大写一律手动按 ⇧。
     private func autoCap(after t: String) {
-        guard IMESettingsStore.current.autoCapitalize else {
-            shiftOn = false
-            return
-        }
-        shiftOn = ["。", "！", "？", ".", "!", "?", "\n"].contains(t)
+        _ = t
+        if shiftOn && !capsLock { shiftOn = false }
     }
 
     // MARK: - 输入态同步
@@ -294,39 +371,40 @@ struct KeyboardRootView: View {
             controller.setComposing("")
             return
         }
-        candidates = PinyinEngine.shared.candidates(for: composing)
+        candidates = InputEngine.shared.candidates(for: composing)
         controller.setComposing(composing)
     }
 
-    /// 把当前拼音串按首选候选上屏
+    /// 把当前拼音串按首选候选上屏。
+    /// 只上屏真正的汉字候选 —— 找不到汉字时宁可什么都不做，也绝不把裸拼音当字母吐出去。
+    /// （「打字打出英文字母」的根因就是这里兜底上了 composing 本身。）
     private func commitComposing() {
         guard !composing.isEmpty else { return }
-        let best = candidates.first(where: { !$0.literal }) ?? candidates.first
-        let word = best?.word ?? composing
-        applyCommit(word, pinyin: composing, consumed: best?.consumed ?? composing.count)
+        if candidates.isEmpty { refresh() }
+        guard let best = candidates.first(where: { !$0.literal }) else { return }
+        applyCommit(best, pinyin: composing)
     }
 
     /// 点了候选栏里的词（含联想）
     private func pick(_ c: PinyinCandidate) {
-        applyCommit(c.word, pinyin: composing, consumed: c.consumed)
+        applyCommit(c, pinyin: composing)
     }
 
     /// 上屏一个词。若这条候选只吃掉了拼音串的一部分（比如打 jintianx 选了「今天」），
     /// 剩下的「x」继续留在串里接着拼 —— 百度就是这么干的。
-    private func applyCommit(_ word: String, pinyin: String, consumed: Int) {
-        controller.commit(word)
-        let used = (consumed > 0 && consumed <= pinyin.count) ? consumed : pinyin.count
-        PinyinEngine.shared.learn(word, pinyin: String(pinyin.prefix(used)))
+    private func applyCommit(_ c: PinyinCandidate, pinyin: String) {
+        controller.commit(c.word)
+        let used = InputEngine.shared.commit(c, pinyin: pinyin)
 
         let rest = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
         composing = rest
         if rest.isEmpty {
             // 上屏后立刻联想下一个字
-            candidates = PinyinEngine.shared.associate(word)
+            candidates = InputEngine.shared.associate(c.word)
                 .map { PinyinCandidate(word: $0, score: 0) }
         } else {
             controller.setComposing(rest)
-            candidates = PinyinEngine.shared.candidates(for: rest)
+            candidates = InputEngine.shared.candidates(for: rest)
         }
     }
 
@@ -371,6 +449,9 @@ struct KeyboardRootView: View {
         authorized = AuthStore.isLoggedIn
         if authorized {
             hint = ""
+            // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
+            // 没就绪前候选走自研引擎，就绪后自动切过去。
+            RimeService.shared.prepare()
             controller.refreshAuth()
         } else {
             composing = ""
@@ -384,7 +465,7 @@ struct KeyboardRootView: View {
 
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
-        thoughts = ThoughtStore.current.flatItems
+        thoughts = ThoughtStore.current.activeItems
         applyLearnResetIfNeeded()
 
         if changed {

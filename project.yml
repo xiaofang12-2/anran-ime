@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.3.6"
-    CURRENT_PROJECT_VERSION: "9"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "10"
     SWIFT_VERSION: "5.0"
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
     CODE_SIGN_STYLE: Manual
@@ -57,9 +57,14 @@ targets:
       - path: Sources/Shared
       - path: Support/server.crt
         buildPhase: resources
+      # 自研词库（librime 起不来时的兜底引擎用）
       - path: Support/dict/pinyin.bin
         buildPhase: resources
       - path: Support/dict/assoc.bin
+        buildPhase: resources
+      # Rime 中州韵方案数据（CI 拉鼠须管 SharedSupport 填进来；folder 引用保留目录结构）
+      - path: Support/rime
+        type: folder
         buildPhase: resources
       - path: Support/Keyboard/click.wav
         buildPhase: resources
@@ -70,6 +75,22 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime.keyboard
         INFOPLIST_FILE: Support/Keyboard/Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
+        # Swift 调 librime 的 ObjC++ 桥（RimeBridge）
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Keyboard/AnRanKeyboard-Bridging-Header.h
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        CLANG_CXX_LIBRARY: libc++
+        # librime 静态库头文件（xcframework 的 device 切片）
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/ThirdParty/librime/librime-static.xcframework/ios-arm64/Headers
+          - $(SRCROOT)/ThirdParty/librime/librime-static.xcframework/ios-arm64_x86_64-simulator/Headers
+        # 关键：librime 的各个 module 靠静态构造函数自注册，纯静态链接会被
+        # 链接器当「没人引用的对象」丢掉，结果 initialize 找不到任何 translator。
+        # 用 -force_load 把整份 librime.a 全部拉进来，构造函数才会跑。
+        OTHER_LDFLAGS:
+          - -Wl,-force_load,$(SRCROOT)/ThirdParty/librime/librime-static.xcframework/ios-arm64/librime.a
+          - -lc++
+          - -lz
+          - -liconv
 
 schemes:
   AnRanIME:
