@@ -175,31 +175,64 @@ targets:
           fi
 
           # ---- 4. 编 bin：优先用自带 deployer（与运行时同版本 librime）----
+          REPORT="$SHARED/_report.txt"
+          : > "$REPORT"
           MAC_LIB="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/librime.a"
           MAC_HDR="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/Headers"
           DEPLOYER=""
           if [ -f "$MAC_LIB" ]; then
-            echo "== 编译自带 deployer（与运行时同版本 librime）=="
+            echo "== 编译自带 deployer（与运行时同版本 librime）==" | tee -a "$REPORT"
             clang++ -std=c++17 -O1 -I "$MAC_HDR" "$SRCROOT/tools/rime_deploy.cc" \
               -Wl,-force_load,"$MAC_LIB" -o /tmp/anran_rime_deploy \
-              -lc++ -lz -liconv -framework Foundation 2>&1 | tail -20
+              -lc++ -lz -liconv -framework Foundation >> "$REPORT" 2>&1
+            if [ ! -x /tmp/anran_rime_deploy ]; then
+              echo "（带 -liconv 链接失败，去掉 -liconv 重试）" | tee -a "$REPORT"
+              clang++ -std=c++17 -O1 -I "$MAC_HDR" "$SRCROOT/tools/rime_deploy.cc" \
+                -Wl,-force_load,"$MAC_LIB" -o /tmp/anran_rime_deploy \
+                -lc++ -lz -framework Foundation >> "$REPORT" 2>&1
+            fi
             [ -x /tmp/anran_rime_deploy ] && DEPLOYER=/tmp/anran_rime_deploy
+          else
+            echo "（缺 macOS 切片 librime.a：$MAC_LIB）" | tee -a "$REPORT"
           fi
-          [ -z "$DEPLOYER" ] && DEPLOYER=$(find /tmp/sq -name rime_deployer 2>/dev/null | head -1)
+
+          run_deployer() {   # $1=deployer 可执行文件
+            rm -rf "$SHARED/_u" && mkdir -p "$SHARED/_u"
+            if [ "$1" = "/tmp/anran_rime_deploy" ]; then
+              "$1" "$SHARED" "$SHARED/_u" >> "$REPORT" 2>&1
+            else
+              "$1" --build "$SHARED" "$SHARED/_u" >> "$REPORT" 2>&1
+            fi
+            echo "deployer exit=$?" | tee -a "$REPORT"
+            mkdir -p "$SHARED/build"
+            if ls "$SHARED/_u/build/"*.bin >/dev/null 2>&1; then
+              cp "$SHARED/_u/build/"*.bin "$SHARED/build/" 2>/dev/null
+            fi
+            rm -rf "$SHARED/_u"
+          }
 
           if [ -n "$DEPLOYER" ]; then
-            echo "== 编预编译 bin：$DEPLOYER =="
-            rm -rf "$SHARED/_u" && mkdir -p "$SHARED/_u"
-            if [ "$DEPLOYER" = "/tmp/anran_rime_deploy" ]; then
-              "$DEPLOYER" "$SHARED" "$SHARED/_u"
-            else
-              "$DEPLOYER" --build "$SHARED" "$SHARED/_u"
+            echo "== 编预编译 bin：$DEPLOYER ==" | tee -a "$REPORT"
+            run_deployer "$DEPLOYER"
+          fi
+
+          # 自带 deployer 没出 bin：退回鼠须管 rime_deployer 再试一次
+          if ! ls "$SHARED/build/"*.bin >/dev/null 2>&1; then
+            SQ=$(find /tmp/sq -name rime_deployer 2>/dev/null | head -1)
+            if [ -n "$SQ" ]; then
+              echo "== 自带 deployer 没出 bin，改试鼠须管 rime_deployer：$SQ ==" | tee -a "$REPORT"
+              run_deployer "$SQ"
             fi
-            mkdir -p "$SHARED/build"
-            cp "$SHARED/_u/build/"*.bin "$SHARED/build/" 2>/dev/null
-            rm -rf "$SHARED/_u"
-          else
-            echo "（没拿到 deployer，跳过编译）"
+          fi
+
+          # 再不行：把鼠须管 SharedSupport 里自带的预编译 bin 直接搬来兜底
+          if ! ls "$SHARED/build/"*.bin >/dev/null 2>&1; then
+            SQBUILD=$(find /tmp/sq -type d -name build 2>/dev/null | head -1)
+            if [ -n "$SQBUILD" ] && ls "$SQBUILD"/*.bin >/dev/null 2>&1; then
+              echo "== 搬鼠须管自带预编译 bin 兜底：$SQBUILD ==" | tee -a "$REPORT"
+              mkdir -p "$SHARED/build"
+              cp "$SQBUILD"/*.bin "$SHARED/build/" 2>/dev/null
+            fi
           fi
 
           # ---- 5. yaml 时间戳改旧，让 librime 认定 bin 是最新的，直接复用不重编 ----
@@ -207,6 +240,10 @@ targets:
 
           echo "== rime 数据 =="; ls -lh "$SHARED" | head -40
           echo "== prebuilt bin =="; ls -lh "$SHARED/build" 2>/dev/null || echo "（无预编译 bin，运行时会退回自研引擎）"
+          {
+            echo "---- 预编译 bin 清单 ----"
+            ls -l "$SHARED/build" 2>/dev/null || echo "（无 build 目录）"
+          } >> "$REPORT"
           exit 0
     settings:
       base:

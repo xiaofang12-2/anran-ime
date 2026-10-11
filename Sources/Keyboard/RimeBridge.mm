@@ -85,9 +85,11 @@
             _api->initialize(&traits);
             _initialized = YES;
 
-            // 有预编译 bin 时这一步只是把 bin 落到可写目录，很快；
-            // 没有就现场编译（慢，但不至于起不来）。
-            if (RIME_API_AVAILABLE(_api, start_maintenance)) {
+            // 只有随包带了预编译 bin 才走 maintenance（这一步只是把 bin 落到
+            // 可写目录，很快）。没 bin 时若调 start_maintenance，librime 会现场
+            // 编译整份词库 —— 键盘扩展内存只有 30~60MB，必被 jetsam 杀掉。
+            // 宁可不部署、退回自研引擎，也不能把扩展搞崩。
+            if ([self hasPrebuiltBins] && RIME_API_AVAILABLE(_api, start_maintenance)) {
                 Bool need = _api->start_maintenance(False);
                 if (need && RIME_API_AVAILABLE(_api, join_maintenance_thread)) {
                     _api->join_maintenance_thread();
@@ -101,6 +103,19 @@
     _ready = ok;
     [_lock unlock];
     return ok;
+}
+
+/// 预编译 bin 是否随包带进来了（rime/build/*.bin）。
+/// 没有就别走 maintenance —— 现场编译会把扩展内存打爆。
+- (BOOL)hasPrebuiltBins {
+    NSString *build = [NSString stringWithUTF8String:_buildDir.c_str()];
+    if (build.length == 0) { return NO; }
+    NSArray<NSString *> *files =
+        [[NSFileManager defaultManager] contentsOfDirectoryAtPath:build error:nil];
+    for (NSString *f in files) {
+        if ([f hasSuffix:@".bin"]) { return YES; }
+    }
+    return NO;
 }
 
 - (BOOL)createSessionLocked {

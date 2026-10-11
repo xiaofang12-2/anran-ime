@@ -35,7 +35,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build | tail -60
+            build > /tmp/xcodebuild.log 2>&1 || {
+              echo "==== 编译失败，尾部 150 行 ===="
+              tail -150 /tmp/xcodebuild.log
+              exit 1
+            }
+          echo "==== Rime 预编译阶段日志（关键行）===="
+          grep -nE "Rime|rime|deploy|deployer|clang|\.bin|方案就位|解仓库|铺雾凇|opencc|No such|error:|Error|FAILED|失败" \
+            /tmp/xcodebuild.log | tail -150 || true
+          echo "==== 编译尾部 30 行 ===="
+          tail -30 /tmp/xcodebuild.log
+
+      - name: 核对 rime 打包结果
+        run: |
+          APPEX="build/Build/Products/Release-iphoneos/AnRanIME.app/PlugIns/AnRanKeyboard.appex"
+          echo "== appex 里 rime 根目录 =="
+          ls -la "$APPEX/rime" 2>/dev/null | head -50 || echo "（没有 rime 目录）"
+          echo "== appex 里 rime/build（预编译 bin）=="
+          ls -la "$APPEX/rime/build" 2>/dev/null || echo "（没有 build 目录 —— 运行时会退回自研引擎）"
+          echo "== 主方案 =="
+          ls -la "$APPEX/rime"/*.schema.yaml 2>/dev/null || echo "（没有 schema）"
+          echo "== 词库目录 =="
+          ls -la "$APPEX/rime/cn_dicts" 2>/dev/null | head -20 || echo "（没有 cn_dicts）"
+          echo "== 预编译报告 =="
+          cat "$APPEX/rime/_report.txt" 2>/dev/null || echo "（没有 _report.txt）"
 
       - name: 打成未签名 ipa
         run: |
