@@ -18,6 +18,8 @@ struct SetupView: View {
     @State private var goPhrases = false
     @State private var goThoughts = false
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         NavigationView {
             List {
@@ -31,6 +33,12 @@ struct SetupView: View {
         }
         .navigationViewStyle(.stack)
         .onAppear(perform: refresh)
+        .onChange(of: scenePhase) { phase in
+            // 切后台时把最新配置推给键盘（配置没变就不动剪贴板）。
+            // 免费签名只能走剪贴板交接，这一步保证「改完设置 → 去别的 app 打字」
+            // 键盘一开就是最新配置。
+            if phase != .active { _ = ConfigSync.publishIfChanged() }
+        }
         .onOpenURL { url in
             switch url.host {
             case "phrases": goPhrases = true
@@ -144,6 +152,8 @@ struct SetupView: View {
             if res.ok {
                 AuthStore.save(username: inputUser.trimmingCharacters(in: .whitespaces),
                                ticket: res.ticket, expireAt: res.expireAt)
+                // 登录态并进整包推给键盘，省得用户再单独点一次「同步登录状态到键盘」
+                ConfigSync.publish()
                 inputPass = ""
                 refresh()
                 tip(res.boundNew ? "登录成功，已绑定本机" : "登录成功", ok: true)

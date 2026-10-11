@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.4.0"
-    CURRENT_PROJECT_VERSION: "10"
+    MARKETING_VERSION: "0.4.2"
+    CURRENT_PROJECT_VERSION: "13"
     SWIFT_VERSION: "5.0"
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
     CODE_SIGN_STYLE: Manual
@@ -83,39 +83,98 @@ targets:
           SHARED="$SRCROOT/Support/rime"
           mkdir -p "$SHARED"
 
-          # ---- 1. 取方案 yaml：鼠须管 SharedSupport 是配齐的一整套 ----
-          if [ ! -f "$SHARED/luna_pinyin.dict.yaml" ]; then
-            echo "== 拉鼠须管 SharedSupport =="
-            rm -rf /tmp/sq.pkg /tmp/sq
-            curl -fsSL -o /tmp/sq.pkg \
-              "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
-            if [ -f /tmp/sq.pkg ]; then
-              pkgutil --expand-full /tmp/sq.pkg /tmp/sq 2>/dev/null
-              SS=$(find /tmp/sq -type d -name SharedSupport 2>/dev/null | head -1)
-              if [ -n "$SS" ]; then cp -R "$SS"/. "$SHARED"/; fi
-            fi
-          fi
-          # 鼠须管没拿到，退回 rime 官方仓库直抓
-          if [ ! -f "$SHARED/luna_pinyin.dict.yaml" ]; then
-            echo "== 改抓 rime-prelude + rime-luna-pinyin =="
-            rm -rf /tmp/rp /tmp/rl; mkdir -p /tmp/rp /tmp/rl
-            curl -fsSL -o /tmp/rp.tgz "https://codeload.github.com/rime/rime-prelude/tar.gz/refs/heads/master"
-            curl -fsSL -o /tmp/rl.tgz "https://codeload.github.com/rime/rime-luna-pinyin/tar.gz/refs/heads/master"
-            tar -xzf /tmp/rp.tgz -C /tmp/rp --strip-components=1 2>/dev/null
-            tar -xzf /tmp/rl.tgz -C /tmp/rl --strip-components=1 2>/dev/null
-            cp -R /tmp/rp/. "$SHARED"/
-            cp -R /tmp/rl/. "$SHARED"/
+          # 带重试的下载：CI 网络偶发超时会让 curl 静默失败，不重试就会退化成
+          # 「只有 luna_pinyin 的残包」（用户实测就是栽在这个坑里）。
+          fetch() {  # $1=url $2=dest
+            n=1
+            while [ $n -le 4 ]; do
+              curl -fsSL --connect-timeout 20 --retry 2 --retry-delay 2 -o "$2" "$1"
+              if [ -s "$2" ]; then return 0; fi
+              echo "下载失败(第 $n 次): $1"; n=$((n+1)); sleep 4
+            done
+            return 1
+          }
+
+          # ---- 0. opencc 底座（离线优先）----
+          # 雾凇拼音的 simplifier（emoji / 简繁）要 Rime 自带的 opencc 数据，
+          # 光有 rime-ice 会缺 opencc 报错。仓库自带 rime-opencc.tgz（从已验证的
+          # 出包里抽出），离线铺上；没有才联网去鼠须管拿。这一步不再依赖网络。
+          if [ ! -d "$SHARED/opencc" ] && [ -f "$SRCROOT/Support/rime-opencc.tgz" ]; then
+            echo "== 解仓库自带的 opencc 底座 =="
+            tar -xzf "$SRCROOT/Support/rime-opencc.tgz" -C "$SHARED" 2>/dev/null
           fi
 
-          # ---- 2. 只留拼音方案，砍掉用不上的压包体（opencc / stroke 留着）----
+          # ---- 1. 鼠须管 SharedSupport 当底座：完整 opencc 数据 + prelude + luna_pinyin ----
+          # 离线包没拿到时的联网兜底：先铺底座，再把雾凇覆盖上去。
+          if [ ! -d "$SHARED/opencc" ]; then
+            echo "== 拉鼠须管 SharedSupport（底座：opencc / prelude）=="
+            rm -rf /tmp/sq.pkg /tmp/sq
+            if fetch "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg" /tmp/sq.pkg; then
+              pkgutil --expand-full /tmp/sq.pkg /tmp/sq 2>/dev/null
+              SS=$(find /tmp/sq -type d -name SharedSupport 2>/dev/null | head -1)
+              if [ -n "$SS" ]; then cp -R "$SS"/. "$SHARED"/ 2>/dev/null; fi
+            fi
+          fi
+
+          # ---- 2. 雾凇拼音 rime-ice（社区里最接近百度的免费方案）----
+          # 仓库自带 Support/rime-ice.tgz：离线、可复现，彻底避开 CI 网络抖动
+          # 导致的「静默退化成只有 luna_pinyin 的残包」（用户实测就是栽在这）。
+          ICE=""
+          if [ -f "$SRCROOT/Support/rime-ice.tgz" ]; then
+            echo "== 解仓库自带的 rime-ice.tgz =="
+            rm -rf /tmp/ice; mkdir -p /tmp/ice
+            tar -xzf "$SRCROOT/Support/rime-ice.tgz" -C /tmp/ice --strip-components=1 2>/dev/null
+            [ -f /tmp/ice/rime_ice.schema.yaml ] && ICE=/tmp/ice
+          fi
+          if [ -z "$ICE" ]; then
+            echo "== 仓库没带 rime-ice.tgz，联网拉 =="
+            rm -rf /tmp/ice /tmp/ice.tgz; mkdir -p /tmp/ice
+            if fetch "https://codeload.github.com/iDvel/rime-ice/tar.gz/refs/heads/main" /tmp/ice.tgz; then
+              tar -xzf /tmp/ice.tgz -C /tmp/ice --strip-components=1 2>/dev/null
+              [ -f /tmp/ice/rime_ice.schema.yaml ] && ICE=/tmp/ice
+            fi
+          fi
+
+          if [ -n "$ICE" ]; then
+            echo "== 铺雾凇拼音（整棵树：方案 + cn_dicts/en_dicts + lua + opencc + others）=="
+            cp -R "$ICE"/. "$SHARED"/ 2>/dev/null
+            rm -rf "$SHARED/.github" "$SHARED/AGENTS.md" "$SHARED/README.md" \
+                   "$SHARED/recipe.yaml" "$SHARED/.gitignore" 2>/dev/null
+          fi
+
+          # 两个都没拿到，最后退回 rime 官方仓库直抓（质量一般但能出字）
+          if [ ! -f "$SHARED/rime_ice.schema.yaml" ] && [ ! -f "$SHARED/luna_pinyin.dict.yaml" ]; then
+            echo "== 再退回 rime-prelude + rime-luna-pinyin =="
+            rm -rf /tmp/rp /tmp/rl; mkdir -p /tmp/rp /tmp/rl
+            fetch "https://codeload.github.com/rime/rime-prelude/tar.gz/refs/heads/master" /tmp/rp.tgz
+            fetch "https://codeload.github.com/rime/rime-luna-pinyin/tar.gz/refs/heads/master" /tmp/rl.tgz
+            tar -xzf /tmp/rp.tgz -C /tmp/rp --strip-components=1 2>/dev/null
+            tar -xzf /tmp/rl.tgz -C /tmp/rl --strip-components=1 2>/dev/null
+            cp -R /tmp/rp/. "$SHARED"/ 2>/dev/null
+            cp -R /tmp/rl/. "$SHARED"/ 2>/dev/null
+          fi
+
+          echo "== 方案就位情况 =="
+          ls -l "$SHARED/rime_ice.schema.yaml" 2>/dev/null || echo "（没拿到 rime-ice）"
+          ls -l "$SHARED/luna_pinyin.dict.yaml" 2>/dev/null || true
+          ls -d "$SHARED/opencc" 2>/dev/null || echo "（没 opencc 数据）"
+          ls -d "$SHARED/lua" 2>/dev/null || echo "（没 lua 脚本）"
+          ls -d "$SHARED/cn_dicts" 2>/dev/null || echo "（没 cn_dicts 词库）"
+
+          # ---- 3. 砍掉用不上的方案压包体（opencc / lua 留着，雾凇要用）----
           cd "$SHARED"
           rm -rf cangjie5* bopomofo* terra_pinyin* luna_quanpin* \
             luna_pinyin_tw* luna_pinyin_fluency* double_pinyin* \
-            wubi* quick5* *.gram 2>/dev/null
-          printf 'patch:\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
-            > "$SHARED/default.custom.yaml"
+            wubi* quick5* t9.schema.yaml squirrel.yaml weasel.yaml 2>/dev/null
+          if [ -f "$SHARED/rime_ice.schema.yaml" ]; then
+            printf 'patch:\n  schema_list:\n    - schema: rime_ice\n    - schema: melt_eng\n' \
+              > "$SHARED/default.custom.yaml"
+          else
+            printf 'patch:\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
+              > "$SHARED/default.custom.yaml"
+          fi
 
-          # ---- 3. 编 bin：优先用自带 deployer（与运行时同版本 librime）----
+          # ---- 4. 编 bin：优先用自带 deployer（与运行时同版本 librime）----
           MAC_LIB="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/librime.a"
           MAC_HDR="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/Headers"
           DEPLOYER=""
@@ -143,7 +202,7 @@ targets:
             echo "（没拿到 deployer，跳过编译）"
           fi
 
-          # ---- 4. yaml 时间戳改旧，让 librime 认定 bin 是最新的，直接复用不重编 ----
+          # ---- 5. yaml 时间戳改旧，让 librime 认定 bin 是最新的，直接复用不重编 ----
           find "$SHARED" -name '*.yaml' -exec touch -t 202001010000 {} + 2>/dev/null
 
           echo "== rime 数据 =="; ls -lh "$SHARED" | head -40

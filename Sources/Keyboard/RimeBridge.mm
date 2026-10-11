@@ -113,10 +113,13 @@
     _session = _api->create_session();
     if (_session == 0) { return NO; }
 
-    // 优先简体方案；没有就退回默认方案，不折腾。
+    // 优先雾凇拼音（rime-ice，社区里最接近百度的免费方案）；
+    // 没打进去就退回鼠须管自带的 luna_pinyin_simp，再不行 luna_pinyin。
     if (RIME_API_AVAILABLE(_api, select_schema)) {
-        if (!_api->select_schema(_session, "luna_pinyin_simp")) {
-            _api->select_schema(_session, "luna_pinyin");
+        if (!_api->select_schema(_session, "rime_ice")) {
+            if (!_api->select_schema(_session, "luna_pinyin_simp")) {
+                _api->select_schema(_session, "luna_pinyin");
+            }
         }
     }
     // 兜底保证出简体：luna_pinyin_simp 本来就简化，luna_pinyin 得靠这个开关。

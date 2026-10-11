@@ -2,7 +2,7 @@ import Foundation
 import UIKit
 
 /// 登录态
-struct AuthState: Codable {
+struct AuthState: Codable, Equatable {
     var username: String
     var ticket: String
     var machine: String
@@ -58,14 +58,12 @@ enum AuthStore {
 
     // MARK: - 剪贴板交接
 
-    /// 主 app 用：把当前登录态编码成一段文本放剪贴板
+    /// 主 app 用：把当前登录态编码成一段文本放剪贴板。
+    /// 走整包交接（ConfigSync）—— 登录态单独占剪贴板会把配置冲掉，并进同一个包最稳。
     @discardableResult
     static func exportToPasteboard() -> Bool {
-        guard let s = current,
-              let data = try? JSONEncoder().encode(s),
-              let text = String(data: data, encoding: .utf8) else { return false }
-        UIPasteboard.general.string = pastePrefix + text
-        return true
+        guard current != nil else { return false }
+        return ConfigSync.publish()
     }
 
     /// 键盘用：剪贴板里若有一段票据就接过来存下（接不到返回 false）

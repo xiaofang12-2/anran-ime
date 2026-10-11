@@ -22,6 +22,8 @@ struct KeyboardRootView: View {
     @State private var lastSpaceTap = Date.distantPast
     /// 配置/短语从主程序接过来后 +1，逼界面按新尺寸重画
     @State private var cfgRev = 0
+    /// 上一次从剪贴板重拉配置的时间（起词时节流重拉用）
+    @State private var lastSyncAt = Date.distantPast
 
     // 顶部功能栏 / 浮层面板
     @State private var panel: KBPanel = .none
@@ -120,15 +122,27 @@ struct KeyboardRootView: View {
         if panel == .clipboard {
             setPanel(.none)
         } else {
-            clipboardText = UIPasteboard.general.string ?? ""
+            clipboardText = Self.visibleClipboard()
             setPanel(.clipboard)
         }
+    }
+
+    /// 剪贴板面板只显示用户自己复制的东西。
+    /// 主程序把配置（布局/短语/设置/思想库/登录态）打包塞进剪贴板交接，
+    /// 那段 ANRAN-* 文本不是给用户看的，露出来只会让人一脸懵。
+    private static func visibleClipboard() -> String {
+        let raw = UIPasteboard.general.string ?? ""
+        if raw.hasPrefix(SyncBundle.prefix) || raw.hasPrefix("ANRAN-") { return "" }
+        return raw
     }
 
     private func toggleThought() {
         if panel == .thought {
             setPanel(.none)
         } else {
+            // 点图标算用户手势，这时候读一次主程序下发的最新配置（思想库/短语），
+            // 免得刚在设置里加完关键词、切回键盘还调不出内容。
+            pullSettings()
             thoughtQuery = ""
             thoughtComposing = ""
             thoughtCands = []
@@ -141,13 +155,31 @@ struct KeyboardRootView: View {
         setPanel(.none)
     }
 
-    /// 思想库命中：关键词或内容里带查询串
+    /// 思想库命中：关键词或内容里带任意一个查询串。
+    ///
+    /// 三个查询串一起上：已落定的关键词框内容、正在拼的裸串、拼音首选字。
+    /// 只认一个会漏 —— 打 mw 这种字母关键词时首选字是「吗」之类，会把 mw 顶掉，
+    /// 结果永远匹配不上；裸串也拿去比，字母关键词才调得出来。
     private var thoughtMatches: [ThoughtItem] {
-        let q = thoughtQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return Array(thoughts.prefix(12)) }
-        return Array(thoughts.filter {
-            $0.cleanKeyword.contains(q) || $0.content.lowercased().contains(q)
+        let qs = thoughtQueries
+        guard !qs.isEmpty else { return Array(thoughts.prefix(12)) }
+        return Array(thoughts.filter { it in
+            let k = it.cleanKeyword
+            let c = it.content.lowercased()
+            return qs.contains { q in k.contains(q) || c.contains(q) }
         }.prefix(12))
+    }
+
+    /// 思想库检索用的查询串集合（关键词框内容 + 裸拼音串 + 拼音首选字）
+    private var thoughtQueries: [String] {
+        var qs: [String] = []
+        if !thoughtQuery.isEmpty { qs.append(thoughtQuery.lowercased()) }
+        if !thoughtComposing.isEmpty { qs.append(thoughtComposing.lowercased()) }
+        if let best = thoughtCands.first(where: { !$0.literal }) {
+            let w = best.word.lowercased()
+            if !qs.contains(w) { qs.append(w) }
+        }
+        return qs
     }
 
     private func insertClipboard(_ text: String) {
@@ -188,11 +220,10 @@ struct KeyboardRootView: View {
                 thoughtLine = 0
             }
         case .ret:
-            if !thoughtComposing.isEmpty {
-                commitThoughtComposing()
-            } else {
-                outputThoughtLine()
-            }
+            // 回车 = 出内容：命中就用当前查询串（含正在拼的裸串/首选字）输出一行。
+            // 不强制先落定候选 —— 打 mw 这种字母关键词本来就没有汉字可落，
+            // 硬落反而把 mw 顶掉，用户会觉得「回车没用」。
+            outputThoughtLine()
         case .globe:
             controller.advanceToNextInputMode()
         case .toLayer(let l):
@@ -227,17 +258,23 @@ struct KeyboardRootView: View {
         pickThought(best)
     }
 
-    /// 回车：把命中关键词的内容按行一句一句上屏（对标电脑端思想库）
+    /// 回车：把命中关键词的内容按行一句一句上屏（对标电脑端思想库）。
+    /// 没有任何查询串时（刚开面板）回车不输出，避免莫名其妙吐一句。
     private func outputThoughtLine() {
         guard let hit = thoughtMatches.first else { return }
         let lines = hit.content
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
         guard !lines.isEmpty else { return }
-        let i = min(thoughtLine, lines.count - 1)
-        let line = lines[i]
-        if !line.isEmpty { controller.commit(line) }
-        thoughtLine = min(thoughtLine + 1, lines.count - 1)
+        // 一轮输出完再从头来，方便反复调用同一段内容
+        if thoughtLine >= lines.count { thoughtLine = 0 }
+        let line = lines[thoughtLine]
+        if !line.isEmpty {
+            controller.commit(line)
+            // 多行之间补换行，别让上一句和下一句黏成一坨
+            if thoughtLine < lines.count - 1 { controller.newline() }
+        }
+        thoughtLine += 1
     }
 
     private var rows: [[KeySpec]] {
@@ -260,6 +297,15 @@ struct KeyboardRootView: View {
                 candidates = []
                 if shiftOn && !capsLock { shiftOn = false }
             } else {
+                // 起一个新词前顺手重拉一次配置：主程序刚改的自定义短语/思想库
+                // 立刻就能用上，不用等键盘重新弹出。节流 1.5 秒，别每敲一下都读剪贴板。
+                if composing.isEmpty {
+                    let now = Date()
+                    if now.timeIntervalSince(lastSyncAt) > 1.5 {
+                        lastSyncAt = now
+                        pullSettings()
+                    }
+                }
                 composing += c
                 refresh()
             }
@@ -431,7 +477,10 @@ struct KeyboardRootView: View {
                 .multilineTextAlignment(.center)
             HStack(spacing: 10) {
                 GateButton(label: "接取登录") {
-                    if AuthStore.importFromPasteboard(), AuthStore.isLoggedIn {
+                    // 整包（带登录态）先接；接不到再退旧式单票据
+                    _ = ConfigSync.pull()
+                    if !AuthStore.isLoggedIn { _ = AuthStore.importFromPasteboard() }
+                    if AuthStore.isLoggedIn {
                         hint = ""
                         check()
                     } else {
@@ -447,11 +496,12 @@ struct KeyboardRootView: View {
     }
 
     private func check() {
-        // 共享容器拿不到时，剪贴板里可能有主程序放过来的票据，先接一次
+        // 先接整包（配置 + 登录态一起落），再兜底接旧式单票据。
+        // 整包里带登录态，所以这里落完 AuthStore 就能直接判登录了。
+        pullSettings()
         if !AuthStore.isLoggedIn {
             _ = AuthStore.importFromPasteboard()
         }
-        pullSettings()
         authorized = AuthStore.isLoggedIn
         if authorized {
             hint = ""
