@@ -70,11 +70,92 @@ targets:
         buildPhase: resources
       - path: Support/Keyboard/ime_logo.png
         buildPhase: resources
+    # Rime 中州韵方案数据：键盘扩展内存只有 30~60MB，现场编译词库必被
+    # jetsam 杀掉，所以必须在出包时就把 .bin 编好、随包带走（prebuilt）。
+    # 关键：用「跟 App 里静态链接的同一份 librime」来编 bin（tools/rime_deploy.cc），
+    # 产物格式与运行时严格一致；鼠须管自带的 rime_deployer 只当兜底。
+    # 整段编不出来也不挡出包 —— 键盘会自动退回自研引擎。
+    preBuildScripts:
+      - name: 编译 Rime 预编译词库（prebuilt bin）
+        basedOnDependencyAnalysis: false
+        script: |
+          set +e
+          SHARED="$SRCROOT/Support/rime"
+          mkdir -p "$SHARED"
+
+          # ---- 1. 取方案 yaml：鼠须管 SharedSupport 是配齐的一整套 ----
+          if [ ! -f "$SHARED/luna_pinyin.dict.yaml" ]; then
+            echo "== 拉鼠须管 SharedSupport =="
+            rm -rf /tmp/sq.pkg /tmp/sq
+            curl -fsSL -o /tmp/sq.pkg \
+              "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
+            if [ -f /tmp/sq.pkg ]; then
+              pkgutil --expand-full /tmp/sq.pkg /tmp/sq 2>/dev/null
+              SS=$(find /tmp/sq -type d -name SharedSupport 2>/dev/null | head -1)
+              if [ -n "$SS" ]; then cp -R "$SS"/. "$SHARED"/; fi
+            fi
+          fi
+          # 鼠须管没拿到，退回 rime 官方仓库直抓
+          if [ ! -f "$SHARED/luna_pinyin.dict.yaml" ]; then
+            echo "== 改抓 rime-prelude + rime-luna-pinyin =="
+            rm -rf /tmp/rp /tmp/rl; mkdir -p /tmp/rp /tmp/rl
+            curl -fsSL -o /tmp/rp.tgz "https://codeload.github.com/rime/rime-prelude/tar.gz/refs/heads/master"
+            curl -fsSL -o /tmp/rl.tgz "https://codeload.github.com/rime/rime-luna-pinyin/tar.gz/refs/heads/master"
+            tar -xzf /tmp/rp.tgz -C /tmp/rp --strip-components=1 2>/dev/null
+            tar -xzf /tmp/rl.tgz -C /tmp/rl --strip-components=1 2>/dev/null
+            cp -R /tmp/rp/. "$SHARED"/
+            cp -R /tmp/rl/. "$SHARED"/
+          fi
+
+          # ---- 2. 只留拼音方案，砍掉用不上的压包体（opencc / stroke 留着）----
+          cd "$SHARED"
+          rm -rf cangjie5* bopomofo* terra_pinyin* luna_quanpin* \
+            luna_pinyin_tw* luna_pinyin_fluency* double_pinyin* \
+            wubi* quick5* *.gram 2>/dev/null
+          printf 'patch:\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
+            > "$SHARED/default.custom.yaml"
+
+          # ---- 3. 编 bin：优先用自带 deployer（与运行时同版本 librime）----
+          MAC_LIB="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/librime.a"
+          MAC_HDR="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/Headers"
+          DEPLOYER=""
+          if [ -f "$MAC_LIB" ]; then
+            echo "== 编译自带 deployer（与运行时同版本 librime）=="
+            clang++ -std=c++17 -O1 -I "$MAC_HDR" "$SRCROOT/tools/rime_deploy.cc" \
+              -Wl,-force_load,"$MAC_LIB" -o /tmp/anran_rime_deploy \
+              -lc++ -lz -liconv -framework Foundation 2>&1 | tail -20
+            [ -x /tmp/anran_rime_deploy ] && DEPLOYER=/tmp/anran_rime_deploy
+          fi
+          [ -z "$DEPLOYER" ] && DEPLOYER=$(find /tmp/sq -name rime_deployer 2>/dev/null | head -1)
+
+          if [ -n "$DEPLOYER" ]; then
+            echo "== 编预编译 bin：$DEPLOYER =="
+            rm -rf "$SHARED/_u" && mkdir -p "$SHARED/_u"
+            if [ "$DEPLOYER" = "/tmp/anran_rime_deploy" ]; then
+              "$DEPLOYER" "$SHARED" "$SHARED/_u"
+            else
+              "$DEPLOYER" --build "$SHARED" "$SHARED/_u"
+            fi
+            mkdir -p "$SHARED/build"
+            cp "$SHARED/_u/build/"*.bin "$SHARED/build/" 2>/dev/null
+            rm -rf "$SHARED/_u"
+          else
+            echo "（没拿到 deployer，跳过编译）"
+          fi
+
+          # ---- 4. yaml 时间戳改旧，让 librime 认定 bin 是最新的，直接复用不重编 ----
+          find "$SHARED" -name '*.yaml' -exec touch -t 202001010000 {} + 2>/dev/null
+
+          echo "== rime 数据 =="; ls -lh "$SHARED" | head -40
+          echo "== prebuilt bin =="; ls -lh "$SHARED/build" 2>/dev/null || echo "（无预编译 bin，运行时会退回自研引擎）"
+          exit 0
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.anran.ime.keyboard
         INFOPLIST_FILE: Support/Keyboard/Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
+        # 脚本阶段要联网拉词库、跑 deployer，关掉脚本沙箱
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         # Swift 调 librime 的 ObjC++ 桥（RimeBridge）
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Keyboard/AnRanKeyboard-Bridging-Header.h
         CLANG_CXX_LANGUAGE_STANDARD: c++17

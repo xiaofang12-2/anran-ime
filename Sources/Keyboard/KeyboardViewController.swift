@@ -84,6 +84,11 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshAuth()
+        // 键盘每次弹出都让界面重拉一次主程序下发的配置。
+        // 配置（布局/自定义短语/设置/思想库）走剪贴板整包交接，而 SwiftUI 的
+        // onAppear 在扩展进程存活期间只会触发一次 —— 不补这一下，主程序改完
+        // 短语再回到键盘不会更新，表现为「设置了自定义等于没设置」。
+        NotificationCenter.default.post(name: .anranKeyboardWillAppear, object: nil)
     }
 
     // MARK: - 授权
@@ -123,4 +128,9 @@ final class KeyboardViewController: UIInputViewController {
 /// 让 `UIDevice.current.playInputClick()` 能出声（按键音）
 extension KeyboardViewController: UIInputViewAudioFeedback {
     var enableInputClicksWhenVisible: Bool { true }
+}
+
+extension Notification.Name {
+    /// 键盘每次弹出时广播一次，界面据此重新拉取主程序下发的配置
+    static let anranKeyboardWillAppear = Notification.Name("anran.keyboard.willAppear")
 }

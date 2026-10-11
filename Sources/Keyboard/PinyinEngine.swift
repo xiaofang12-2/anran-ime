@@ -635,7 +635,7 @@ final class PinyinEngine {
 
     // MARK: - 收尾：排序、截断、英文候选
 
-    private func rank(_ cands: inout [String: (cov: Int, lp: Double)],
+    private func rank(_ cands: inout [String: (cov: Int, lp: Double, pri: Bool)],
                       _ inp: String, limit: Int,
                       phraseHits: [(text: String, position: Int)] = [])
         -> [PinyinCandidate] {

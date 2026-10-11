@@ -3,6 +3,7 @@
 #include "rime_api.h"
 
 #include <cstring>
+#include <string.h>
 #include <string>
 
 @implementation AnRanRimeCandidate
@@ -117,6 +118,12 @@
         if (!_api->select_schema(_session, "luna_pinyin_simp")) {
             _api->select_schema(_session, "luna_pinyin");
         }
+    }
+    // 兜底保证出简体：luna_pinyin_simp 本来就简化，luna_pinyin 得靠这个开关。
+    // 开关不在方案里时 librime 会静默忽略，不报错。
+    if (RIME_API_AVAILABLE(_api, set_option)) {
+        _api->set_option(_session, "simplification", True);
+        _api->set_option(_session, "ascii_mode", False);
     }
     return YES;
 }

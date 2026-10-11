@@ -44,6 +44,12 @@ struct KeyboardRootView: View {
             _ = cfgRev
             check()
         }
+        // 键盘每次弹出（宿主 viewWillAppear 广播）都重拉配置：
+        // onAppear 在扩展进程存活期间只触发一次，不补这一下，主程序改的
+        // 自定义短语/布局/设置不会同步过来。
+        .onReceive(NotificationCenter.default.publisher(for: .anranKeyboardWillAppear)) { _ in
+            check()
+        }
     }
 
     // MARK: - 已授权：正常键盘
@@ -199,7 +205,7 @@ struct KeyboardRootView: View {
     private func refreshThoughtCands() {
         thoughtCands = thoughtComposing.isEmpty
             ? []
-            : PinyinEngine.shared.candidates(for: thoughtComposing)
+            : InputEngine.shared.candidates(for: thoughtComposing)
     }
 
     /// 候选栏里点汉字：落进思想库输入框
