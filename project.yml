@@ -179,21 +179,31 @@ targets:
           : > "$REPORT"
           MAC_LIB="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/librime.a"
           MAC_HDR="$SRCROOT/ThirdParty/librime/librime-static.xcframework/macos-arm64_x86_64/Headers"
+          # 这段脚本跑在 Xcode 构建环境里，SDKROOT 被设成 iphoneos。直接调 clang++
+          # 会按 iOS 目标链接，撞上 macOS 切片的 librime 目标文件：
+          #   ld: building for 'iOS', but linking in object file ... built for 'macOS'
+          # 必须显式把 SDKROOT / -isysroot 指到 macOS SDK，deployer 才编得出来。
+          MACOS_SDK=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)
+          echo "== macOS SDK: $MACOS_SDK ==" | tee -a "$REPORT"
           DEPLOYER=""
-          if [ -f "$MAC_LIB" ]; then
+          if [ -f "$MAC_LIB" ] && [ -n "$MACOS_SDK" ]; then
             echo "== 编译自带 deployer（与运行时同版本 librime）==" | tee -a "$REPORT"
-            clang++ -std=c++17 -O1 -I "$MAC_HDR" "$SRCROOT/tools/rime_deploy.cc" \
+            SDKROOT="$MACOS_SDK" clang++ -std=c++17 -O1 -I "$MAC_HDR" \
+              -isysroot "$MACOS_SDK" -target arm64-apple-macos11.0 \
+              "$SRCROOT/tools/rime_deploy.cc" \
               -Wl,-force_load,"$MAC_LIB" -o /tmp/anran_rime_deploy \
               -lc++ -lz -liconv -framework Foundation >> "$REPORT" 2>&1
             if [ ! -x /tmp/anran_rime_deploy ]; then
               echo "（带 -liconv 链接失败，去掉 -liconv 重试）" | tee -a "$REPORT"
-              clang++ -std=c++17 -O1 -I "$MAC_HDR" "$SRCROOT/tools/rime_deploy.cc" \
+              SDKROOT="$MACOS_SDK" clang++ -std=c++17 -O1 -I "$MAC_HDR" \
+                -isysroot "$MACOS_SDK" -target arm64-apple-macos11.0 \
+                "$SRCROOT/tools/rime_deploy.cc" \
                 -Wl,-force_load,"$MAC_LIB" -o /tmp/anran_rime_deploy \
                 -lc++ -lz -framework Foundation >> "$REPORT" 2>&1
             fi
             [ -x /tmp/anran_rime_deploy ] && DEPLOYER=/tmp/anran_rime_deploy
           else
-            echo "（缺 macOS 切片 librime.a：$MAC_LIB）" | tee -a "$REPORT"
+            echo "（缺 macOS 切片 librime.a 或 macOS SDK：$MAC_LIB）" | tee -a "$REPORT"
           fi
 
           run_deployer() {   # $1=deployer 可执行文件
@@ -218,6 +228,13 @@ targets:
 
           # 自带 deployer 没出 bin：退回鼠须管 rime_deployer 再试一次
           if ! ls "$SHARED/build/"*.bin >/dev/null 2>&1; then
+            if [ -z "$(find /tmp/sq -name rime_deployer 2>/dev/null | head -1)" ]; then
+              echo "== 没现成鼠须管，先下载当兜底 ==" | tee -a "$REPORT"
+              rm -rf /tmp/sq.pkg /tmp/sq
+              if fetch "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg" /tmp/sq.pkg; then
+                pkgutil --expand-full /tmp/sq.pkg /tmp/sq 2>/dev/null
+              fi
+            fi
             SQ=$(find /tmp/sq -name rime_deployer 2>/dev/null | head -1)
             if [ -n "$SQ" ]; then
               echo "== 自带 deployer 没出 bin，改试鼠须管 rime_deployer：$SQ ==" | tee -a "$REPORT"
