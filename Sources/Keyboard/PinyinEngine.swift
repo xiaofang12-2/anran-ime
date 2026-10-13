@@ -327,6 +327,37 @@ final class PinyinEngine {
         persistUser()
     }
 
+    /// 记一笔「上一个词 → 当前词」的接续习惯（InputEngine 上屏时回灌）。
+    /// 这是「越用越懂你」的上下文层：上屏联想优先给用户自己的搭配。
+    func learnContext(prev: String, next: String) {
+        let a = prev.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = next.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard PinyinEngine.hasCJK(a), PinyinEngine.hasCJK(b),
+              a.count <= 8, b.count <= 8 else { return }
+        var row = userBigram[a] ?? [:]
+        row[b, default: 0] += 1
+        // 单个上下文最多记 12 个后继，按次数留最强的
+        if row.count > 12 {
+            row = Dictionary(uniqueKeysWithValues:
+                row.sorted { $0.value > $1.value }.prefix(12).map { ($0.key, $0.value) })
+        }
+        userBigram[a] = row
+        // 上下文表整体限规模：键盘内存是硬约束，别让学习记录无限膨胀
+        if userBigram.count > 2000 {
+            userBigram = Dictionary(uniqueKeysWithValues:
+                userBigram
+                    .sorted { $0.value.values.reduce(0, +) > $1.value.values.reduce(0, +) }
+                    .prefix(1500)
+                    .map { ($0.key, $0.value) })
+        }
+        cacheKey = ""
+        persistUser()
+    }
+
+    private static func hasCJK(_ s: String) -> Bool {
+        s.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
+    }
+
     /// 抹掉某个词的用户记忆（长按候选纠错用）
     func forget(_ word: String) {
         let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -347,12 +378,13 @@ final class PinyinEngine {
     func clearLearning() {
         userFreq.removeAll()
         userWords.removeAll()
+        userBigram.removeAll()
         cacheKey = ""
         persistUser()
     }
 
     private func persistUser() {
-        let snapshot = UserData(freq: userFreq, words: userWords)
+        let snapshot = UserData(freq: userFreq, words: userWords, bigram: userBigram)
         userQueue.async {
             if let d = try? JSONEncoder().encode(snapshot) {
                 SharedStore.write("ime_user.json", d)
@@ -413,7 +445,9 @@ final class PinyinEngine {
                 if ws.isEmpty { continue }
                 // 没吃完整个输入的「单字」片段纯属噪声（打 awsl 蹦出 啊/阿）
                 if j < n && ws.count == 1 && ws[0].count == 1 { continue }
-                put(ws.joined(), j, sc)
+                // 词数罚分：同样概率下「少切、长词」更贴近真实意图（你好 优于 你 好）
+                let wPen = PinyinEngine.wordPen * Double(max(0, ws.count - 1))
+                put(ws.joined(), j, sc - wPen)
             }
         }
 
@@ -794,15 +828,15 @@ final class PinyinEngine {
     private func fuzzyVariants(_ s: String) -> [String] {
         let rules: [(String, String)] = [
             ("zh", "z"), ("ch", "c"), ("sh", "s"),
+            ("n", "l"), ("r", "l"), ("f", "h"),
             ("ang", "an"), ("eng", "en"), ("ing", "in"),
             ("iang", "ian"), ("uang", "uan"),
-            ("n", "l"), ("f", "h"),
         ]
         var out: [String] = [s]
         for (a, b) in rules {
             let snapshot = out
             for v in snapshot {
-                guard out.count < 8 else { return out }
+                guard out.count < 10 else { return out }
                 guard let r = v.range(of: a) else { continue }
                 var nv = v
                 nv.replaceSubrange(r, with: b)

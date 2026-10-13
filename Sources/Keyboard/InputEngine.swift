@@ -37,6 +37,12 @@ final class InputEngine {
     /// - 来自 librime 的候选：交给 librime 选中（它顺手学词），用剩下的输入算吃掉的长度；
     /// - 来自自研层的候选：走自研的学词。
     func commit(_ c: PinyinCandidate, pinyin: String) -> Int {
+        // 用户上下文学习：上一个上屏词 → 当前词（纯本地，越用越懂你）
+        if !lastCommitted.isEmpty, lastCommitted != c.word {
+            PinyinEngine.shared.learnContext(prev: lastCommitted, next: c.word)
+        }
+        lastCommitted = c.word
+
         let n = pinyin.count
         if let idx = c.rimeIndex {
             RimeService.shared.select(index: idx)
