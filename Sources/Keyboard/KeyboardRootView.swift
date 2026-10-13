@@ -26,6 +26,9 @@ struct KeyboardRootView: View {
     @State private var returnLabel = "换行"
     /// 上一次从剪贴板重拉配置的时间（起词时节流重拉用）
     @State private var lastSyncAt = Date.distantPast
+    /// 引擎诊断串（方案 id + 真实候选条数）。没有 App Groups，键盘沙箱里
+    /// 的东西主程序读不到，候选栏空闲时露这一串是确认 librime 干没干活的唯一途径。
+    @State private var engineDiag = ""
 
     // 顶部功能栏 / 浮层面板
     @State private var panel: KBPanel = .none
@@ -67,6 +70,11 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranKeyboardWillAppear)) { _ in
             check()
         }
+        // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
+        // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
+        .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in
+            engineDiag = RimeService.shared.diagnostics
+        }
     }
 
     // MARK: - 已授权：正常键盘
@@ -105,7 +113,8 @@ struct KeyboardRootView: View {
                 CandidateBar(composing: composing,
                              candidates: candidates,
                              onPick: pick,
-                             onForget: forget)
+                             onForget: forget,
+                             diag: engineDiag)
             }
             ForEach(rows.indices, id: \.self) { i in
                 KeyRow(keys: rows[i],
@@ -610,6 +619,7 @@ struct KeyboardRootView: View {
             // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
             // 没就绪前候选走自研引擎，就绪后自动切过去。
             RimeService.shared.prepare()
+            engineDiag = RimeService.shared.diagnostics
             controller.refreshAuth()
         } else {
             composing = ""

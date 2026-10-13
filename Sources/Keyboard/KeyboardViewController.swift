@@ -145,4 +145,7 @@ extension KeyboardViewController: UIInputViewAudioFeedback {
 extension Notification.Name {
     /// 键盘每次弹出时广播一次，界面据此重新拉取主程序下发的配置
     static let anranKeyboardWillAppear = Notification.Name("anran.keyboard.willAppear")
+
+    /// librime 后台部署收尾时广播一次（成功失败都发），界面据此刷新引擎诊断串
+    static let anranRimeReady = Notification.Name("anran.rime.ready")
 }

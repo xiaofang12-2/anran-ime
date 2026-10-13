@@ -334,6 +334,9 @@ struct CandidateBar: View {
     let candidates: [PinyinCandidate]
     let onPick: (PinyinCandidate) -> Void
     let onForget: (String) -> Void
+    /// 引擎诊断串（方案 id + 真实候选条数），只在空闲时露一眼。
+    /// 没有 App Groups 时这是确认 librime 到底有没有在干活的唯一途径。
+    var diag: String = ""
 
     private var shown: [PinyinCandidate] { Array(candidates.prefix(40)) }
 
@@ -342,11 +345,19 @@ struct CandidateBar: View {
     var body: some View {
         HStack(spacing: 0) {
             if shown.isEmpty {
-                // 没候选就一条空栏，只把正在打的拼音串露出来，别的不占位
-                Text(composing)
-                    .font(.system(size: 15 * scale))
-                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
-                    .padding(.horizontal, 12)
+                // 没候选就一条空栏：正在打的拼音串优先露出来，
+                // 空闲时改露引擎诊断串（librime 没起来能一眼看出走了自研兜底）
+                if composing.isEmpty && !diag.isEmpty {
+                    Text(diag)
+                        .font(.system(size: 11 * scale))
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.35))
+                        .padding(.horizontal, 12)
+                } else {
+                    Text(composing)
+                        .font(.system(size: 15 * scale))
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
+                        .padding(.horizontal, 12)
+                }
                 Spacer()
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {

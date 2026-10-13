@@ -21,10 +21,16 @@
     std::string _sharedDir;
     std::string _userDir;
     std::string _buildDir;
+    std::string _stagingDir;
     std::string _distName;
     std::string _distCode;
     std::string _distVer;
     std::string _appName;
+
+    // 自检结果：方案 id 空 = 方案没加载上（候选必为 0，上层退回自研）；
+    // probeCount = 打「nihao」实际能出多少条候选。这两个数是排查引擎问题的唯一抓手。
+    NSString *_schemaId;
+    NSInteger _probeCount;
 }
 
 - (instancetype)initWithSharedDataDir:(NSString *)sharedDataDir
@@ -34,10 +40,16 @@
         _sharedDir = std::string(sharedDataDir.UTF8String ?: "");
         _userDir = std::string(userDataDir.UTF8String ?: "");
         _buildDir = _sharedDir + "/build";
+        // staging 是 librime 部署产物的落点，默认值就是 ${user_data_dir}/build。
+        // 显式指死：随包预编译的 bin 在 ${shared}/build，部署时按「校验和」判断
+        // 表没变就直接复用，不会现场重编那 60MB 词库（扩展内存扛不住）。
+        _stagingDir = _userDir + "/build";
         _distName = "AnRanIME";
         _distCode = "anran-ime";
         _distVer = "1.0";
         _appName = "rime.anranime";
+        _schemaId = @"";
+        _probeCount = 0;
         _session = 0;
         _initialized = NO;
         _ready = NO;
@@ -77,6 +89,7 @@
             traits.distribution_version = _distVer.c_str();
             traits.app_name = _appName.c_str();
             traits.prebuilt_data_dir = _buildDir.c_str();
+            traits.staging_dir = _stagingDir.c_str();
             traits.min_log_level = 3;   // 只留 FATAL，扩展里别刷日志
 
             if (RIME_API_AVAILABLE(_api, setup)) {
@@ -90,19 +103,60 @@
             // 编译整份词库 —— 键盘扩展内存只有 30~60MB，必被 jetsam 杀掉。
             // 宁可不部署、退回自研引擎，也不能把扩展搞崩。
             if ([self hasPrebuiltBins] && RIME_API_AVAILABLE(_api, start_maintenance)) {
-                Bool need = _api->start_maintenance(False);
-                if (need && RIME_API_AVAILABLE(_api, join_maintenance_thread)) {
+                _api->start_maintenance(False);
+                // 不管 start_maintenance 返回值都 join：返回 False 只表示「没排到
+                // 部署任务」，join 一个没启动的工作线程是安全的。少 join 一次就可能
+                // 拿到「会话建了、方案还没落地」的半成品 —— 那正是候选为零的来源。
+                if (RIME_API_AVAILABLE(_api, join_maintenance_thread)) {
                     _api->join_maintenance_thread();
                 }
             }
         }
         ok = [self createSessionLocked];
+        if (ok) { [self probeLocked]; }
     } @catch (...) {
         ok = NO;
     }
-    _ready = ok;
+    // 方案没加载上 = 候选必然为 0，别让上层以为引擎可用（那样每敲一键都白跑一趟）。
+    _ready = ok && _schemaId.length > 0;
     [_lock unlock];
-    return ok;
+    return _ready;
+}
+
+/// 自检：读当前方案 id，再打一个常用拼音数一下真实候选条数。
+///
+/// 光看 create_session 成功判断不了引擎死活 —— 方案没加载上照样能建会话，
+/// 但一条候选都不出。所以必须拿真实输入探一次，这两个数是排查的唯一抓手。
+- (void)probeLocked {
+    _schemaId = @"";
+    _probeCount = 0;
+    if (_api == NULL || _session == 0) { return; }
+    @try {
+        if (RIME_API_AVAILABLE(_api, get_status)) {
+            RimeStatus st = {0};
+            RIME_STRUCT_INIT(RimeStatus, st);
+            if (_api->get_status(_session, &st)) {
+                if (st.schema_id) {
+                    _schemaId = [NSString stringWithUTF8String:st.schema_id] ?: @"";
+                }
+                if (RIME_API_AVAILABLE(_api, free_status)) { _api->free_status(&st); }
+            }
+        }
+        if (RIME_API_AVAILABLE(_api, set_input) && RIME_API_AVAILABLE(_api, get_context)) {
+            _api->set_input(_session, "nihao");
+            RimeContext ctx = {0};
+            RIME_STRUCT_INIT(RimeContext, ctx);
+            if (_api->get_context(_session, &ctx)) {
+                _probeCount = ctx.menu.num_candidates;
+                _api->free_context(&ctx);
+            }
+            if (RIME_API_AVAILABLE(_api, clear_composition)) {
+                _api->clear_composition(_session);
+            }
+        }
+    } @catch (...) {
+        _probeCount = 0;
+    }
 }
 
 /// 预编译 bin 是否随包带进来了（rime/build/*.bin）。
@@ -151,6 +205,22 @@
     BOOL r = _ready;
     [_lock unlock];
     return r;
+}
+
+/// 当前方案 id（空 = 方案没加载上，候选必为 0）
+- (NSString *)activeSchemaId {
+    [_lock lock];
+    NSString *s = _schemaId ?: @"";
+    [_lock unlock];
+    return s;
+}
+
+/// 打「nihao」实际能出的候选条数（0 = 引擎没在干活）
+- (NSInteger)probeCandidateCount {
+    [_lock lock];
+    NSInteger n = _probeCount;
+    [_lock unlock];
+    return n;
 }
 
 - (NSString *)rimeVersion {

@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.6.4"
-    CURRENT_PROJECT_VERSION: "19"
+    MARKETING_VERSION: "0.6.5"
+    CURRENT_PROJECT_VERSION: "20"
     SWIFT_VERSION: "5.0"
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
     CODE_SIGN_STYLE: Manual
@@ -166,11 +166,14 @@ targets:
           rm -rf cangjie5* bopomofo* terra_pinyin* luna_quanpin* \
             luna_pinyin_tw* luna_pinyin_fluency* double_pinyin* \
             wubi* quick5* t9.schema.yaml squirrel.yaml weasel.yaml 2>/dev/null
+          # page_size 是「一次能拿到多少条候选」的硬闸门：rime-ice 的 default.yaml
+          # 写死 5，键盘就只拿得到 5 条，看着就比百度/搜狗少一大截。
+          # 放到 30 —— 词库一点没变，只是把现成的候选多吐出来，这才叫用上商业级词库。
           if [ -f "$SHARED/rime_ice.schema.yaml" ]; then
-            printf 'patch:\n  schema_list:\n    - schema: rime_ice\n    - schema: melt_eng\n' \
+            printf 'patch:\n  menu/page_size: 30\n  schema_list:\n    - schema: rime_ice\n    - schema: melt_eng\n' \
               > "$SHARED/default.custom.yaml"
           else
-            printf 'patch:\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
+            printf 'patch:\n  menu/page_size: 30\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
               > "$SHARED/default.custom.yaml"
           fi
 
@@ -191,6 +194,7 @@ targets:
             echo "== 八股文语言模型就位：$(ls -l "$GRAM") =="
             cat > "$SHARED/rime_ice.custom.yaml" <<'YAML'
           patch:
+            menu/page_size: 30
             grammar:
               language: zh-hans-t-essay-bgc
               collocation_max_length: 5

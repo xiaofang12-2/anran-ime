@@ -74,8 +74,9 @@ final class RimeService {
         try? fm.createDirectory(at: userDir, withIntermediateDirectories: true)
 
         let b = AnRanRimeBridge(sharedDataDir: shared.path, userDataDir: userDir.path)
-        let ok = b.setupAndDeploy()
-        finish(ok ? b : nil, ok)
+        _ = b.setupAndDeploy()
+        // 不管成没成都把 bridge 留住：没就绪时还要靠它读出方案 id / 候选条数做诊断。
+        finish(b, b.isReady)
     }
 
     private func finish(_ b: AnRanRimeBridge?, _ ok: Bool) {
@@ -84,6 +85,23 @@ final class RimeService {
         readyFlag = ok
         preparing = false
         lock.unlock()
+        // 部署在后台线程，界面得知道结果才能把引擎状态刷出来
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .anranRimeReady, object: nil)
+        }
+    }
+
+    /// 引擎诊断串：「方案 候选数」，没起来就是「未就绪」。
+    /// 键盘空闲时会把这一串显示在候选栏 —— 免费签名没有 App Groups，
+    /// 键盘沙箱里的东西主程序读不到，这是确认 librime 到底有没有干活的唯一途径。
+    var diagnostics: String {
+        lock.lock()
+        let b = bridge
+        lock.unlock()
+        guard let b, let schema = b.activeSchemaId() as String?, !schema.isEmpty else {
+            return "未就绪"
+        }
+        return "\(schema) \(b.probeCandidateCount())"
     }
 
     // MARK: - 候选

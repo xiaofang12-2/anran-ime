@@ -28,6 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isReady;
 - (NSString *)rimeVersion;
 
+/// 当前方案 id（空 = 方案没加载上，候选必为 0）
+- (NSString *)activeSchemaId;
+/// 打「nihao」实际能出的候选条数（0 = 引擎没在干活）
+- (NSInteger)probeCandidateCount;
+
 /// 切方案（如 luna_pinyin_simp）。失败返回 NO，保留原方案。
 - (BOOL)selectSchema:(NSString *)schemaId;
 
