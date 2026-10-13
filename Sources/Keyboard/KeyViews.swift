@@ -29,23 +29,24 @@ enum KeySound {
     }
 }
 
-/// 普通键帽：白底 + 底部 1px 投影，按下变灰缩放，上滑可打出副字符
+/// 普通键帽：白底 + 底部 1px 投影，按下变灰缩放，上滑可打出副字符。
+/// 长按只在传了 onLongPress 的键上生效（层切换键，用来切输入法）。
 struct KeyCap: View {
     let spec: KeySpec
     let onTap: () -> Void
     var onSwipe: ((String) -> Void)? = nil
+    var onLongPress: (() -> Void)? = nil
 
     @State private var pressed = false
     @State private var consumed = false
+    @State private var longTimer: Timer?
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
                 .fill(fill(pressed))
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
-            Text(spec.label)
-                .font(.system(size: (spec.special ? 17 : 22) * KBMetrics.fontScale))
-                .foregroundColor(KBMetrics.themeTextColor)
+            capLabel
         }
         .scaleEffect(pressed && !spec.special ? 0.96 : 1)
         .overlay(alignment: .top) {
@@ -61,20 +62,45 @@ struct KeyCap: View {
                         pressed = true
                         KeySound.play()
                         KeySound.vibrate()
+                        // 长按 0.5 秒才算长按（层切换键用它切输入法），抬手就取消
+                        if onLongPress != nil {
+                            longTimer = Timer.scheduledTimer(withTimeInterval: 0.5,
+                                                             repeats: false) { _ in
+                                consumed = true
+                                onLongPress?()
+                            }
+                        }
                     }
                     if let s = spec.swipe, v.translation.height < -28 {
                         consumed = true
                         pressed = false
+                        cancelLong()
                         onSwipe?(s)
                     }
                 }
                 .onEnded { v in
-                    if consumed { consumed = false; return }
+                    cancelLong()
                     let was = pressed
                     pressed = false
+                    if consumed { consumed = false; return }
                     if was && v.translation.height > -28 { onTap() }
                 }
         )
+        .onDisappear { cancelLong() }
+    }
+
+    /// 有图标画图标（shift / 退格），没图标画文字
+    @ViewBuilder
+    private var capLabel: some View {
+        if let sym = spec.symbol {
+            Image(systemName: sym)
+                .font(.system(size: 19 * KBMetrics.fontScale, weight: .medium))
+                .foregroundColor(KBMetrics.themeSpecialTextColor)
+        } else {
+            Text(spec.label)
+                .font(.system(size: (spec.special ? 17 : 22) * KBMetrics.fontScale))
+                .foregroundColor(KBMetrics.themeTextColor)
+        }
     }
 
     private var bubble: some View {
@@ -88,6 +114,11 @@ struct KeyCap: View {
                     .shadow(color: .black.opacity(0.28), radius: 4, x: 0, y: 2))
             .offset(y: -50)
             .allowsHitTesting(false)
+    }
+
+    private func cancelLong() {
+        longTimer?.invalidate()
+        longTimer = nil
     }
 
     private func fill(_ pressed: Bool) -> Color {
@@ -119,9 +150,7 @@ struct RepeatKey: View {
                 .fill(pressed ? KBMetrics.themeKeyPressedColor
                               : KBMetrics.themeSpecialColor)
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
-            Text(spec.label)
-                .font(.system(size: 20))
-                .foregroundColor(KBMetrics.themeSpecialTextColor)
+            capLabel
         }
         .contentShape(Rectangle())
         .gesture(
@@ -153,6 +182,20 @@ struct RepeatKey: View {
         .onDisappear { stop() }
     }
 
+    /// 有图标画图标（退格），没图标画文字
+    @ViewBuilder
+    private var capLabel: some View {
+        if let sym = spec.symbol {
+            Image(systemName: sym)
+                .font(.system(size: 19 * KBMetrics.fontScale, weight: .medium))
+                .foregroundColor(KBMetrics.themeSpecialTextColor)
+        } else {
+            Text(spec.label)
+                .font(.system(size: 20))
+                .foregroundColor(KBMetrics.themeSpecialTextColor)
+        }
+    }
+
     /// 连删节奏：先 0.13s 一个，删满 8 个提速到 0.08s，删满 20 个 0.045s 到底
     private func scheduleRepeat() {
         let interval: Double
@@ -173,7 +216,8 @@ struct RepeatKey: View {
     }
 }
 
-/// 空格键：点一下上屏/空格，左右滑动移动光标
+/// 空格键：白底（对标参考图，空格是白的、只有功能键是灰的），
+/// 点一下上屏/空格，左右滑动移动光标
 struct SpaceKey: View {
     let spec: KeySpec
     let onTap: () -> Void
@@ -185,12 +229,12 @@ struct SpaceKey: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
-                .fill(pressed ? KBMetrics.themeSpecialPressedColor
-                              : KBMetrics.themeSpecialColor)
+                .fill(pressed ? KBMetrics.themeKeyPressedColor
+                              : KBMetrics.themeKeyColor)
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
             Text(spec.label)
-                .font(.system(size: 15))
-                .foregroundColor(KBMetrics.themeSpecialTextColor)
+                .font(.system(size: 15 * KBMetrics.fontScale))
+                .foregroundColor(KBMetrics.themeTextColor)
         }
         .contentShape(Rectangle())
         .gesture(
@@ -218,27 +262,53 @@ struct SpaceKey: View {
     }
 }
 
-/// 一行键位：按权重分宽度
+/// 一行键位：键宽按「10 键满行」的基准算死，少键的行整体居中。
+/// 这样第二行会像 iOS 那样左右各缩进半个键，第三行 shift/退格 加宽后
+/// 字母键也不会被挤窄（对标参考图）。
 struct KeyRow: View {
     let keys: [KeySpec]
     let onKey: (KeySpec) -> Void
     let onSwipe: (KeySpec, String) -> Void
     let onDeleteClear: () -> Void
     let onSpaceMove: (Int) -> Void
+    var onLongPress: (KeySpec) -> Void = { _ in }
 
     var body: some View {
         GeometryReader { geo in
-            let total = keys.reduce(0) { $0 + $1.weight }
-            let gaps = KBMetrics.keyGap * CGFloat(max(keys.count - 1, 0))
-            let unit = max(1, (geo.size.width - gaps) / total)
+            let m = metrics(width: geo.size.width)
             HStack(spacing: KBMetrics.keyGap) {
                 ForEach(keys) { spec in
                     keyView(spec)
-                        .frame(width: unit * spec.weight)
+                        .frame(width: m.unit * spec.weight)
                 }
             }
+            .frame(width: m.rowWidth, height: geo.size.height)
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
         }
         .frame(height: KBMetrics.keyHeight)
+    }
+
+    /// 一行怎么摆：
+    /// - 全等宽的行（字母行）—— 键宽固定成「10 键满行」的基准宽，整块居中。
+    ///   这样第二行会像 iOS 那样左右各缩进半个键。
+    /// - 有加宽键的行（shift/退格/123/空格）—— 键宽按权重铺满整行，
+    ///   首尾键贴边（对标参考图 shift、123 都跟上面第一行对齐）。
+    private func metrics(width: CGFloat) -> (unit: CGFloat, rowWidth: CGFloat) {
+        let gap = KBMetrics.keyGap
+        let span = CGFloat(max(keys.count - 1, 0))
+        let sumW = keys.reduce(0) { $0 + $1.weight }
+        let base = max(1, (width - gap * CGFloat(KeyboardLayout.canonicalKeys - 1))
+                          / CGFloat(KeyboardLayout.canonicalKeys))
+        let first = keys.first?.weight ?? 1
+        let even = keys.allSatisfy { abs($0.weight - first) < 0.001 }
+        var unit = even ? base : max(1, (width - gap * span) / max(sumW, 1))
+        var rowW = sumW * unit + gap * span
+        if rowW > width {
+            // 用户把键调太宽了，退化成铺满一行，别溢出
+            unit = max(1, (width - gap * span) / max(sumW, 1))
+            rowW = width
+        }
+        return (unit, min(rowW, width))
     }
 
     @ViewBuilder
@@ -251,7 +321,8 @@ struct KeyRow: View {
         default:
             KeyCap(spec: spec,
                    onTap: { onKey(spec) },
-                   onSwipe: { s in onSwipe(spec, s) })
+                   onSwipe: { s in onSwipe(spec, s) },
+                   onLongPress: { onLongPress(spec) })
         }
     }
 }

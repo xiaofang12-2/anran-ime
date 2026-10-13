@@ -34,11 +34,13 @@ struct KeySpec: Identifiable {
     let active: Bool
     /// 上滑这个键会打出的字符（对标百度：字母键上滑出数字）
     let swipe: String?
+    /// SF Symbol 名（shift / 退格这种画图标的键）。有它画图标，没有才画 label
+    let symbol: String?
 
     init(_ id: String, _ label: String, _ weight: CGFloat,
          _ action: KeyAction, special: Bool = false,
          popup: Bool = false, active: Bool = false,
-         swipe: String? = nil) {
+         swipe: String? = nil, symbol: String? = nil) {
         self.id = id
         self.label = label
         self.weight = weight
@@ -47,6 +49,7 @@ struct KeySpec: Identifiable {
         self.popup = popup
         self.active = active
         self.swipe = swipe
+        self.symbol = symbol
     }
 }
 
@@ -109,6 +112,18 @@ enum KBMetrics {
 
 enum KeyboardLayout {
 
+    /// 基准行键数（10 键满行）。键宽按它算死，少键的行整体居中 ——
+    /// 这样第二行「asdfghjkl」会像 iOS 那样左右各缩进半个键，
+    /// 第三行 shift/退格 加宽后字母键宽也不会被挤窄。
+    static let canonicalKeys = 10
+
+    /// 侧键（shift / 退格 / 123）相对字母键的宽度，对标参考图 138 : 102
+    static let sideWeight: CGFloat = 1.35
+    /// 底行两侧键（123 / 回车）宽度，对标参考图 282 : 102
+    static let bottomSideWeight: CGFloat = 2.76
+    /// 空格键宽度，对标参考图 582 : 102
+    static let spaceWeight: CGFloat = 5.71
+
     private static let letterRow1 = Array("qwertyuiop")
     private static let letterRow2 = Array("asdfghjkl")
     private static let letterRow3 = Array("zxcvbnm")
@@ -135,25 +150,28 @@ enum KeyboardLayout {
 
     static func letterRows(shift: Bool, swipe: Bool = true) -> [[KeySpec]] {
         var out: [[KeySpec]] = []
-        out.append(letterRow1.map {
-            KeySpec("L\($0)", String($0).uppercased(), 1, .letter(String($0)),
-                    popup: true, swipe: swipe ? letterSwipe[$0] : nil)
-        })
-        out.append(letterRow2.map {
-            KeySpec("L\($0)", String($0).uppercased(), 1, .letter(String($0)),
-                    popup: true, swipe: swipe ? letterSwipe[$0] : nil)
-        })
-        var r3: [KeySpec] = [KeySpec("shift", "⇧", 1.4, .shift,
-                                     special: true, active: shift)]
-        r3 += letterRow3.map {
-            KeySpec("L\($0)", String($0).uppercased(), 1, .letter(String($0)),
-                    popup: true, swipe: swipe ? letterSwipe[$0] : nil)
-        }
-        r3.append(KeySpec("backspace", "⌫", 1.4, .backspace, special: true))
+        out.append(letterRow1.map { letterKey($0, shift: shift, swipe: swipe) })
+        out.append(letterRow2.map { letterKey($0, shift: shift, swipe: swipe) })
+        var r3: [KeySpec] = [KeySpec("shift", "⇧", sideWeight, .shift,
+                                     special: true, active: shift,
+                                     symbol: shift ? "shift.fill" : "shift")]
+        r3 += letterRow3.map { letterKey($0, shift: shift, swipe: swipe) }
+        r3.append(KeySpec("backspace", "⌫", sideWeight, .backspace,
+                          special: true, symbol: "delete.left"))
         out.append(r3)
-        out.append(bottomRow(leading: KeySpec("to123", "123", 1.5,
+        out.append(bottomRow(leading: KeySpec("to123", "123", bottomSideWeight,
                                               .toLayer(.numbers), special: true)))
         return out
+    }
+
+    /// 字母键：默认小写（对标参考图），点亮 shift 才显示大写。
+    /// action 一律给小写字母 —— 中文拼音本来就是小写，shift 只在
+    /// 「拼音串为空 + 手按了 shift」时才把字母当英文大写上屏。
+    private static func letterKey(_ ch: Character, shift: Bool, swipe: Bool) -> KeySpec {
+        let lower = String(ch)
+        return KeySpec("L\(ch)", shift ? lower.uppercased() : lower, 1,
+                       .letter(lower), popup: true,
+                       swipe: swipe ? letterSwipe[ch] : nil)
     }
 
     // MARK: - 数字层
@@ -164,8 +182,10 @@ enum KeyboardLayout {
         return [
             r1.map { KeySpec("N\($0)", String($0), 1, .text(String($0)), popup: true) },
             r2.map { KeySpec("N\($0)", String($0), 1, .text(String($0)), popup: true) },
-            symbolRow3(leading: KeySpec("toSym", "#+=", 1.4, .toLayer(.symbols), special: true)),
-            bottomRow(leading: KeySpec("toABC", "ABC", 1.5, .toLayer(.letters), special: true)),
+            symbolRow3(leading: KeySpec("toSym", "#+=", sideWeight,
+                                        .toLayer(.symbols), special: true)),
+            bottomRow(leading: KeySpec("toABC", "ABC", bottomSideWeight,
+                                       .toLayer(.letters), special: true)),
         ]
     }
 
@@ -177,8 +197,10 @@ enum KeyboardLayout {
         return [
             r1.map { KeySpec("S\($0)", String($0), 1, .text(String($0)), popup: true) },
             r2.map { KeySpec("S\($0)", String($0), 1, .text(String($0)), popup: true) },
-            symbolRow3(leading: KeySpec("to123", "123", 1.4, .toLayer(.numbers), special: true)),
-            bottomRow(leading: KeySpec("toABC", "ABC", 1.5, .toLayer(.letters), special: true)),
+            symbolRow3(leading: KeySpec("to123", "123", sideWeight,
+                                        .toLayer(.numbers), special: true)),
+            bottomRow(leading: KeySpec("toABC", "ABC", bottomSideWeight,
+                                       .toLayer(.letters), special: true)),
         ]
     }
 
@@ -188,17 +210,18 @@ enum KeyboardLayout {
         for ch in ["，", "。", "？", "！", "、"] {
             r.append(KeySpec("P\(ch)", ch, 1, .text(ch), popup: true))
         }
-        r.append(KeySpec("backspace", "⌫", 1.4, .backspace, special: true))
+        r.append(KeySpec("backspace", "⌫", sideWeight, .backspace,
+                         special: true, symbol: "delete.left"))
         return r
     }
 
-    /// 各层共用的底行：层切换 + 地球 + 空格 + 换行（数字功能就靠 leading 那个 123/ABC）
+    /// 各层共用的底行：层切换 + 空格 + 回车（对标参考图「123 / 空格 / 发送」三键）。
+    /// 回车键文案由 KeyboardRootView 按宿主 App 的 returnKeyType 覆盖。
     private static func bottomRow(leading: KeySpec) -> [KeySpec] {
         [
             leading,
-            KeySpec("globe", "🌐", 1.2, .globe, special: true),
-            KeySpec("space", "空格", 4.6, .space, special: true),
-            KeySpec("ret", "换行", 1.7, .ret, special: true),
+            KeySpec("space", "空格", spaceWeight, .space, special: true),
+            KeySpec("ret", "换行", bottomSideWeight, .ret, special: true),
         ]
     }
 }

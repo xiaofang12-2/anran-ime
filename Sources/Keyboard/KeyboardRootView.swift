@@ -22,6 +22,8 @@ struct KeyboardRootView: View {
     @State private var lastSpaceTap = Date.distantPast
     /// 配置/短语从主程序接过来后 +1，逼界面按新尺寸重画
     @State private var cfgRev = 0
+    /// 回车键文案：跟宿主 App 的 returnKeyType 走（聊天软件显示「发送」）
+    @State private var returnLabel = "换行"
     /// 上一次从剪贴板重拉配置的时间（起词时节流重拉用）
     @State private var lastSyncAt = Date.distantPast
 
@@ -110,7 +112,8 @@ struct KeyboardRootView: View {
                        onKey: handle,
                        onSwipe: swipe,
                        onDeleteClear: clearComposing,
-                       onSpaceMove: { controller.moveCursor($0) })
+                       onSpaceMove: { controller.moveCursor($0) },
+                       onLongPress: longPress)
             }
         }
     }
@@ -294,7 +297,45 @@ struct KeyboardRootView: View {
         let base = KeyboardLayout.rows(layer: layer,
                                        shift: shiftOn || capsLock,
                                        swipe: IMESettingsStore.current.swipeNumber)
-        return KeyOverrideApplier.apply(base, overrides: KBMetrics.cfg.keyOverrides)
+        let applied = KeyOverrideApplier.apply(base, overrides: KBMetrics.cfg.keyOverrides)
+        guard returnLabel != "换行" else { return applied }
+        // 回车键文案换成宿主 App 要的那个（发送 / 搜索 / 前往…）
+        return applied.map { row in
+            row.map { spec in
+                guard case .ret = spec.action else { return spec }
+                return KeySpec(spec.id, returnLabel, spec.weight, spec.action,
+                               special: spec.special, popup: spec.popup,
+                               active: spec.active, swipe: spec.swipe,
+                               symbol: spec.symbol)
+            }
+        }
+    }
+
+    /// 长按层切换键（123 / ABC）= 切输入法。
+    /// 参考图的底行只有「123 / 空格 / 回车」三个键、没有地球键，
+    /// 但 iOS 必须留一个切回系统键盘的入口，就藏在层切换键的长按里。
+    private func longPress(_ spec: KeySpec) {
+        guard case .toLayer = spec.action else { return }
+        commitComposing()
+        controller.advanceToNextInputMode()
+    }
+
+    /// 回车键文案：跟宿主 App 的 returnKeyType 走，和系统键盘一致
+    private func refreshReturnLabel() {
+        let label: String
+        switch controller.textDocumentProxy.returnKeyType {
+        case .send: label = "发送"
+        case .search, .google, .yahoo: label = "搜索"
+        case .go: label = "前往"
+        case .next: label = "下一项"
+        case .done: label = "完成"
+        case .join: label = "加入"
+        case .route: label = "路线"
+        case .continue: label = "继续"
+        case .emergencyCall: label = "紧急呼叫"
+        default: label = "换行"
+        }
+        if label != returnLabel { returnLabel = label }
     }
 
     // MARK: - 按键分发
@@ -513,6 +554,7 @@ struct KeyboardRootView: View {
         // 先接整包（配置 + 登录态一起落），再兜底接旧式单票据。
         // 整包里带登录态，所以这里落完 AuthStore 就能直接判登录了。
         pullSettings()
+        refreshReturnLabel()
         if !AuthStore.isLoggedIn {
             _ = AuthStore.importFromPasteboard()
         }

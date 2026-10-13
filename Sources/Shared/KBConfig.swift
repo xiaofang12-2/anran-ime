@@ -67,16 +67,16 @@ struct KBConfig: Codable, Equatable {
     var keyHeight: Double = 45
     /// 键与键的横向间距
     var keyGap: Double = 6
-    /// 行与行的纵向间距
-    var rowGap: Double = 6
+    /// 行与行的纵向间距（对标 iOS：纵向明显比横向松）
+    var rowGap: Double = 10
     /// 键帽圆角
-    var corner: Double = 6
+    var corner: Double = 4
     /// 字号缩放（1.0 为基准）
     var fontScale: Double = 1.0
     /// 键盘左右边距
-    var sideInset: Double = 3
+    var sideInset: Double = 4
     /// 键盘底部留白
-    var bottomInset: Double = 5
+    var bottomInset: Double = 7
     /// 主题配色（皮肤）
     var theme: KBTheme?
     /// 按键级覆盖：id → 宽度/位置调整（「自定义键位」编辑器写进来）
@@ -139,7 +139,7 @@ enum KeyOverrideApplier {
                 guard let o = ov[k.id], let w = o.weight, w > 0 else { return k }
                 return KeySpec(k.id, k.label, CGFloat(w), k.action,
                                special: k.special, popup: k.popup,
-                               active: k.active, swipe: k.swipe)
+                               active: k.active, swipe: k.swipe, symbol: k.symbol)
             }
         }
     }
