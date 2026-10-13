@@ -57,6 +57,9 @@ jobs:
           ls -la "$APPEX/rime"/*.schema.yaml 2>/dev/null || echo "（没有 schema）"
           echo "== 词库目录 =="
           ls -la "$APPEX/rime/cn_dicts" 2>/dev/null | head -20 || echo "（没有 cn_dicts）"
+          echo "== 八股文语言模型（octagram LM）=="
+          ls -la "$APPEX/rime/zh-hans-t-essay-bgc.gram" 2>/dev/null || echo "（没有 gram —— 整句语言模型未生效）"
+          ls -la "$APPEX/rime/rime_ice.custom.yaml" 2>/dev/null || echo "（没有 rime_ice.custom.yaml）"
           echo "== 预编译报告 =="
           cat "$APPEX/rime/_report.txt" 2>/dev/null || echo "（没有 _report.txt）"
 

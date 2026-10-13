@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.4.2"
-    CURRENT_PROJECT_VERSION: "13"
+    MARKETING_VERSION: "0.5.0"
+    CURRENT_PROJECT_VERSION: "14"
     SWIFT_VERSION: "5.0"
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
     CODE_SIGN_STYLE: Manual
@@ -172,6 +172,35 @@ targets:
           else
             printf 'patch:\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
               > "$SHARED/default.custom.yaml"
+          fi
+
+          # ---- 3.5 八股文语言模型（octagram LM）----
+          # librime 静态库已编入 octagram 插件，只差模型文件与配置。
+          # 有了 LM 整句候选按上下文搭配打分，这是跟商业输入法（百度级）
+          # 掰手腕的核心件。gram 走 mmap，体积在 MB 级，内存安全。
+          # 优先 CI 在线拉最新版（质量更好），失败退回仓库内置版。
+          GRAM="$SHARED/zh-hans-t-essay-bgc.gram"
+          if fetch "https://raw.githubusercontent.com/lotem/rime-octagram-data/hans/zh-hans-t-essay-bgc.gram" "$GRAM.tmp"; then
+            mv "$GRAM.tmp" "$GRAM"
+            echo "== 在线拉到最新八股文模型 =="
+          elif [ -f "$SRCROOT/Support/zh-hans-t-essay-bgc.gram" ]; then
+            cp "$SRCROOT/Support/zh-hans-t-essay-bgc.gram" "$GRAM" 2>/dev/null
+            echo "== 在线拉取失败，用仓库内置八股文模型兜底 =="
+          fi
+          if [ -s "$GRAM" ]; then
+            echo "== 八股文语言模型就位：$(ls -l "$GRAM") =="
+            cat > "$SHARED/rime_ice.custom.yaml" <<'YAML'
+          patch:
+            grammar:
+              language: zh-hans-t-essay-bgc
+              collocation_max_length: 5
+              collocation_min_length: 2
+            translator/contextual_suggestions: true
+            translator/initial_quality: 1.2
+          YAML
+            echo "== rime_ice.custom.yaml（grammar 配置）已写入 =="
+          else
+            echo "（没拿到 gram 模型，跳过 LM 配置）"
           fi
 
           # ---- 4. 编 bin：优先用自带 deployer（与运行时同版本 librime）----
