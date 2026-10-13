@@ -45,7 +45,7 @@ struct KeyCap: View {
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
             Text(spec.label)
                 .font(.system(size: (spec.special ? 17 : 22) * KBMetrics.fontScale))
-                .foregroundColor(.black)
+                .foregroundColor(KBMetrics.themeTextColor)
         }
         .scaleEffect(pressed && !spec.special ? 0.96 : 1)
         .overlay(alignment: .top) {
@@ -80,27 +80,29 @@ struct KeyCap: View {
     private var bubble: some View {
         Text(spec.label)
             .font(.system(size: 28))
-            .foregroundColor(.black)
+            .foregroundColor(KBMetrics.themeTextColor)
             .frame(width: 42, height: 46)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white)
+                    .fill(KBMetrics.themeKeyColor)
                     .shadow(color: .black.opacity(0.28), radius: 4, x: 0, y: 2))
             .offset(y: -50)
             .allowsHitTesting(false)
     }
 
     private func fill(_ pressed: Bool) -> Color {
-        if spec.active { return .white }
+        if spec.active { return KBMetrics.themeAccentColor.opacity(0.15) }
         if spec.special {
-            return pressed ? Color(white: 0.60)
-                           : Color(red: 0.68, green: 0.70, blue: 0.74)
+            return pressed ? KBMetrics.themeSpecialPressedColor
+                           : KBMetrics.themeSpecialColor
         }
-        return pressed ? Color(white: 0.72) : .white
+        return pressed ? KBMetrics.themeKeyPressedColor : KBMetrics.themeKeyColor
     }
 }
 
-/// 退格键：按下即删，按住连删，上滑清空整串
+/// 退格键：对标百度手感 ——
+///   单击只删一个字；按住 0.4 秒后才开始连删，先慢后快（0.13s → 0.08s → 0.045s）；
+///   上滑清空整串拼音。
 struct RepeatKey: View {
     let spec: KeySpec
     let onFire: () -> Void
@@ -109,16 +111,17 @@ struct RepeatKey: View {
     @State private var pressed = false
     @State private var consumed = false
     @State private var timer: Timer?
+    @State private var repeats = 0
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
-                .fill(pressed ? Color(white: 0.60)
-                              : Color(red: 0.68, green: 0.70, blue: 0.74))
+                .fill(pressed ? KBMetrics.theme.keyPressedColor
+                              : KBMetrics.theme.specialColor)
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
             Text(spec.label)
                 .font(.system(size: 20))
-                .foregroundColor(.black)
+                .foregroundColor(KBMetrics.theme.specialTextColor)
         }
         .contentShape(Rectangle())
         .gesture(
@@ -135,7 +138,11 @@ struct RepeatKey: View {
                         pressed = true
                         KeySound.play()
                         onFire()
-                        start()
+                        repeats = 0
+                        // 百度手感：先等 0.4 秒，确认是长按才开始连删
+                        timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                            scheduleRepeat()
+                        }
                     }
                 }
                 .onEnded { _ in
@@ -146,10 +153,16 @@ struct RepeatKey: View {
         .onDisappear { stop() }
     }
 
-    private func start() {
-        stop()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.09, repeats: true) { _ in
+    /// 连删节奏：先 0.13s 一个，删满 8 个提速到 0.08s，删满 20 个 0.045s 到底
+    private func scheduleRepeat() {
+        let interval: Double
+        if repeats < 8 { interval = 0.13 }
+        else if repeats < 20 { interval = 0.08 }
+        else { interval = 0.045 }
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { _ in
             onFire()
+            repeats += 1
+            scheduleRepeat()
         }
     }
 
@@ -172,12 +185,12 @@ struct SpaceKey: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
-                .fill(pressed ? Color(white: 0.60)
-                              : Color(red: 0.68, green: 0.70, blue: 0.74))
+                .fill(pressed ? KBMetrics.themeSpecialPressedColor
+                              : KBMetrics.themeSpecialColor)
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
             Text(spec.label)
                 .font(.system(size: 15))
-                .foregroundColor(.black)
+                .foregroundColor(KBMetrics.themeSpecialTextColor)
         }
         .contentShape(Rectangle())
         .gesture(
@@ -261,7 +274,7 @@ struct CandidateBar: View {
                 // 没候选就一条空栏，只把正在打的拼音串露出来，别的不占位
                 Text(composing)
                     .font(.system(size: 15 * scale))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                     .padding(.horizontal, 12)
                 Spacer()
             } else {
@@ -269,7 +282,7 @@ struct CandidateBar: View {
                     HStack(spacing: 0) {
                         Text(composing.isEmpty ? "联想" : composing)
                             .font(.system(size: (composing.isEmpty ? 12 : 15) * scale))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                             .padding(.horizontal, 10)
                         divider
                         ForEach(shown.indices, id: \.self) { i in
@@ -277,8 +290,8 @@ struct CandidateBar: View {
                                 .font(.system(size: (i == 0 ? 22 : 19) * scale,
                                               weight: i == 0 ? .semibold : .regular))
                                 .foregroundColor(shown[i].literal
-                                                 ? Color(red: 0.34, green: 0.38, blue: 0.46)
-                                                 : .black)
+                                                 ? KBMetrics.themeAccentColor.opacity(0.6)
+                                                 : KBMetrics.themeCandidateTextColor)
                                 .padding(.horizontal, 11)
                                 .frame(height: KBMetrics.barHeight)
                                 .contentShape(Rectangle())
@@ -296,12 +309,12 @@ struct CandidateBar: View {
         .frame(height: KBMetrics.barHeight)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.white.opacity(0.65)))
+                .fill(KBMetrics.themeBarColor))
     }
 
     private var divider: some View {
         Rectangle()
-            .fill(Color.black.opacity(0.10))
+            .fill(KBMetrics.themeCandidateTextColor.opacity(0.10))
             .frame(width: 0.5, height: 20)
     }
 }
@@ -337,7 +350,7 @@ struct FunctionBar: View {
         .padding(.horizontal, 10)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.white.opacity(0.65)))
+                .fill(KBMetrics.themeBarColor))
     }
 
     private var logo: some View {
@@ -347,7 +360,7 @@ struct FunctionBar: View {
             } else {
                 Image(systemName: "keyboard")
                     .font(.system(size: 18))
-                    .foregroundColor(Color(white: 0.30))
+                    .foregroundColor(KBMetrics.themeSpecialTextColor)
             }
         }
         .frame(width: 26, height: 26)
@@ -359,10 +372,9 @@ struct FunctionBar: View {
                       longPress: (() -> Void)?) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 17, weight: .medium))
-            .foregroundColor(active ? .white : Color(white: 0.28))
+            .foregroundColor(active ? .white : KBMetrics.themeSpecialTextColor.opacity(0.85))
             .frame(width: 42, height: KBMetrics.funcBarHeight)
-            .background(active ? Color(red: 0.20, green: 0.50, blue: 0.95)
-                               : Color.clear)
+            .background(active ? KBMetrics.themeAccentColor : Color.clear)
             .contentShape(Rectangle())
             .onTapGesture { tap() }
             .onLongPressGesture(minimumDuration: 0.5) { longPress?() }
@@ -389,28 +401,30 @@ struct ClipboardPanel: View {
         HStack(spacing: 8) {
             Image(systemName: "doc.on.clipboard")
                 .font(.system(size: 14))
-                .foregroundColor(.secondary)
+                .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
             Text(text.isEmpty ? "剪贴板是空的" : text)
                 .font(.system(size: 14))
                 .lineLimit(1)
-                .foregroundColor(text.isEmpty ? .secondary : .black)
+                .foregroundColor(text.isEmpty
+                                 ? KBMetrics.themeCandidateTextColor.opacity(0.55)
+                                 : KBMetrics.themeCandidateTextColor)
             Spacer(minLength: 6)
             if !text.isEmpty {
                 Button("插入") { onInsert(text) }
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(red: 0.20, green: 0.50, blue: 0.95))
+                    .foregroundColor(KBMetrics.themeAccentColor)
             }
             Button { onClose() } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 15))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.45))
             }
         }
         .padding(.horizontal, 10)
         .frame(height: KBMetrics.panelHeight)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white))
+                .fill(KBMetrics.themeKeyColor.opacity(0.92)))
     }
 }
 
@@ -434,38 +448,38 @@ struct ThoughtPanel: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 14))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                 HStack(spacing: 0) {
                     Text(query)
                         .font(.system(size: 15))
-                        .foregroundColor(.black)
+                        .foregroundColor(KBMetrics.themeCandidateTextColor)
                     if !composing.isEmpty {
                         Text(composing)
                             .font(.system(size: 15))
-                            .foregroundColor(Color(red: 0.20, green: 0.50, blue: 0.95))
+                            .foregroundColor(KBMetrics.themeAccentColor)
                     }
                     Rectangle()
-                        .fill(Color(red: 0.20, green: 0.50, blue: 0.95))
+                        .fill(KBMetrics.themeAccentColor)
                         .frame(width: 1.5, height: 18)
                         .opacity(caretOn ? 1 : 0)
                 }
                 if query.isEmpty && composing.isEmpty {
                     Text("输入关键词…")
                         .font(.system(size: 15))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                 }
                 Spacer(minLength: 6)
                 Button { onClose() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 15))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.45))
                 }
             }
             .padding(.horizontal, 10)
             .frame(height: 34)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white))
+                    .fill(KBMetrics.themeKeyColor.opacity(0.92)))
 
             if !matches.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -475,17 +489,17 @@ struct ThoughtPanel: View {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(it.keyword)
                                         .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(.black)
+                                        .foregroundColor(KBMetrics.themeCandidateTextColor)
                                     Text(it.content)
                                         .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.white))
+                                        .fill(KBMetrics.themeKeyColor.opacity(0.92)))
                             }
                             .buttonStyle(.plain)
                         }
@@ -500,7 +514,7 @@ struct ThoughtPanel: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(white: 0.95)))
+                .fill(KBMetrics.themeBarColor))
         .onAppear {
             caretOn = true
             withAnimation(.easeInOut(duration: 0.5).repeatForever()) {

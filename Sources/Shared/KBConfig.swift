@@ -1,4 +1,62 @@
 import Foundation
+import SwiftUI
+
+/// 单个按键的自定义覆盖：宽度（行内权重）+ 行内位置偏移。
+/// id 用 KeySpec 的 id（如 "Lq"、"backspace"、"space"）。
+struct KeyOverride: Codable, Equatable {
+    /// 宽度权重覆盖（nil = 跟默认一样）
+    var weight: Double?
+    /// 行内位置偏移：负 = 左移几格，正 = 右移几格（0 = 原位）
+    var shift: Int = 0
+}
+
+/// 主题配色：颜色一律存 hex（含 #AARRGGBB 形式），跨剪贴板整包交接。
+/// bgImage 是压缩后的 base64 JPEG（皮肤背景图），键盘侧解出来铺底。
+struct KBTheme: Codable, Equatable {
+    var name: String = "经典白"
+    /// 键盘整体背景
+    var bg: String = "#D2D4DA"
+    /// 普通键帽
+    var key: String = "#FFFFFF"
+    var keyPressed: String = "#B9BCC3"
+    /// 功能键（shift/空格/退格/123）
+    var special: String = "#ACAFB8"
+    var specialPressed: String = "#8F939D"
+    /// 键帽文字
+    var text: String = "#111111"
+    var specialText: String = "#111111"
+    /// 候选栏/功能栏底色（可带透明度，#AARRGGBB）
+    var bar: String = "#A6FFFFFF"
+    /// 候选栏文字（首个候选重点色）
+    var candidateText: String = "#111111"
+    /// 候选栏高亮（首选/命中图标色）
+    var accent: String = "#3380F2"
+    /// 皮肤背景图（base64 JPEG，最长边 ≤1080）
+    var bgImage: String?
+
+    static let classic = KBTheme()
+
+    /// 内置预设：不用导皮肤也有得挑
+    static let presets: [KBTheme] = [
+        classic,
+        KBTheme(name: "暗夜黑", bg: "#1C1D22", key: "#3A3C44", keyPressed: "#4A4C55",
+                special: "#2A2B31", specialPressed: "#3A3B42",
+                text: "#F2F2F5", specialText: "#E8E8EE",
+                bar: "#CC26272D", candidateText: "#F2F2F5", accent: "#5B9BFF"),
+        KBTheme(name: "樱花粉", bg: "#FBE8EE", key: "#FFFFFF", keyPressed: "#F7CFDD",
+                special: "#F3BFD2", specialPressed: "#EBA8C2",
+                text: "#5A2A3C", specialText: "#5A2A3C",
+                bar: "#B3FFFFFF", candidateText: "#5A2A3C", accent: "#E85D92"),
+        KBTheme(name: "深海蓝", bg: "#E3ECF7", key: "#FFFFFF", keyPressed: "#C2D6EF",
+                special: "#AFC8E8", specialPressed: "#93B4DD",
+                text: "#16324F", specialText: "#16324F",
+                bar: "#B3FFFFFF", candidateText: "#16324F", accent: "#2E6FC2"),
+        KBTheme(name: "护眼绿", bg: "#E4EFE3", key: "#FFFFFF", keyPressed: "#C6DEC5",
+                special: "#B2CFAF", specialPressed: "#96BB93",
+                text: "#1E3A1D", specialText: "#1E3A1D",
+                bar: "#B3FFFFFF", candidateText: "#1E3A1D", accent: "#3E8A3B"),
+    ]
+}
 
 /// 键盘外观/布局参数，用户在主程序「键盘布局」里自己调。
 ///
@@ -19,6 +77,10 @@ struct KBConfig: Codable, Equatable {
     var sideInset: Double = 3
     /// 键盘底部留白
     var bottomInset: Double = 5
+    /// 主题配色（皮肤）
+    var theme: KBTheme?
+    /// 按键级覆盖：id → 宽度/位置调整（「自定义键位」编辑器写进来）
+    var keyOverrides: [String: KeyOverride]?
     /// 版本戳，主程序每存一次就刷新，键盘按它判新旧，不会拿旧的盖新的
     var rev: Int = 0
 
@@ -49,6 +111,66 @@ struct KBConfig: Codable, Equatable {
 
     static func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double {
         min(max(v, lo), hi)
+    }
+
+    /// 当前生效主题（没设过就是经典白）
+    var activeTheme: KBTheme { theme ?? .classic }
+}
+
+// MARK: - 键位覆盖应用
+
+enum KeyOverrideApplier {
+
+    /// 把用户对单个键的宽度/位置调整套到三层键位表上。
+    /// 先做行内移位（同一行里把键挪左/挪右），再套宽度覆盖。
+    static func apply(_ rows: [[KeySpec]], overrides: [String: KeyOverride]?) -> [[KeySpec]] {
+        guard let ov = overrides, !ov.isEmpty else { return rows }
+        return rows.map { row in
+            var r = row
+            // 移位：把键跟目标位置的键交换（shift 是相对默认位置的偏移）
+            for (origIdx, key) in row.enumerated() {
+                guard let o = ov[key.id], o.shift != 0 else { continue }
+                guard let cur = r.firstIndex(where: { $0.id == key.id }) else { continue }
+                let target = min(max(origIdx + o.shift, 0), r.count - 1)
+                if target != cur { r.swapAt(cur, target) }
+            }
+            // 宽度覆盖：重建 KeySpec
+            return r.map { k in
+                guard let o = ov[k.id], let w = o.weight, w > 0 else { return k }
+                return KeySpec(k.id, k.label, CGFloat(w), k.action,
+                               special: k.special, popup: k.popup,
+                               active: k.active, swipe: k.swipe)
+            }
+        }
+    }
+}
+
+// MARK: - hex 颜色
+
+extension Color {
+    /// 解析 "#RRGGBB" / "#AARRGGBB" / "RRGGBB"；解析失败给个中灰
+    init(hex: String) {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        var a: Double = 1, r: Double = 0.6, g: Double = 0.6, b: Double = 0.6
+        switch s.count {
+        case 6:
+            if let v = UInt32(s, radix: 16) {
+                r = Double((v >> 16) & 0xFF) / 255
+                g = Double((v >> 8) & 0xFF) / 255
+                b = Double(v & 0xFF) / 255
+            }
+        case 8:
+            if let v = UInt32(s, radix: 16) {
+                a = Double((v >> 24) & 0xFF) / 255
+                r = Double((v >> 16) & 0xFF) / 255
+                g = Double((v >> 8) & 0xFF) / 255
+                b = Double(v & 0xFF) / 255
+            }
+        default:
+            break
+        }
+        self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
     }
 }
 

@@ -92,6 +92,7 @@ struct SetupView: View {
         Section("设置") {
             NavigationLink("输入设置") { SettingsView() }
             NavigationLink("键盘布局") { LayoutSettingsView() }
+            NavigationLink("皮肤") { SkinSettingsView() }
             NavigationLink("自定义短语", isActive: $goPhrases) { PhraseSettingsView() }
             NavigationLink("思想库", isActive: $goThoughts) { ThoughtSettingsView() }
         }

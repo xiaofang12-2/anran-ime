@@ -65,6 +65,26 @@ enum KBMetrics {
     static var bottomInset: CGFloat { CGFloat(cfg.bottomInset) }
     static var fontScale: CGFloat { CGFloat(cfg.fontScale) }
 
+    /// 当前主题与主题色（配置从主程序整包接过来后跟着 cfg 一起换）
+    static var theme: KBTheme { cfg.activeTheme }
+
+    static var themeKeyColor: Color { Color(hex: theme.key) }
+    static var themeKeyPressedColor: Color { Color(hex: theme.keyPressed) }
+    static var themeSpecialColor: Color { Color(hex: theme.special) }
+    static var themeSpecialPressedColor: Color { Color(hex: theme.specialPressed) }
+    static var themeTextColor: Color { Color(hex: theme.text) }
+    static var themeSpecialTextColor: Color { Color(hex: theme.specialText) }
+    static var themeBgColor: Color { Color(hex: theme.bg) }
+    static var themeBarColor: Color { Color(hex: theme.bar) }
+    static var themeCandidateTextColor: Color { Color(hex: theme.candidateText) }
+    static var themeAccentColor: Color { Color(hex: theme.accent) }
+
+    /// 皮肤背景图（主程序导入皮肤后随整包带过来）
+    static var themeBgImage: UIImage? {
+        guard let b64 = theme.bgImage, let d = Data(base64Encoded: b64) else { return nil }
+        return UIImage(data: d)
+    }
+
     static let barHeight: CGFloat = 45
     /// 顶部功能栏（图标 + 剪贴板/短语/思想库 + 收起）
     static let funcBarHeight: CGFloat = 40

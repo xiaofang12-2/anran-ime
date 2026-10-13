@@ -41,7 +41,20 @@ struct KeyboardRootView: View {
         .padding(.horizontal, KBMetrics.sideInset)
         .padding(.top, KBMetrics.topInset)
         .padding(.bottom, KBMetrics.bottomInset)
-        .background(Color(red: 0.82, green: 0.83, blue: 0.85))
+        // 皮肤背景：纯色打底 + 可选的皮肤图（导入百度皮肤带过来的）铺满全屏
+        .background {
+            // 读一下 cfgRev：配置（主题/键位）从主程序接过来后 +1，逼这层重画
+            let _ = cfgRev
+            ZStack {
+                KBMetrics.themeBgColor
+                if let img = KBMetrics.themeBgImage {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                }
+            }
+            .ignoresSafeArea()
+        }
         .onAppear {
             _ = cfgRev
             check()
@@ -278,9 +291,10 @@ struct KeyboardRootView: View {
     }
 
     private var rows: [[KeySpec]] {
-        KeyboardLayout.rows(layer: layer,
-                            shift: shiftOn || capsLock,
-                            swipe: IMESettingsStore.current.swipeNumber)
+        let base = KeyboardLayout.rows(layer: layer,
+                                       shift: shiftOn || capsLock,
+                                       swipe: IMESettingsStore.current.swipeNumber)
+        return KeyOverrideApplier.apply(base, overrides: KBMetrics.cfg.keyOverrides)
     }
 
     // MARK: - 按键分发
