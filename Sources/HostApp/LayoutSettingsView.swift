@@ -118,7 +118,7 @@ private struct KBPreview: View {
             .padding(.horizontal, cfg.sideInset * scale)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(cfg.activeTheme.bgColor)
+            .background(Color(hex: cfg.activeTheme.bg))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }

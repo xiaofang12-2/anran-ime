@@ -27,8 +27,8 @@ enum SkinImporter {
         // 1) 扫 json 配置，抓颜色字段
         var foundColors = false
         for (name, d) in files where name.hasSuffix(".json") {
-            guard let obj = try? JSONSerialization.jsonObject(with: d),
-                  let dict = flatten(obj) else { continue }
+            guard let obj = try? JSONSerialization.jsonObject(with: d) else { continue }
+            let dict = flatten(obj)
             if applyColorFields(dict, to: &theme) { foundColors = true }
         }
 
@@ -167,7 +167,8 @@ enum SkinImporter {
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return .white }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
         guard let buf = ctx.data else { return .white }
-        let px = buf.bindMemory(to: UInt8.self).capacity / 4
+        // bytesPerRow 就是 w*4 没有行尾对齐，像素数直接 w*h
+        let px = w * h
         let step = max(1, px / 4000)
         var r = 0, g = 0, b = 0, n = 0
         var i = 0
