@@ -70,11 +70,17 @@ final class PinyinEngine {
     private var userFreq: [String: Int] = [:]
     /// 用户自己记下的「拼音 -> 词」，打同样拼音时它们永远排在词典前面
     private var userWords: [String: [String]] = [:]
+    /// 用户词级 bigram：上一个词 -> {当前词: 次数}。
+    /// 上屏时由 InputEngine 回灌（「今天」之后你常打「天气」），
+    /// 让上屏联想越用越贴你的习惯 —— 纯本地，不出设备。
+    private var userBigram: [String: [String: Int]] = [:]
     private let userQueue = DispatchQueue(label: "anran.ime.userfreq")
 
     private struct UserData: Codable {
         var freq: [String: Int]
         var words: [String: [String]]
+        /// 旧存档没有这一项，用可选保证向后兼容
+        var bigram: [String: [String: Int]]?
     }
 
     // MARK: - 对数概率编码（与 build_dict.py 一一对应）
@@ -104,6 +110,8 @@ final class PinyinEngine {
     private static let tailPen = 1.0
     /// 末音节补全最多展开多少个候选音节
     private static let tailMax = 40
+    /// 词数罚分：同样概率下「少切、长词」更贴近真实意图（你好 优于 你 好）
+    private static let wordPen = 0.5
 
     private func decodeLogp(_ a: Character, _ b: Character) -> Double {
         let hi = Int(a.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
@@ -278,11 +286,25 @@ final class PinyinEngine {
         return phrases.filter { $0.code == input }.map { ($0.text, $0.position) }
     }
 
-    /// 上屏后联想：拿刚上屏的末字查后继字，按接续概率从高到低
+    /// 上屏后联想：先看「这个词之后你自己常打什么」（用户上下文），
+    /// 再看「这个字之后通用上常接什么」（字级 bigram），合并去重。
     func associate(_ committed: String) -> [String] {
         ensureLoaded()
-        guard let last = committed.last, let row = lm[String(last)] else { return [] }
-        return row.sorted { $0.value > $1.value }.map { $0.key }
+        let key = committed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = key.last else { return [] }
+        var out: [String] = []
+        var seen = Set<String>()
+        if let row = userBigram[key] {
+            for (w, _) in row.sorted(by: { $0.value > $1.value }) where seen.insert(w).inserted {
+                out.append(w)
+            }
+        }
+        if let row = lm[String(last)] {
+            for (w, _) in row.sorted(by: { $0.value > $1.value }) where seen.insert(w).inserted {
+                out.append(w)
+            }
+        }
+        return out
     }
 
     /// 记一笔用户选择，下次同拼音时往前提；同时把「拼音 -> 词」记下来，
@@ -312,6 +334,10 @@ final class PinyinEngine {
         userFreq.removeValue(forKey: w)
         for (py, list) in userWords where list.contains(w) {
             userWords[py] = list.filter { $0 != w }
+        }
+        userBigram.removeValue(forKey: w)
+        for (k, row) in userBigram where row[w] != nil {
+            userBigram[k] = row.filter { $0.key != w }
         }
         cacheKey = ""
         persistUser()
@@ -415,10 +441,13 @@ final class PinyinEngine {
             }
         }
 
-        // 7) 智能纠错兜底：整串一个前缀都对不上时，多半按错了相邻键
+        // 7) 智能纠错兜底：整串一个前缀都对不上时，多半是手滑了。
+        //    按「错误类型」分级逐轮尝试（相邻键替换 → 相邻打反 → 多键 → 漏键），
+        //    哪一轮查出词就停；越靠后的类型罚分越重，绝不压过真解。
         if set.smartCorrect && cands.isEmpty && n >= 3 {
-            for variant in correctedVariants(input) {
-                for c in prefixWords(variant) { put(c.word, n, c.logp) }
+            for v in correctedVariants(input) {
+                for c in prefixWords(v.variant) { put(c.word, n, c.logp - v.pen) }
+                if cands.count >= 3 { break }
             }
         }
 
@@ -500,13 +529,15 @@ final class PinyinEngine {
         return out
     }
 
-    /// 词图上的 Beam Search（librime poet.cc 的 kMaxLineCandidates=7，这里取 12）。
+    /// 词图上的 Beam Search（对标 librime poet.cc 的自适应 beam）。
+    /// 宽度随输入长度伸缩：短串 12 够用，长串切分路径组合爆炸，放到 24 才不丢解。
     /// 边的展开是「惰性」的：只有 states[i] 非空（即这个位置真的能到达）才去算
     /// fullEdges(chars, i)。乱按的串大部分位置根本走不到，这样能省掉大量无用 DFS。
-    private func beam(_ chars: [Character], width: Int = 12)
+    private func beam(_ chars: [Character])
         -> [[(Double, [String])]] {
         let n = chars.count
         if n == 0 { return [] }
+        let width = min(20, max(12, n * 2))
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
         var states = [[(Double, [String])]](repeating: [], count: n + 1)
@@ -707,16 +738,53 @@ final class PinyinEngine {
         "n": "bhjm", "m": "njk",
     ]
 
-    private func correctedVariants(_ s: String) -> [String] {
+    /// 智能纠错：覆盖四类手滑，返回「变体 + 罚分」，按错误类型从最可能到最不可能排。
+    ///   1) 相邻键替换：nihap → nihao（p 挨着 o）—— 最常见
+    ///   2) 相邻字母打反：niha o → nihao
+    ///   3) 多打一个字母：nihao o → nihao
+    ///   4) 漏打一个字母：按相邻键补一个进去
+    /// 罚分递增，保证「真解」永远排在「猜出来的解」前面。
+    private func correctedVariants(_ s: String) -> [(variant: String, pen: Double)] {
         let chars = Array(s)
         guard chars.count >= 3, chars.count <= 12 else { return [] }
-        var out: [String] = []
+        var out: [(String, Double)] = []
+        var seen = Set<String>()
+        func add(_ v: String, _ pen: Double) {
+            if v == s || seen.contains(v) { return }
+            seen.insert(v)
+            out.append((v, pen))
+        }
+
+        // 1) 相邻键替换
         for i in 0..<chars.count {
             guard let nb = PinyinEngine.keyNeighbors[chars[i]] else { continue }
             for c in nb {
                 var v = chars
                 v[i] = c
-                out.append(String(v))
+                add(String(v), 1.0)
+            }
+        }
+        // 2) 相邻字母打反
+        if chars.count >= 2 {
+            for i in 0..<(chars.count - 1) {
+                var v = chars
+                v.swapAt(i, i + 1)
+                add(String(v), 1.2)
+            }
+        }
+        // 3) 多打一个字母（删掉一个）
+        for i in 0..<chars.count {
+            var v = chars
+            v.remove(at: i)
+            add(String(v), 1.6)
+        }
+        // 4) 漏打一个字母（在相邻键里补一个进去）
+        for i in 0...chars.count {
+            let src = i > 0 ? PinyinEngine.keyNeighbors[chars[i - 1]] : nil
+            for c in (src ?? "aeioun") {
+                var v = chars
+                v.insert(c, at: i)
+                add(String(v), 2.0)
             }
         }
         return out
@@ -751,6 +819,7 @@ final class PinyinEngine {
         if let o = try? JSONDecoder().decode(UserData.self, from: d) {
             userFreq = o.freq
             userWords = o.words
+            userBigram = o.bigram ?? [:]
         } else if let o = try? JSONDecoder().decode([String: Int].self, from: d) {
             userFreq = o          // 兼容旧版只有词频的存档
         }

@@ -20,6 +20,9 @@ final class InputEngine {
     static let shared = InputEngine()
     private init() {}
 
+    /// 上一个上屏的词：用于「上一个词 → 当前词」的用户上下文学习
+    private var lastCommitted = ""
+
     /// 取候选（热路径）
     func candidates(for raw: String) -> [PinyinCandidate] {
         let fallback = PinyinEngine.shared.candidates(for: raw)
@@ -55,6 +58,7 @@ final class InputEngine {
     func forget(_ word: String) { PinyinEngine.shared.forget(word) }
     func setPhrases(_ list: [Phrase]) { PinyinEngine.shared.setPhrases(list) }
     func clearLearning() {
+        lastCommitted = ""
         PinyinEngine.shared.clearLearning()
         RimeService.shared.reset()
     }
