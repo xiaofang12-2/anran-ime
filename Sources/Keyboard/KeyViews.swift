@@ -116,12 +116,12 @@ struct RepeatKey: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
-                .fill(pressed ? KBMetrics.theme.keyPressedColor
-                              : KBMetrics.theme.specialColor)
+                .fill(pressed ? KBMetrics.themeKeyPressedColor
+                              : KBMetrics.themeSpecialColor)
                 .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
             Text(spec.label)
                 .font(.system(size: 20))
-                .foregroundColor(KBMetrics.theme.specialTextColor)
+                .foregroundColor(KBMetrics.themeSpecialTextColor)
         }
         .contentShape(Rectangle())
         .gesture(
