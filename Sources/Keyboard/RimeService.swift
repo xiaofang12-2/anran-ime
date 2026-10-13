@@ -76,7 +76,7 @@ final class RimeService {
         let b = AnRanRimeBridge(sharedDataDir: shared.path, userDataDir: userDir.path)
         _ = b.setupAndDeploy()
         // 不管成没成都把 bridge 留住：没就绪时还要靠它读出方案 id / 候选条数做诊断。
-        finish(b, b.isReady)
+        finish(b, b.isReady())
     }
 
     private func finish(_ b: AnRanRimeBridge?, _ ok: Bool) {
