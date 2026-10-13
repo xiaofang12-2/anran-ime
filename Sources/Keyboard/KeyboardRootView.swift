@@ -173,27 +173,51 @@ struct KeyboardRootView: View {
 
     /// 思想库命中：关键词或内容里带任意一个查询串。
     ///
-    /// 三个查询串一起上：已落定的关键词框内容、正在拼的裸串、拼音首选字。
-    /// 只认一个会漏 —— 打 mw 这种字母关键词时首选字是「吗」之类，会把 mw 顶掉，
-    /// 结果永远匹配不上；裸串也拿去比，字母关键词才调得出来。
+    /// 查询串见 `thoughtQueries`：已落定的关键词框内容、正在拼的裸串、
+    /// 候选栏里的汉字。三样一起上才不漏 —— 字母关键词（mw）没有汉字可落，
+    /// 只能靠裸串；拼音关键词（kouzi → 扣字1）靠候选栏里的汉字。
     private var thoughtMatches: [ThoughtItem] {
         let qs = thoughtQueries
         guard !qs.isEmpty else { return Array(thoughts.prefix(12)) }
-        return Array(thoughts.filter { it in
+        // 分档：关键词完全相等 > 关键词前缀 > 关键词/内容包含。
+        // 分档是为了让「打全了关键词」的那条永远排在「只是内容里撞见」的前面。
+        var exact: [ThoughtItem] = []
+        var prefix: [ThoughtItem] = []
+        var partial: [ThoughtItem] = []
+        for it in thoughts {
             let k = it.cleanKeyword
             let c = it.content.lowercased()
-            return qs.contains { q in k.contains(q) || c.contains(q) }
-        }.prefix(12))
+            var tier = 0
+            for q in qs {
+                if k == q { tier = max(tier, 3) }
+                else if k.hasPrefix(q) { tier = max(tier, 2) }
+                else if q.count >= 2 && (k.contains(q) || c.contains(q)) { tier = max(tier, 1) }
+            }
+            switch tier {
+            case 3: exact.append(it)
+            case 2: prefix.append(it)
+            case 1: partial.append(it)
+            default: break
+            }
+        }
+        return Array((exact + prefix + partial).prefix(12))
     }
 
-    /// 思想库检索用的查询串集合（关键词框内容 + 裸拼音串 + 拼音首选字）
+    /// 思想库检索用的查询串集合（关键词框内容 + 裸拼音串 + 候选栏里的汉字）。
+    ///
+    /// 候选栏里的汉字要**整条都拿去比**，不能只认第一个：打 kouzi 时首选可能是
+    /// 「口子」，而用户建的关键词是「扣字1」—— 只认首选就永远匹配不上，
+    /// 用户就会觉得「关键词调不出内容」。整条候选栏过一遍才稳。
     private var thoughtQueries: [String] {
         var qs: [String] = []
-        if !thoughtQuery.isEmpty { qs.append(thoughtQuery.lowercased()) }
-        if !thoughtComposing.isEmpty { qs.append(thoughtComposing.lowercased()) }
-        if let best = thoughtCands.first(where: { !$0.literal }) {
-            let w = best.word.lowercased()
-            if !qs.contains(w) { qs.append(w) }
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !t.isEmpty && !qs.contains(t) { qs.append(t) }
+        }
+        add(thoughtQuery)
+        if !thoughtComposing.isEmpty {
+            add(thoughtComposing)
+            for c in thoughtCands where !c.literal { add(c.word) }
         }
         return qs
     }
@@ -292,15 +316,13 @@ struct KeyboardRootView: View {
             guard !lines.isEmpty else { return }
             // 一轮输出完再从头来，方便反复调用同一段内容
             if thoughtLine >= lines.count { thoughtLine = 0 }
-            controller.commit(lines[thoughtLine])
+            controller.commitAndSend(lines[thoughtLine])
             thoughtLine += 1
         } else {
             let text = thoughtPlainText
             guard !text.isEmpty else { return }
-            controller.commit(text)
+            controller.commitAndSend(text)
         }
-        // 补一个回车：让第一输入框直接把这句发出去
-        controller.newline()
     }
 
     /// 第二输入框里当前打的原文：已落定的内容 + 还没落定的拼音串

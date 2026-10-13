@@ -25,10 +25,21 @@ final class InputEngine {
 
     /// 取候选（热路径）
     func candidates(for raw: String) -> [PinyinCandidate] {
-        let fallback = PinyinEngine.shared.candidates(for: raw)
-        guard RimeService.shared.isReady else { return fallback }
+        // librime 没起来：整条链路退回纯自研引擎
+        guard RimeService.shared.isReady else {
+            return PinyinEngine.shared.candidates(for: raw)
+        }
 
         let rime = RimeService.shared.candidates(raw, limit: 40)
+        if rime.count >= 8 {
+            // librime 候选够多：自研层只补「用户记忆 / 策展缩写 / 短语」，
+            // 跳过耗时的词图搜索 —— 既保住 librime 的排序质量，又让打字不卡
+            let light = PinyinEngine.shared.lightCandidates(for: raw)
+            return merge(rime: rime, fallback: light, raw: raw)
+        }
+
+        // librime 候选稀薄（生僻串 / 刚部署完）：自研全量兜底，保证永远有字可出
+        let fallback = PinyinEngine.shared.candidates(for: raw)
         if rime.isEmpty { return fallback }
         return merge(rime: rime, fallback: fallback, raw: raw)
     }
@@ -48,8 +59,14 @@ final class InputEngine {
             RimeService.shared.select(index: idx)
             let rest = RimeService.shared.currentInput()
             let used = n - rest.count
-            if used > 0 && used <= n { return used }
-            return c.consumed > 0 && c.consumed <= n ? c.consumed : n
+            let u = (used > 0 && used <= n)
+                ? used
+                : (c.consumed > 0 && c.consumed <= n ? c.consumed : n)
+            // 自研层也记一笔。librime 有自己的用户词典，但我们这层的「记忆优先」
+            // 靠这份「拼音 -> 词」映射才能在下次同拼音时把用户常选的词顶上来 ——
+            // 走 librime 选中的词不记，用户的选择就永远上不了前排。
+            PinyinEngine.shared.learn(c.word, pinyin: String(pinyin.prefix(u)))
+            return u
         }
         let used = (c.consumed > 0 && c.consumed <= n) ? c.consumed : n
         PinyinEngine.shared.learn(c.word, pinyin: String(pinyin.prefix(used)))

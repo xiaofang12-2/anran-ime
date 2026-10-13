@@ -81,6 +81,18 @@ final class KeyboardViewController: UIInputViewController {
         textDocumentProxy.insertText(text)
     }
 
+    /// 上屏 + 按回车发送（思想库面板回车用）。
+    ///
+    /// 正文和回车必须**分两次、隔一个 runloop 插**：同一个调用栈里连着插，
+    /// 微信 / QQ 这类聊天框会把它们并成一次编辑，只落一个换行、不触发发送。
+    /// 隔开之后宿主先收到正文、再收到一次独立的「回车」，才会真的发出去。
+    func commitAndSend(_ text: String) {
+        textDocumentProxy.insertText(text)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            self?.textDocumentProxy.insertText("\n")
+        }
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshAuth()

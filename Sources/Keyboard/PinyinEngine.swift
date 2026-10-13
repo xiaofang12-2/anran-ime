@@ -11,7 +11,8 @@ struct PinyinCandidate {
     let literal: Bool
     /// 来自 librime 的第几条候选（选中时要回灌给它学词）；自研层为 nil
     let rimeIndex: Int?
-    /// 自研缩写表命中的策展词（口语/梗/怼人），合并时顶到 librime 前面
+    /// 强优先候选：自研缩写表命中的策展词（口语/梗/怼人），或用户自己记下的词。
+    /// 合并时顶到 librime 前面
     let isPriority: Bool
 
     init(word: String, score: Int, consumed: Int = 0, literal: Bool = false,
@@ -270,6 +271,40 @@ final class PinyinEngine {
         return result
     }
 
+    /// 轻量候选：librime 就绪且候选充足时用。
+    ///
+    /// 词图 Beam / 前缀补全 / 兜底这些活儿 librime 干得更准，自研层这时只补
+    /// 三样 librime 没有的东西：**用户记忆词**（同拼音直接顶前排）、
+    /// **策展缩写词**（口语/梗/怼人）、**自定义短语**。跳过耗时的词图搜索，
+    /// 打字才不会卡 —— 这是「零卡顿」的底线。
+    func lightCandidates(for raw: String) -> [PinyinCandidate] {
+        ensureLoaded()
+        let input = raw.lowercased().filter { $0 >= "a" && $0 <= "z" }
+        guard !input.isEmpty else { return [] }
+        let n = input.count
+        let set = IMESettingsStore.current
+
+        var cands = [String: (cov: Int, lp: Double, pri: Bool)]()
+        func put(_ text: String, _ cov: Int, _ lp: Double, pri: Bool = false) {
+            if text.isEmpty || cov <= 0 { return }
+            if let old = cands[text], old.lp >= lp { return }
+            cands[text] = (cov, lp, pri)
+        }
+
+        // 策展缩写词（整串切不成音节时才用，跟全量路径同一套判断）
+        if set.abbrevInput && !splitsIntoSyllables(input) {
+            for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true) }
+        }
+        // 用户记忆词：同样的拼音直接顶到最前
+        if let uw = userWords[input] {
+            for (i, w) in uw.enumerated() { put(w, n, 900_000 - Double(i), pri: true) }
+        }
+
+        var hits: [(text: String, position: Int)] = []
+        for p in phrases where p.code == input { hits.append((p.text, p.position)) }
+        return rank(&cands, input, limit: set.candidateCount, phraseHits: hits)
+    }
+
     /// 主程序下发的自定义短语；换一批就作废缓存重算
     func setPhrases(_ list: [Phrase]) {
         phrases = list
@@ -491,10 +526,12 @@ final class PinyinEngine {
             for c in fallback(input) { put(c.word, n, c.logp) }
         }
 
-        // 9) 用户自己记下的词：同样的拼音直接顶到最前
+        // 9) 用户自己记下的词：同样的拼音直接顶到最前。
+        //    pri=true 让它进「强优先」那一档 —— 合并时排在 librime 候选前面，
+        //    否则用户的选择永远被压在通用词库后面，「越用越顺手」就是句空话。
         if let uw = userWords[input] {
             for (i, w) in uw.enumerated() {
-                put(w, n, 900_000 - Double(i))
+                put(w, n, 900_000 - Double(i), pri: true)
             }
         }
 
@@ -564,7 +601,7 @@ final class PinyinEngine {
     }
 
     /// 词图上的 Beam Search（对标 librime poet.cc 的自适应 beam）。
-    /// 宽度随输入长度伸缩：短串 12 够用，长串切分路径组合爆炸，放到 24 才不丢解。
+    /// 宽度随输入长度伸缩：短串 12 够用，长串切分路径组合爆炸，放到 20 才不丢解。
     /// 边的展开是「惰性」的：只有 states[i] 非空（即这个位置真的能到达）才去算
     /// fullEdges(chars, i)。乱按的串大部分位置根本走不到，这样能省掉大量无用 DFS。
     private func beam(_ chars: [Character])
