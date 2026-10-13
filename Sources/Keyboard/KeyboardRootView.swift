@@ -274,23 +274,47 @@ struct KeyboardRootView: View {
         pickThought(best)
     }
 
-    /// 回车：把命中关键词的内容按行一句一句上屏（对标电脑端思想库）。
-    /// 没有任何查询串时（刚开面板）回车不输出，避免莫名其妙吐一句。
+    /// 回车：第二输入框里打的东西直接往第一输入框送，并顺手发出去。
+    /// - 打的是关键词（或关键词的一部分）→ 送出关键词内容，按句走：
+    ///   第一次回车送第一句，再按一次送第二句，一轮走完从头再来；
+    ///   关键词本身永远不出去。
+    /// - 没命中任何关键词 → 把第二输入框里打的原文原样送出去。
+    /// 两种情况送完都补一个回车，让宿主输入框直接发送。
+    /// 什么都没打时（刚开面板）回车不输出，避免莫名其妙吐一句。
     private func outputThoughtLine() {
-        guard let hit = thoughtMatches.first else { return }
-        let lines = hit.content
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-        guard !lines.isEmpty else { return }
-        // 一轮输出完再从头来，方便反复调用同一段内容
-        if thoughtLine >= lines.count { thoughtLine = 0 }
-        let line = lines[thoughtLine]
-        if !line.isEmpty {
-            controller.commit(line)
-            // 多行之间补换行，别让上一句和下一句黏成一坨
-            if thoughtLine < lines.count - 1 { controller.newline() }
+        guard !thoughtQueries.isEmpty else { return }
+
+        if let hit = thoughtMatches.first {
+            let lines = hit.content
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard !lines.isEmpty else { return }
+            // 一轮输出完再从头来，方便反复调用同一段内容
+            if thoughtLine >= lines.count { thoughtLine = 0 }
+            controller.commit(lines[thoughtLine])
+            thoughtLine += 1
+        } else {
+            let text = thoughtPlainText
+            guard !text.isEmpty else { return }
+            controller.commit(text)
         }
-        thoughtLine += 1
+        // 补一个回车：让第一输入框直接把这句发出去
+        controller.newline()
+    }
+
+    /// 第二输入框里当前打的原文：已落定的内容 + 还没落定的拼音串
+    /// （有汉字首选就落首选，没有就留裸串，打 mw 这种字母关键词也不丢）
+    private var thoughtPlainText: String {
+        var s = thoughtQuery
+        if !thoughtComposing.isEmpty {
+            if let best = thoughtCands.first(where: { !$0.literal }) {
+                s += best.word
+            } else {
+                s += thoughtComposing
+            }
+        }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var rows: [[KeySpec]] {
