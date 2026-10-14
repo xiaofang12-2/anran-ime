@@ -35,9 +35,10 @@ struct KeyboardRootView: View {
     @State private var thoughtQuery = ""
     @State private var thoughtComposing = ""                 // 面板里的拼音串
     @State private var thoughtCands: [PinyinCandidate] = []
-    @State private var thoughtLine = 0                       // 命中内容输出到第几行
+    @State private var thoughtLines: [String: Int] = [:]     // 每个关键词各自记住输出到第几行
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
+    @State private var activeLibName = "全部库"               // 当前使用中的思想库名
 
     var body: some View {
         Group {
@@ -97,6 +98,9 @@ struct KeyboardRootView: View {
             if panel == .thought {
                 ThoughtPanel(query: thoughtQuery,
                              composing: thoughtComposing,
+                             libName: activeLibName,
+                             preview: thoughtPreview,
+                             previewHit: thoughtPreviewHit,
                              matches: thoughtMatches,
                              onInsert: insertThought,
                              onClose: closePanel)
@@ -171,7 +175,7 @@ struct KeyboardRootView: View {
             thoughtQuery = ""
             thoughtComposing = ""
             thoughtCands = []
-            thoughtLine = 0
+            // 关键词进度不清：面板关了再开，每个关键词接着上次那句走
             setPanel(.thought)
         }
     }
@@ -252,21 +256,18 @@ struct KeyboardRootView: View {
             thoughtQuery += t
             thoughtComposing = ""
             thoughtCands = []
-            thoughtLine = 0
         case .backspace:
             if !thoughtComposing.isEmpty {
                 thoughtComposing.removeLast()
                 refreshThoughtCands()
             } else if !thoughtQuery.isEmpty {
                 thoughtQuery.removeLast()
-                thoughtLine = 0
             }
         case .space:
             if !thoughtComposing.isEmpty {
                 commitThoughtComposing()
             } else {
                 thoughtQuery += " "
-                thoughtLine = 0
             }
         case .ret:
             // 回车 = 出内容：命中就用当前查询串输出一行。查询串含整条候选栏的汉字，
@@ -294,7 +295,6 @@ struct KeyboardRootView: View {
         thoughtQuery += c.word
         thoughtComposing = ""
         thoughtCands = []
-        thoughtLine = 0
     }
 
     /// 把面板拼音串按首选候选落进输入框
@@ -323,10 +323,10 @@ struct KeyboardRootView: View {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             guard !lines.isEmpty else { return }
-            // 一轮输出完再从头来，方便反复调用同一段内容
-            if thoughtLine >= lines.count { thoughtLine = 0 }
-            controller.commitAndSend(lines[thoughtLine])
-            thoughtLine += 1
+            // 每个关键词各记各的进度：换关键词不串行，一轮走完从头再来
+            let idx = thoughtLines[hit.id] ?? 0
+            controller.commitAndSend(lines[idx % lines.count])
+            thoughtLines[hit.id] = (idx + 1) % lines.count
         } else {
             let text = thoughtPlainText
             guard !text.isEmpty else { return }
@@ -346,6 +346,24 @@ struct KeyboardRootView: View {
             }
         }
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 预览条是否处于「命中待输出」状态（决定文案深浅）
+    private var thoughtPreviewHit: Bool {
+        !thoughtQueries.isEmpty && thoughtMatches.first != nil
+    }
+
+    /// 预览条文案：下一条回车会输出哪一句，按每个关键词自己的进度算
+    private var thoughtPreview: String {
+        guard !thoughtQueries.isEmpty else { return "输入关键词 回车逐句输出" }
+        guard let hit = thoughtMatches.first else { return "未命中 回车原样发送" }
+        let lines = hit.content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return "未命中 回车原样发送" }
+        let idx = thoughtLines[hit.id] ?? 0
+        return "下一句：" + lines[idx % lines.count]
     }
 
     private var rows: [[KeySpec]] {
@@ -633,7 +651,9 @@ struct KeyboardRootView: View {
 
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
-        thoughts = ThoughtStore.current.activeItems
+        let book = ThoughtStore.current
+        thoughts = book.activeItems
+        activeLibName = book.activeLibraryName
         applyLearnResetIfNeeded()
 
         if changed {

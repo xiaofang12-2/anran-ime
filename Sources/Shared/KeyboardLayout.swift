@@ -93,8 +93,8 @@ enum KBMetrics {
     static let funcBarHeight: CGFloat = 40
     /// 剪贴板面板高度
     static let panelHeight: CGFloat = 38
-    /// 思想库输入框面板高度
-    static let thoughtPanelHeight: CGFloat = 96
+    /// 思想库输入框面板高度（输入框 + 预览条 + 候选卡片）
+    static let thoughtPanelHeight: CGFloat = 122
     static let topInset: CGFloat = 6
 
     /// 字母/数字/符号三层都是 4 行

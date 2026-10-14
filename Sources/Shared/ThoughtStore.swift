@@ -61,6 +61,14 @@ struct ThoughtBook: Codable, Equatable {
         }
         return flatItems
     }
+
+    /// 当前使用中的库名（键盘面板预览条露一下）；没选库 = 全部库都参与
+    var activeLibraryName: String {
+        if let id = activeID, let lib = libraries.first(where: { $0.id == id }) {
+            return lib.name
+        }
+        return "全部库"
+    }
 }
 
 enum ThoughtStore {

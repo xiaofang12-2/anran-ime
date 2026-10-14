@@ -519,6 +519,12 @@ struct ThoughtPanel: View {
 
     let query: String
     let composing: String
+    /// 当前使用中的思想库名
+    let libName: String
+    /// 预览条文案：下一条回车要输出的句子（没命中给提示）
+    let preview: String
+    /// 是否命中关键词（决定预览文案深浅）
+    let previewHit: Bool
     let matches: [ThoughtItem]
     let onInsert: (String) -> Void
     let onClose: () -> Void
@@ -562,6 +568,30 @@ struct ThoughtPanel: View {
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(KBMetrics.themeKeyColor.opacity(0.92)))
+
+            // 预览条：当前库名 + 下一条回车要输出哪句，进度一眼看清
+            HStack(spacing: 6) {
+                Image(systemName: "books.vertical.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(KBMetrics.themeAccentColor.opacity(0.9))
+                Text(libName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(KBMetrics.themeAccentColor.opacity(0.9))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Rectangle()
+                    .fill(KBMetrics.themeCandidateTextColor.opacity(0.15))
+                    .frame(width: 0.5, height: 11)
+                Text(preview)
+                    .font(.system(size: 11))
+                    .foregroundColor(previewHit
+                                     ? KBMetrics.themeCandidateTextColor.opacity(0.8)
+                                     : KBMetrics.themeCandidateTextColor.opacity(0.45))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 20)
 
             if !matches.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
