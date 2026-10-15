@@ -35,13 +35,40 @@ struct KeyboardRootView: View {
     @State private var thoughtQuery = ""
     @State private var thoughtComposing = ""                 // 面板里的拼音串
     @State private var thoughtCands: [PinyinCandidate] = []
-    @State private var thoughtLines: [String: Int] = [:]     // 每个关键词各自记住输出到第几行
     @State private var thoughtBusy = false                   // 逐字上屏进行中
     @State private var thoughtQueue: [String] = []           // 排队待发：上一句还在逐字上屏时按回车 先排这里
-    @State private var activeThoughtKey: String?             // 最后一次成功调用的关键词：面板清空后连按回车接着出下一句
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
     @State private var activeLibName = "全部库"               // 当前使用中的思想库名
+
+    /// 每个关键词各自记住输出到第几行（永久书签）。
+    /// 落 UserDefaults 持久化：面板开关、键盘收弹、中途调用别的关键词、
+    /// 甚至扩展进程被系统杀掉重开，回到那个词都接着上次那句出。
+    private var thoughtLines: [String: Int] {
+        get {
+            (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
+             as? [String: Int]) ?? [:]
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "anran_thought_progress")
+        }
+    }
+
+    /// 最后一次成功调用的关键词 id（也持久化）：
+    /// 面板清空后连按回车接着出下一句；面板关了再开、进程重启都还认。
+    private var activeThoughtKey: String? {
+        get {
+            let v = UserDefaults.standard.string(forKey: "anran_thought_active")
+            return (v?.isEmpty == false) ? v : nil
+        }
+        set {
+            if let v = newValue {
+                UserDefaults.standard.set(v, forKey: "anran_thought_active")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "anran_thought_active")
+            }
+        }
+    }
 
     var body: some View {
         Group {
