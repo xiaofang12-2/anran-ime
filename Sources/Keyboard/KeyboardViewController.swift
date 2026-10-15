@@ -94,19 +94,24 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// 思想库逐字上屏：内容一个字一个字插进宿主输入框（打字机效果），
-    /// 字间隔由「输入设置 → 思想库上屏间隔」控制（0~200ms），
-    /// 插完隔一拍补一次回车把消息发出去。done 在回车补完后回调（主线程）。
+    /// 字间隔由「输入设置 → 思想库上屏间隔」控制（内部兜底 35ms —— 再快宿主
+    /// App 的文本监听就来不及收字，会吞字）。插完隔一拍补一次回车发送，
+    /// **回车后再等一拍才回调 done**：宿主要花一拍处理「发送」并清空输入框，
+    /// 下一句要是立刻开打，头几个字会被并进上一条消息或被清空
+    /// （用户视频里的吞字/串句就是这个）。done 在主线程回调。
     func sendTypewriter(_ text: String, speedMs: Int, done: @escaping () -> Void) {
         let chs = Array(text)
-        let gap = UInt64(max(0, speedMs)) * 1_000_000
+        let gap = UInt64(max(35, speedMs)) * 1_000_000
         Task { @MainActor [weak self] in
             for ch in chs {
                 self?.textDocumentProxy.insertText(String(ch))
-                if gap > 0 { try? await Task.sleep(nanoseconds: gap) }
+                try? await Task.sleep(nanoseconds: gap)
             }
             // 正文插完与回车之间至少隔一拍，聊天框才会当成两次编辑
-            try? await Task.sleep(nanoseconds: max(gap, 60_000_000))
+            try? await Task.sleep(nanoseconds: max(gap, 80_000_000))
             self?.textDocumentProxy.insertText("\n")
+            // 给宿主一拍处理发送并清空输入框，下一句才能从头打
+            try? await Task.sleep(nanoseconds: 220_000_000)
             done()
         }
     }

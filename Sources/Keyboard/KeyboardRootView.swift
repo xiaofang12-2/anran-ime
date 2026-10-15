@@ -203,55 +203,21 @@ struct KeyboardRootView: View {
         setPanel(.none)
     }
 
-    /// 思想库命中：关键词或内容里带任意一个查询串。
-    ///
-    /// 查询串见 `thoughtQueries`：已落定的关键词框内容、正在拼的裸串、
-    /// 候选栏里的汉字。三样一起上才不漏 —— 字母关键词（mw）没有汉字可落，
-    /// 只能靠裸串；拼音关键词（kouzi → 扣字1）靠候选栏里的汉字。
-    private var thoughtMatches: [ThoughtItem] {
-        let qs = thoughtQueries
-        guard !qs.isEmpty else { return Array(thoughts.prefix(12)) }
-        // 分档：关键词完全相等 > 关键词前缀 > 关键词/内容包含。
-        // 分档是为了让「打全了关键词」的那条永远排在「只是内容里撞见」的前面。
-        var exact: [ThoughtItem] = []
-        var prefix: [ThoughtItem] = []
-        var partial: [ThoughtItem] = []
-        for it in thoughts {
-            let k = it.cleanKeyword
-            let c = it.content.lowercased()
-            var tier = 0
-            for q in qs {
-                if k == q { tier = max(tier, 3) }
-                else if k.hasPrefix(q) { tier = max(tier, 2) }
-                else if q.count >= 2 && (k.contains(q) || c.contains(q)) { tier = max(tier, 1) }
-            }
-            switch tier {
-            case 3: exact.append(it)
-            case 2: prefix.append(it)
-            case 1: partial.append(it)
-            default: break
-            }
-        }
-        return Array((exact + prefix + partial).prefix(12))
+    /// 面板输入框里当前显示的原文：已落定的内容 + 还没落定的拼音串。
+    /// 「显示什么就发什么」—— 不再用引擎首选兜底，免得打的字母被偷偷变成汉字。
+    private var panelText: String {
+        (thoughtQuery + thoughtComposing)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 思想库检索用的查询串集合（关键词框内容 + 裸拼音串 + 候选栏里的汉字）。
-    ///
-    /// 候选栏里的汉字要**整条都拿去比**，不能只认第一个：打 kouzi 时首选可能是
-    /// 「口子」，而用户建的关键词是「扣字1」—— 只认首选就永远匹配不上，
-    /// 用户就会觉得「关键词调不出内容」。整条候选栏过一遍才稳。
-    private var thoughtQueries: [String] {
-        var qs: [String] = []
-        func add(_ s: String) {
-            let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !t.isEmpty && !qs.contains(t) { qs.append(t) }
-        }
-        add(thoughtQuery)
-        if !thoughtComposing.isEmpty {
-            add(thoughtComposing)
-            for c in thoughtCands where !c.literal { add(c.word) }
-        }
-        return qs
+    /// 面板原文是否**精确等于**某个关键词。
+    /// 以前这里还有前缀/包含模糊匹配（内容里撞俩字就算命中），
+    /// 「不管输什么都调用关键词」「别的内容发不出去」就是它俩干的 —— 已砍：
+    /// 只有原文跟关键词一模一样才算调用，其他一律原样发送。
+    private var exactHit: ThoughtItem? {
+        let t = panelText.lowercased()
+        guard !t.isEmpty else { return nil }
+        return thoughts.first { $0.cleanKeyword.lowercased() == t }
     }
 
     private func insertClipboard(_ text: String) {
@@ -321,48 +287,42 @@ struct KeyboardRootView: View {
         pickThought(best)
     }
 
-    /// 回车/发送：命中关键词 → 只输出关键词内容（关键词本身**永远不上屏**，
-    /// 发送后直接从面板里消失）。
-    /// 连按回车逐句推进：第一句 → 第二句 → …（关键词已清空，靠 activeThoughtKey
-    /// 记着激活的词，空手回车接着出下一句）。
-    /// 上屏排队：上一句还在逐字上屏时按回车，下一句进队列，上一句发完立刻接着上屏。
-    /// 进度跟着关键词走：中途在面板里乱输别的内容（不回车）不影响进度，
-    /// 改回关键词接着出下一句，不会从头再来。
-    /// 一轮出完就停（不循环）；重新输入关键词回车才从头再来。
-    /// 没命中任何关键词 → 把面板里打的原文原样逐字送出去。
-    /// 什么都没打且没激活过关键词时发送不动作，避免莫名其妙吐一句。
+    /// 回车/发送，三条路：
+    ///   1. 原文精确命中关键词 → 输出关键词内容（关键词本身永远不上屏，发送即清空面板）；
+    ///   2. 不是关键词且面板有内容 → 面板里显示的原文原样逐字送出；
+    ///   3. 面板是空的 → 空手回车接着出激活关键词的下一句（进度跟着关键词走）。
+    /// 连按回车逐句推进；中途在面板里输别的内容（不回车）不影响进度，
+    /// 改回关键词接着出下一句，不会从头再来。一轮出完就停（不循环），
+    /// 重新输入关键词回车才从头再来。
     private func enqueueThought() {
-        let viaQuery = !thoughtQueries.isEmpty && thoughtMatches.first != nil
-        let hit: ThoughtItem?
-        if viaQuery {
-            hit = thoughtMatches.first
-        } else if let id = activeThoughtKey, let it = thoughts.first(where: { $0.id == id }) {
-            hit = it
-        } else {
-            hit = nil
-        }
-
-        if let hit {
+        let text = panelText
+        if let hit = exactHit {
             setActiveThought(hit.id)
+            clearThoughtInput()
             let lines = thoughtContentLines(hit.content)
-            guard !lines.isEmpty else { return }
+            guard !lines.isEmpty else { return } // 预览条会提示「这个关键词还没有内容」
             let idx = thoughtLines[hit.id] ?? 0
             if idx >= lines.count {
-                // 这轮已出完：只有「重新输入关键词」才从头再调用；空手连按回车不重出
-                guard viaQuery else { return }
+                // 这轮已出完：重新输入关键词 = 从头再来
                 setThoughtProgress(hit.id, 1)
                 offerThoughtLine(lines[0])
             } else {
                 setThoughtProgress(hit.id, idx + 1)
                 offerThoughtLine(lines[idx])
             }
-            // 发送即清：关键词不留在面板里（连按回车走 activeThoughtKey 继续）
+        } else if !text.isEmpty {
+            // 没命中关键词：原文原样送出（以前这里会被模糊匹配截胡，啥也发不出去）
             clearThoughtInput()
-        } else {
-            let text = thoughtPlainText
-            guard !text.isEmpty else { return }
             offerThoughtLine(text)
-            clearThoughtInput()
+        } else if let id = activeThoughtKey,
+                  let it = thoughts.first(where: { $0.id == id }) {
+            // 空手回车：接着出激活关键词的下一句
+            let lines = thoughtContentLines(it.content)
+            guard !lines.isEmpty else { return }
+            let idx = thoughtLines[it.id] ?? 0
+            guard idx < lines.count else { return } // 出完了：空手回车不重出
+            setThoughtProgress(it.id, idx + 1)
+            offerThoughtLine(lines[idx])
         }
     }
 
@@ -402,38 +362,22 @@ struct KeyboardRootView: View {
         thoughtCands = []
     }
 
-    /// 第二输入框里当前打的原文：已落定的内容 + 还没落定的拼音串
-    /// （有汉字首选就落首选，没有就留裸串，打 mw 这种字母关键词也不丢）
-    private var thoughtPlainText: String {
-        var s = thoughtQuery
-        if !thoughtComposing.isEmpty {
-            if let best = thoughtCands.first(where: { !$0.literal }) {
-                s += best.word
-            } else {
-                s += thoughtComposing
-            }
-        }
-        return s.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     /// 预览条是否处于「命中待输出」状态（决定文案深浅）
     private var thoughtPreviewHit: Bool {
-        if !thoughtQueries.isEmpty && thoughtMatches.first != nil { return true }
-        return thoughtQueries.isEmpty && activeThoughtKey != nil
+        if exactHit != nil { return true }
+        return panelText.isEmpty && activeThoughtKey != nil
     }
 
     /// 预览条文案：下一条回车会输出哪一句，按每个关键词自己的进度算
     private var thoughtPreview: String {
-        if !thoughtQueries.isEmpty {
-            if let hit = thoughtMatches.first {
-                return thoughtPreviewFor(hit)
+        if let hit = exactHit { return thoughtPreviewFor(hit) }
+        if panelText.isEmpty {
+            if let id = activeThoughtKey, let it = thoughts.first(where: { $0.id == id }) {
+                return thoughtPreviewFor(it)
             }
-            return "未命中 回车原样发送"
+            return "输入关键词 回车逐句输出"
         }
-        if let id = activeThoughtKey, let it = thoughts.first(where: { $0.id == id }) {
-            return thoughtPreviewFor(it)
-        }
-        return "输入关键词 回车逐句输出"
+        return "未命中 回车原样发送"
     }
 
     private func thoughtPreviewFor(_ hit: ThoughtItem) -> String {
