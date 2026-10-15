@@ -9,7 +9,9 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # 不用 macos-latest（=macos-26 新镜像，灰度期机器池抽风：15分钟零步骤被取消）
+    # 固定到上一代稳定的 macOS 15 arm64，工具链与出包结果一致
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
