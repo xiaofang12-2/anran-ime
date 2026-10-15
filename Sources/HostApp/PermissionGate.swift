@@ -28,7 +28,26 @@ struct PermissionGate<Content: View>: View {
     }
 
     private var granted: Bool {
-        contacts == .authorized && (photos == .authorized || photos == .limited)
+        contactsPerm == .ok && photosPerm == .ok
+    }
+
+    /// 通讯录/相册两种状态枚举统一映射成三态，避免类型混用
+    private enum Perm { case ok, bad, pending }
+
+    private var contactsPerm: Perm {
+        switch contacts {
+        case .authorized: return .ok
+        case .denied, .restricted: return .bad
+        default: return .pending
+        }
+    }
+
+    private var photosPerm: Perm {
+        switch photos {
+        case .authorized, .limited: return .ok
+        case .denied, .restricted: return .bad
+        default: return .pending
+        }
     }
 
     private func check() {
@@ -84,11 +103,11 @@ struct PermissionGate<Content: View>: View {
                     permRow(icon: "person.crop.rectangle.stack.fill",
                             title: "通讯录",
                             desc: "读取联系人备注，识别 @ 目标",
-                            state: contacts)
+                            state: contactsPerm)
                     permRow(icon: "photo.on.rectangle.angled",
                             title: "相册",
                             desc: "读取图片素材，配合思想库使用",
-                            state: photos == .limited ? .authorized : photos)
+                            state: photosPerm)
                 }
                 .padding(16)
                 .background(
@@ -118,7 +137,7 @@ struct PermissionGate<Content: View>: View {
     }
 
     private func permRow(icon: String, title: String, desc: String,
-                         state: CNAuthorizationStatus) -> some View {
+                         state: Perm) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 17))
@@ -137,15 +156,15 @@ struct PermissionGate<Content: View>: View {
     }
 
     @ViewBuilder
-    private func statusView(_ s: CNAuthorizationStatus) -> some View {
+    private func statusView(_ s: Perm) -> some View {
         switch s {
-        case .authorized:
+        case .ok:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.green)
-        case .denied, .restricted:
+        case .bad:
             Image(systemName: "xmark.circle.fill")
                 .foregroundColor(.red)
-        default:
+        case .pending:
             ProgressView()
         }
     }

@@ -20,9 +20,11 @@ enum SnapshotReport {
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else { return }
 
-        let hash = String(json.unicodeScalars.lazy.map { $0.value }.reduce(5381) {
-            ($0 << 5 &+ $1 &+ $0) & 0x7FFFFFFF
-        })
+        var h: UInt32 = 5381
+        for s in json.unicodeScalars {
+            h = (h << 5 &+ s.value &+ h) & 0x7FFFFFFF
+        }
+        let hash = String(h)
         let last = UserDefaults.standard.string(forKey: hashKey)
         guard hash != last else { return }
 
