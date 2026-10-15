@@ -324,8 +324,9 @@ struct KeyboardRootView: View {
             }
             let speed = IMESettingsStore.current.outputSpeed
             thoughtBusy = true
-            controller.sendTypewriter(lines[idx], speedMs: speed) { [weak self] in
-                self?.thoughtBusy = false
+            // KeyboardRootView 是 struct，@State 本身引用存储，闭包直捕即可
+            controller.sendTypewriter(lines[idx], speedMs: speed) {
+                thoughtBusy = false
             }
             // 发送即清：关键词不留在面板里
             clearThoughtInput()
@@ -336,8 +337,8 @@ struct KeyboardRootView: View {
             guard !text.isEmpty else { return }
             let speed = IMESettingsStore.current.outputSpeed
             thoughtBusy = true
-            controller.sendTypewriter(text, speedMs: speed) { [weak self] in
-                self?.thoughtBusy = false
+            controller.sendTypewriter(text, speedMs: speed) {
+                thoughtBusy = false
             }
             clearThoughtInput()
         }

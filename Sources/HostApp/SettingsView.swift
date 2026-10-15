@@ -61,9 +61,10 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink("键盘布局") { LayoutSettingsView() }
-                NavigationLink("自定义短语") { PhraseSettingsView() }
             } header: {
                 Text("个性化")
+            } footer: {
+                Text("自定义短语和思想库都从主页入口进。")
             }
 
             Section {
