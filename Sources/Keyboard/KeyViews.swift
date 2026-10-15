@@ -503,10 +503,10 @@ struct ClipboardPanel: View {
 }
 
 /// 思想库面板：跟百度「翻译」一样，点功能栏图标就在键盘上方冒出一个输入框。
-/// 输入关键词 → 列出命中的「关键词 / 内容」，点内容直接上屏。
+/// 输入关键词 → 回车逐句输出（预览条显示下一句）。命中卡片列表已砍：
+/// 回车就是输出，列出来再点属于重复操作，还白占键盘高度。
 /// 注意：键盘扩展里没法再弹一个系统键盘，所以这个输入框的字符由键盘自己的键喂进来，
 /// 这里只做展示（含闪烁光标），不做真正的 UITextField。
-/// 拼音串（composing）一并露在输入框右侧，候选在下方候选栏里选。
 struct ThoughtPanel: View {
 
     let query: String
@@ -517,8 +517,6 @@ struct ThoughtPanel: View {
     let preview: String
     /// 是否命中关键词（决定预览文案深浅）
     let previewHit: Bool
-    let matches: [ThoughtItem]
-    let onInsert: (String) -> Void
     let onClose: () -> Void
 
     @State private var caretOn = true
@@ -584,36 +582,6 @@ struct ThoughtPanel: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 20)
-
-            if !matches.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(matches) { it in
-                            Button { onInsert(it.content) } label: {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(it.keyword)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(KBMetrics.themeCandidateTextColor)
-                                    Text(it.content)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(KBMetrics.themeKeyColor.opacity(0.92)))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 1)
-                }
-                .frame(height: 46)
-            } else {
-                Spacer(minLength: 0)
-            }
         }
         .padding(8)
         .background(

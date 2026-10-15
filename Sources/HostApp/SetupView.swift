@@ -22,6 +22,11 @@ struct SetupView: View {
             }
         }
         .navigationViewStyle(.stack)
+        // 建库/加关键词/加短语等任何 Store 落盘 → 立刻推剪贴板（不用等切后台），
+        // 用户切出去打字键盘第一帧接到的就是新配置（对标百度个性短语加完就有）
+        .onReceive(NotificationCenter.default.publisher(for: ConfigSync.localStoreChanged)) { _ in
+            _ = ConfigSync.publishIfChanged()
+        }
         .onChange(of: scenePhase) { phase in
             // 切后台时把最新配置推给键盘（配置没变就不动剪贴板）。
             // 免费签名只能走剪贴板交接，这一步保证「改完设置 → 去别的 app 打字」

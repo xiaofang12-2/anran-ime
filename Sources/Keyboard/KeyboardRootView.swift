@@ -137,8 +137,6 @@ struct KeyboardRootView: View {
                              libName: activeLibName,
                              preview: thoughtPreview,
                              previewHit: thoughtPreviewHit,
-                             matches: thoughtMatches,
-                             onInsert: insertThought,
                              onClose: closePanel)
             }
 
@@ -259,10 +257,6 @@ struct KeyboardRootView: View {
     private func insertClipboard(_ text: String) {
         controller.commit(text)
         closePanel()
-    }
-
-    private func insertThought(_ content: String) {
-        controller.commit(content)
     }
 
     /// 思想库面板展开时，字母键喂给面板的输入框（键盘扩展里没法再弹系统键盘，

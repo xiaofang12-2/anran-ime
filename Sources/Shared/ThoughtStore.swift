@@ -87,5 +87,6 @@ enum ThoughtStore {
         if let d = try? JSONEncoder().encode(b.sanitized) {
             UserDefaults.standard.set(d, forKey: key)
         }
+        NotificationCenter.default.post(name: ConfigSync.localStoreChanged, object: nil)
     }
 }

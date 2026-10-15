@@ -20,6 +20,11 @@ struct SyncBundle: Codable, Equatable {
 
 enum ConfigSync {
 
+    /// 本机任一 Store 落盘后发（saveLocal 尾部）。主程序监听它即时推剪贴板，
+    /// 「加完关键词/短语切出去打字」键盘第一帧就是新配置，不用等切后台。
+    /// 键盘侧也调 saveLocal 但不监听，无副作用。
+    static let localStoreChanged = Notification.Name("anran_local_store_changed")
+
     /// 键盘侧：上一次接过的整包原文。用内容比对判新旧 —— 比时间戳稳：
     /// 时钟回拨、同一毫秒连改两条、rev 没来得及变大，都不会把新配置吞掉。
     private static let appliedKey = "anran_sync_applied"

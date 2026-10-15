@@ -59,6 +59,7 @@ enum PhraseStore {
         if let d = try? JSONEncoder().encode(b.sanitized) {
             UserDefaults.standard.set(d, forKey: key)
         }
+        NotificationCenter.default.post(name: ConfigSync.localStoreChanged, object: nil)
     }
 
     /// 主程序用：存本机 + 塞剪贴板
