@@ -36,6 +36,7 @@ struct KeyboardRootView: View {
     @State private var thoughtComposing = ""                 // 面板里的拼音串
     @State private var thoughtCands: [PinyinCandidate] = []
     @State private var thoughtLines: [String: Int] = [:]     // 每个关键词各自记住输出到第几行
+    @State private var thoughtBusy = false                   // 逐字上屏进行中，防连按重复输出
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
     @State private var activeLibName = "全部库"               // 当前使用中的思想库名
@@ -82,13 +83,19 @@ struct KeyboardRootView: View {
 
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
-            FunctionBar(thoughtOn: panel == .thought,
-                        clipboardOn: panel == .clipboard,
-                        onClipboard: toggleClipboard,
-                        onPhrase: { controller.openHost("phrases") },
-                        onThought: toggleThought,
-                        onThoughtLongPress: { controller.openHost("thoughts") },
-                        onCollapse: { controller.dismissKeyboardNow() })
+            // 顶栏一行装下 LOGO + 候选词 + 功能图标（学百度，不再分两栏）
+            TopBar(thoughtOn: panel == .thought,
+                   clipboardOn: panel == .clipboard,
+                   composing: panel == .thought ? thoughtComposing : composing,
+                   candidates: panel == .thought ? thoughtCands : candidates,
+                   onPick: panel == .thought ? pickThought : pick,
+                   onForget: panel == .thought ? { _ in } : forget,
+                   diag: panel == .thought ? "" : engineDiag,
+                   onClipboard: toggleClipboard,
+                   onPhrase: { controller.openHost("phrases") },
+                   onThought: toggleThought,
+                   onThoughtLongPress: { controller.openHost("thoughts") },
+                   onCollapse: { controller.dismissKeyboardNow() })
 
             if panel == .clipboard {
                 ClipboardPanel(text: clipboardText,
@@ -106,20 +113,6 @@ struct KeyboardRootView: View {
                              onClose: closePanel)
             }
 
-            if panel == .thought {
-                // 面板里的拼音候选走同一根候选栏（键盘扩展弹不出系统键盘，
-                // 面板的输入只能由键盘自己的键喂进来，候选也在这儿选）
-                CandidateBar(composing: thoughtComposing,
-                             candidates: thoughtCands,
-                             onPick: pickThought,
-                             onForget: { _ in })
-            } else {
-                CandidateBar(composing: composing,
-                             candidates: candidates,
-                             onPick: pick,
-                             onForget: forget,
-                             diag: engineDiag)
-            }
             ForEach(rows.indices, id: \.self) { i in
                 KeyRow(keys: rows[i],
                        onKey: handle,
@@ -140,9 +133,8 @@ struct KeyboardRootView: View {
         switch p {
         case .none: extra = 0
         case .clipboard: extra = KBMetrics.panelHeight + KBMetrics.rowGap
-        // 思想库面板：输入框面板 + 一根候选栏（面板里打拼音要在候选栏选汉字）
-        case .thought: extra = KBMetrics.thoughtPanelHeight
-            + KBMetrics.barHeight + KBMetrics.rowGap * 2
+        // 思想库面板：输入框面板（thoughtPanelHeight 已含真实高度）+ 顶层多一个间隔
+        case .thought: extra = KBMetrics.thoughtPanelHeight + KBMetrics.rowGap
         }
         controller.setExtraHeight(extra)
     }
@@ -307,15 +299,14 @@ struct KeyboardRootView: View {
         pickThought(best)
     }
 
-    /// 回车：第二输入框里打的东西直接往第一输入框送，并顺手发出去。
-    /// - 打的是关键词（或关键词的一部分）→ 送出关键词内容，按句走：
-    ///   第一次回车送第一句，再按一次送第二句，一轮走完从头再来；
-    ///   关键词本身永远不出去。
-    /// - 没命中任何关键词 → 把第二输入框里打的原文原样送出去。
-    /// 两种情况送完都补一个回车，让宿主输入框直接发送。
-    /// 什么都没打时（刚开面板）回车不输出，避免莫名其妙吐一句。
+    /// 回车/发送：命中关键词 → 只输出关键词内容（逐字上屏后自动发出去），
+    /// 输入的关键词本身**永远不上屏**，发送后直接从面板里消失；
+    /// 内容按行顺序一句一句出，出完最后一条就停，不自动循环 ——
+    /// 重新在面板里输入关键词才开启下一轮。
+    /// 没命中任何关键词 → 把面板里打的原文原样逐字送出去。
+    /// 什么都没打时（刚开面板）发送不动作，避免莫名其妙吐一句。
     private func outputThoughtLine() {
-        guard !thoughtQueries.isEmpty else { return }
+        guard !thoughtQueries.isEmpty, !thoughtBusy else { return }
 
         if let hit = thoughtMatches.first {
             let lines = hit.content
@@ -323,15 +314,40 @@ struct KeyboardRootView: View {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             guard !lines.isEmpty else { return }
-            // 每个关键词各记各的进度：换关键词不串行，一轮走完从头再来
+            // hit/lines/idx 必须在清输入前取好：清空 query 后 matches 会跟着变
             let idx = thoughtLines[hit.id] ?? 0
-            controller.commitAndSend(lines[idx % lines.count])
-            thoughtLines[hit.id] = (idx + 1) % lines.count
+            // 内容全出完了：进度归零，收掉关键词等用户重新输入开下一轮，不循环
+            guard idx < lines.count else {
+                thoughtLines[hit.id] = 0
+                clearThoughtInput()
+                return
+            }
+            let speed = IMESettingsStore.current.outputSpeed
+            thoughtBusy = true
+            controller.sendTypewriter(lines[idx], speedMs: speed) { [weak self] in
+                self?.thoughtBusy = false
+            }
+            // 发送即清：关键词不留在面板里
+            clearThoughtInput()
+            // 推进该关键词的进度：出完最后一条归零，下次重新输入关键词从头调用
+            thoughtLines[hit.id] = idx + 1 >= lines.count ? 0 : idx + 1
         } else {
             let text = thoughtPlainText
             guard !text.isEmpty else { return }
-            controller.commitAndSend(text)
+            let speed = IMESettingsStore.current.outputSpeed
+            thoughtBusy = true
+            controller.sendTypewriter(text, speedMs: speed) { [weak self] in
+                self?.thoughtBusy = false
+            }
+            clearThoughtInput()
         }
+    }
+
+    /// 清空思想库面板的输入（关键词/拼音串/候选）
+    private func clearThoughtInput() {
+        thoughtQuery = ""
+        thoughtComposing = ""
+        thoughtCands = []
     }
 
     /// 第二输入框里当前打的原文：已落定的内容 + 还没落定的拼音串
@@ -362,8 +378,8 @@ struct KeyboardRootView: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         guard !lines.isEmpty else { return "未命中 回车原样发送" }
-        let idx = thoughtLines[hit.id] ?? 0
-        return "下一句：" + lines[idx % lines.count]
+        let idx = min(thoughtLines[hit.id] ?? 0, lines.count - 1)
+        return "下一句：" + lines[idx]
     }
 
     private var rows: [[KeySpec]] {

@@ -38,6 +38,23 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("思想库上屏间隔")
+                        Spacer()
+                        Text("\(s.outputSpeed)ms")
+                            .font(.footnote.monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
+                    Slider(value: Binding(
+                        get: { Double(s.outputSpeed) },
+                        set: { s.outputSpeed = Int($0.rounded()) }
+                    ), in: Double(IMESettings.outputSpeedRange.lowerBound)...Double(IMESettings.outputSpeedRange.upperBound),
+                        step: 10)
+                    Text("思想库内容一个字一个字上屏的快慢，0 = 瞬间连上")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             } header: {
                 Text("键盘")
             }

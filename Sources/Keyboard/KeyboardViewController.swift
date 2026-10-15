@@ -93,6 +93,24 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// 思想库逐字上屏：内容一个字一个字插进宿主输入框（打字机效果），
+    /// 字间隔由「输入设置 → 思想库上屏间隔」控制（0~200ms），
+    /// 插完隔一拍补一次回车把消息发出去。done 在回车补完后回调（主线程）。
+    func sendTypewriter(_ text: String, speedMs: Int, done: @escaping () -> Void) {
+        let chs = Array(text)
+        let gap = UInt64(max(0, speedMs)) * 1_000_000
+        Task { @MainActor [weak self] in
+            for ch in chs {
+                self?.textDocumentProxy.insertText(String(ch))
+                if gap > 0 { try? await Task.sleep(nanoseconds: gap) }
+            }
+            // 正文插完与回车之间至少隔一拍，聊天框才会当成两次编辑
+            try? await Task.sleep(nanoseconds: max(gap, 60_000_000))
+            self?.textDocumentProxy.insertText("\n")
+            done()
+        }
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshAuth()

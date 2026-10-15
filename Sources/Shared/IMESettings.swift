@@ -22,6 +22,8 @@ struct IMESettings: Codable, Equatable {
     var vibration = false
     /// 候选数量上限
     var candidateCount = 40
+    /// 思想库逐字上屏间隔（毫秒）：0 = 瞬间连上，200 = 最慢可视打字机
+    var outputSpeed = 20
     /// 「清空打字学习记录」的一次性令牌：主程序点一次就刷新时间戳，
     /// 键盘见到比本地新就清一次（键盘沙盒里读不到主程序的存储，只能这么传令）
     var clearLearnToken = 0
@@ -32,11 +34,14 @@ struct IMESettings: Codable, Equatable {
     static let pastePrefix = "ANRAN-IMSET::"
 
     static let candidateRange: ClosedRange<Int> = 10...60
+    static let outputSpeedRange: ClosedRange<Int> = 0...200
 
     var sanitized: IMESettings {
         var s = self
         s.candidateCount = min(max(s.candidateCount, IMESettings.candidateRange.lowerBound),
                                IMESettings.candidateRange.upperBound)
+        s.outputSpeed = min(max(s.outputSpeed, IMESettings.outputSpeedRange.lowerBound),
+                            IMESettings.outputSpeedRange.upperBound)
         return s
     }
 }

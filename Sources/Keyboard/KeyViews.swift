@@ -327,16 +327,26 @@ struct KeyRow: View {
     }
 }
 
-/// 候选栏：只有「拼音串 + 候选」两样，不放任何功能键（数字、思想库都不占这儿）。
-/// 长按某个候选 = 把它从用户词频里抹掉（自己纠错，对标百度的「删除记忆」）。
-struct CandidateBar: View {
+/// 键盘顶栏（学百度输入法）：一行装下 LOGO / 候选词 / 功能入口 ——
+///   左 = 软件图标   中 = 拼音串或候选词   右 = 剪贴板 / 自定义短语 / 思想库 / 收起
+/// 功能栏不再单独占一条横（用户点名难看的那道横就是它），候选与功能同栏共存。
+/// 有候选时候选区横向滚动，没候选时露出拼音串或引擎诊断。
+struct TopBar: View {
+
+    let thoughtOn: Bool
+    let clipboardOn: Bool
     let composing: String
     let candidates: [PinyinCandidate]
     let onPick: (PinyinCandidate) -> Void
     let onForget: (String) -> Void
-    /// 引擎诊断串（方案 id + 真实候选条数），只在空闲时露一眼。
+    /// 引擎诊断串（方案 id + 真实候选条数），空闲时露一眼。
     /// 没有 App Groups 时这是确认 librime 到底有没有在干活的唯一途径。
     var diag: String = ""
+    let onClipboard: () -> Void
+    let onPhrase: () -> Void
+    let onThought: () -> Void
+    let onThoughtLongPress: () -> Void
+    let onCollapse: () -> Void
 
     private var shown: [PinyinCandidate] { Array(candidates.prefix(40)) }
 
@@ -344,50 +354,62 @@ struct CandidateBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            if shown.isEmpty {
-                // 没候选就一条空栏：正在打的拼音串优先露出来，
-                // 空闲时改露引擎诊断串（librime 没起来能一眼看出走了自研兜底）
-                if composing.isEmpty && !diag.isEmpty {
-                    Text(diag)
-                        .font(.system(size: 11 * scale))
-                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.35))
-                        .padding(.horizontal, 12)
-                } else {
-                    Text(composing)
-                        .font(.system(size: 15 * scale))
-                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
-                        .padding(.horizontal, 12)
-                }
-                Spacer()
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        Text(composing.isEmpty ? "联想" : composing)
-                            .font(.system(size: (composing.isEmpty ? 12 : 15) * scale))
+            logo
+            Group {
+                if shown.isEmpty {
+                    // 没候选：正在打的拼音串优先露出来，空闲时改露引擎诊断
+                    if composing.isEmpty && !diag.isEmpty {
+                        Text(diag)
+                            .font(.system(size: 11 * scale))
+                            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.35))
+                            .padding(.horizontal, 10)
+                        Spacer(minLength: 0)
+                    } else {
+                        Text(composing)
+                            .font(.system(size: 15 * scale))
                             .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                             .padding(.horizontal, 10)
-                        divider
-                        ForEach(shown.indices, id: \.self) { i in
-                            Text(shown[i].word)
-                                .font(.system(size: (i == 0 ? 22 : 19) * scale,
-                                              weight: i == 0 ? .semibold : .regular))
-                                .foregroundColor(shown[i].literal
-                                                 ? KBMetrics.themeAccentColor.opacity(0.6)
-                                                 : KBMetrics.themeCandidateTextColor)
-                                .padding(.horizontal, 11)
-                                .frame(height: KBMetrics.barHeight)
-                                .contentShape(Rectangle())
-                                .onTapGesture { onPick(shown[i]) }
-                                .onLongPressGesture(minimumDuration: 0.45) {
-                                    onForget(shown[i].word)
-                                }
-                            if i < shown.count - 1 { divider }
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            Text(composing.isEmpty ? "联想" : composing)
+                                .font(.system(size: (composing.isEmpty ? 12 : 15) * scale))
+                                .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
+                                .padding(.horizontal, 9)
+                            divider
+                            ForEach(shown.indices, id: \.self) { i in
+                                Text(shown[i].word)
+                                    .font(.system(size: (i == 0 ? 21 : 18) * scale,
+                                                  weight: i == 0 ? .semibold : .regular))
+                                    .foregroundColor(shown[i].literal
+                                                     ? KBMetrics.themeAccentColor.opacity(0.6)
+                                                     : KBMetrics.themeCandidateTextColor)
+                                    .padding(.horizontal, 9)
+                                    .frame(height: KBMetrics.barHeight)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { onPick(shown[i]) }
+                                    .onLongPressGesture(minimumDuration: 0.45) {
+                                        onForget(shown[i].word)
+                                    }
+                                if i < shown.count - 1 { divider }
+                            }
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
+
+            icon("doc.on.clipboard", active: clipboardOn,
+                 tap: onClipboard, longPress: nil)
+            icon("text.badge.plus", active: false,
+                 tap: onPhrase, longPress: nil)
+            icon("lightbulb", active: thoughtOn,
+                 tap: onThought, longPress: onThoughtLongPress)
+            icon("keyboard.chevron.compact.down", active: false,
+                 tap: onCollapse, longPress: nil)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: KBMetrics.barHeight)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -399,45 +421,10 @@ struct CandidateBar: View {
             .fill(KBMetrics.themeCandidateTextColor.opacity(0.10))
             .frame(width: 0.5, height: 20)
     }
-}
-
-/// 顶部功能栏（对标百度输入法）：
-///   左 = 软件图标   中 = 剪贴板 / 自定义短语 / 思想库   右 = 收起键盘
-/// 点图标触发对应动作；思想库图标再点一次收起面板；长按图标跳主程序对应设置。
-struct FunctionBar: View {
-
-    let thoughtOn: Bool
-    let clipboardOn: Bool
-    let onClipboard: () -> Void
-    let onPhrase: () -> Void
-    let onThought: () -> Void
-    let onThoughtLongPress: () -> Void
-    let onCollapse: () -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            logo
-            Spacer(minLength: 6)
-            icon("doc.on.clipboard", active: clipboardOn,
-                 tap: onClipboard, longPress: nil)
-            icon("text.badge.plus", active: false,
-                 tap: onPhrase, longPress: nil)
-            icon("lightbulb", active: thoughtOn,
-                 tap: onThought, longPress: onThoughtLongPress)
-            Spacer(minLength: 6)
-            icon("keyboard.chevron.compact.down", active: false,
-                 tap: onCollapse, longPress: nil)
-        }
-        .frame(height: KBMetrics.funcBarHeight)
-        .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(KBMetrics.themeBarColor))
-    }
 
     private var logo: some View {
         Group {
-            if let img = FunctionBar.logoImage {
+            if let img = TopBar.logoImage {
                 Image(uiImage: img).resizable().scaledToFill()
             } else {
                 Image(systemName: "keyboard")
@@ -446,6 +433,7 @@ struct FunctionBar: View {
             }
         }
         .frame(width: 26, height: 26)
+        .padding(.leading, 9)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
@@ -453,9 +441,9 @@ struct FunctionBar: View {
                       tap: @escaping () -> Void,
                       longPress: (() -> Void)?) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 17, weight: .medium))
+            .font(.system(size: 16, weight: .medium))
             .foregroundColor(active ? .white : KBMetrics.themeSpecialTextColor.opacity(0.85))
-            .frame(width: 42, height: KBMetrics.funcBarHeight)
+            .frame(width: 37, height: KBMetrics.barHeight)
             .background(active ? KBMetrics.themeAccentColor : Color.clear)
             .contentShape(Rectangle())
             .onTapGesture { tap() }

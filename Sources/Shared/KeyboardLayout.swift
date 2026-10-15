@@ -88,24 +88,24 @@ enum KBMetrics {
         return UIImage(data: d)
     }
 
+    /// 顶栏：LOGO + 候选词 + 功能图标 一行搞定（学百度，功能栏不再单独占一条）
     static let barHeight: CGFloat = 45
-    /// 顶部功能栏（图标 + 剪贴板/短语/思想库 + 收起）
-    static let funcBarHeight: CGFloat = 40
     /// 剪贴板面板高度
     static let panelHeight: CGFloat = 38
-    /// 思想库输入框面板高度（输入框 + 预览条 + 候选卡片）
-    static let thoughtPanelHeight: CGFloat = 122
+    /// 思想库输入框面板实际高度（输入框34 + 预览条20 + 候选卡46 + 间距 + 边距）
+    static let thoughtPanelHeight: CGFloat = 128
     static let topInset: CGFloat = 6
 
     /// 字母/数字/符号三层都是 4 行
     static let rows = 4
 
-    /// extra = 展开的面板额外占的高度（思想库/剪贴板）
+    /// extra = 展开的浮层面板额外占的高度（思想库/剪贴板）
+    /// 顶层元素：顶栏 + 键区 rows 行，行间 rowGap 共 rows 个
     static func totalHeight(rows: Int, extra: CGFloat = 0) -> CGFloat {
         topInset + bottomInset
-            + funcBarHeight + barHeight
+            + barHeight
             + keyHeight * CGFloat(rows)
-            + rowGap * CGFloat(2 + max(rows - 1, 0))
+            + rowGap * CGFloat(max(rows, 1))
             + extra
     }
 }
