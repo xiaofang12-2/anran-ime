@@ -335,6 +335,8 @@ struct TopBar: View {
 
     let thoughtOn: Bool
     let clipboardOn: Bool
+    /// 正在打拼音：右侧功能图标整组让位，候选词拉满整行（学百度）
+    var typing: Bool = false
     let composing: String
     let candidates: [PinyinCandidate]
     let onPick: (PinyinCandidate) -> Void
@@ -401,14 +403,16 @@ struct TopBar: View {
             }
             .frame(maxWidth: .infinity)
 
-            icon("doc.on.clipboard", active: clipboardOn,
-                 tap: onClipboard, longPress: nil)
-            icon("text.badge.plus", active: false,
-                 tap: onPhrase, longPress: nil)
-            icon("lightbulb", active: thoughtOn,
-                 tap: onThought, longPress: onThoughtLongPress)
-            icon("keyboard.chevron.compact.down", active: false,
-                 tap: onCollapse, longPress: nil)
+            if !typing {
+                icon("doc.on.clipboard", active: clipboardOn,
+                     tap: onClipboard, longPress: nil)
+                icon("text.badge.plus", active: false,
+                     tap: onPhrase, longPress: nil)
+                icon("lightbulb", active: thoughtOn,
+                     tap: onThought, longPress: onThoughtLongPress)
+                icon("keyboard.chevron.compact.down", active: false,
+                     tap: onCollapse, longPress: nil)
+            }
         }
         .frame(height: KBMetrics.barHeight)
         .background(

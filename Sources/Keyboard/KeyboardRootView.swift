@@ -36,7 +36,9 @@ struct KeyboardRootView: View {
     @State private var thoughtComposing = ""                 // 面板里的拼音串
     @State private var thoughtCands: [PinyinCandidate] = []
     @State private var thoughtLines: [String: Int] = [:]     // 每个关键词各自记住输出到第几行
-    @State private var thoughtBusy = false                   // 逐字上屏进行中，防连按重复输出
+    @State private var thoughtBusy = false                   // 逐字上屏进行中
+    @State private var thoughtQueue: [String] = []           // 排队待发：上一句还在逐字上屏时按回车 先排这里
+    @State private var activeThoughtKey: String?             // 最后一次成功调用的关键词：面板清空后连按回车接着出下一句
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
     @State private var activeLibName = "全部库"               // 当前使用中的思想库名
@@ -84,8 +86,10 @@ struct KeyboardRootView: View {
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
             // 顶栏一行装下 LOGO + 候选词 + 功能图标（学百度，不再分两栏）
+            // 正在打拼音时功能图标整组让位，候选词拉满整行
             TopBar(thoughtOn: panel == .thought,
                    clipboardOn: panel == .clipboard,
+                   typing: panel != .thought && !composing.isEmpty,
                    composing: panel == .thought ? thoughtComposing : composing,
                    candidates: panel == .thought ? thoughtCands : candidates,
                    onPick: panel == .thought ? pickThought : pick,
@@ -262,10 +266,9 @@ struct KeyboardRootView: View {
                 thoughtQuery += " "
             }
         case .ret:
-            // 回车 = 出内容：命中就用当前查询串输出一行。查询串含整条候选栏的汉字，
-            // 不强制先落定候选 —— 打 mw 这种字母关键词本来就没有汉字可落，
-            // 硬落反而把 mw 顶掉，用户会觉得「回车没用」。
-            outputThoughtLine()
+            // 回车 = 出内容：命中关键词出下一句（连按回车逐句推进），
+            // 没命中就把面板里打的原文原样逐字送出去
+            enqueueThought()
         case .globe:
             controller.advanceToNextInputMode()
         case .toLayer(let l):
@@ -299,48 +302,77 @@ struct KeyboardRootView: View {
         pickThought(best)
     }
 
-    /// 回车/发送：命中关键词 → 只输出关键词内容（逐字上屏后自动发出去），
-    /// 输入的关键词本身**永远不上屏**，发送后直接从面板里消失；
-    /// 内容按行顺序一句一句出，出完最后一条就停，不自动循环 ——
-    /// 重新在面板里输入关键词才开启下一轮。
+    /// 回车/发送：命中关键词 → 只输出关键词内容（关键词本身**永远不上屏**，
+    /// 发送后直接从面板里消失）。
+    /// 连按回车逐句推进：第一句 → 第二句 → …（关键词已清空，靠 activeThoughtKey
+    /// 记着激活的词，空手回车接着出下一句）。
+    /// 上屏排队：上一句还在逐字上屏时按回车，下一句进队列，上一句发完立刻接着上屏。
+    /// 进度跟着关键词走：中途在面板里乱输别的内容（不回车）不影响进度，
+    /// 改回关键词接着出下一句，不会从头再来。
+    /// 一轮出完就停（不循环）；重新输入关键词回车才从头再来。
     /// 没命中任何关键词 → 把面板里打的原文原样逐字送出去。
-    /// 什么都没打时（刚开面板）发送不动作，避免莫名其妙吐一句。
-    private func outputThoughtLine() {
-        guard !thoughtQueries.isEmpty, !thoughtBusy else { return }
+    /// 什么都没打且没激活过关键词时发送不动作，避免莫名其妙吐一句。
+    private func enqueueThought() {
+        let viaQuery = !thoughtQueries.isEmpty && thoughtMatches.first != nil
+        let hit: ThoughtItem?
+        if viaQuery {
+            hit = thoughtMatches.first
+        } else if let id = activeThoughtKey, let it = thoughts.first(where: { $0.id == id }) {
+            hit = it
+        } else {
+            hit = nil
+        }
 
-        if let hit = thoughtMatches.first {
-            let lines = hit.content
-                .split(separator: "\n", omittingEmptySubsequences: false)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
+        if let hit {
+            activeThoughtKey = hit.id
+            let lines = thoughtContentLines(hit.content)
             guard !lines.isEmpty else { return }
-            // hit/lines/idx 必须在清输入前取好：清空 query 后 matches 会跟着变
             let idx = thoughtLines[hit.id] ?? 0
-            // 内容全出完了：进度归零，收掉关键词等用户重新输入开下一轮，不循环
-            guard idx < lines.count else {
-                thoughtLines[hit.id] = 0
-                clearThoughtInput()
-                return
+            if idx >= lines.count {
+                // 这轮已出完：只有「重新输入关键词」才从头再调用；空手连按回车不重出
+                guard viaQuery else { return }
+                thoughtLines[hit.id] = 1
+                offerThoughtLine(lines[0])
+            } else {
+                thoughtLines[hit.id] = idx + 1
+                offerThoughtLine(lines[idx])
             }
-            let speed = IMESettingsStore.current.outputSpeed
-            thoughtBusy = true
-            // KeyboardRootView 是 struct，@State 本身引用存储，闭包直捕即可
-            controller.sendTypewriter(lines[idx], speedMs: speed) {
-                thoughtBusy = false
-            }
-            // 发送即清：关键词不留在面板里
+            // 发送即清：关键词不留在面板里（连按回车走 activeThoughtKey 继续）
             clearThoughtInput()
-            // 推进该关键词的进度：出完最后一条归零，下次重新输入关键词从头调用
-            thoughtLines[hit.id] = idx + 1 >= lines.count ? 0 : idx + 1
         } else {
             let text = thoughtPlainText
             guard !text.isEmpty else { return }
-            let speed = IMESettingsStore.current.outputSpeed
-            thoughtBusy = true
-            controller.sendTypewriter(text, speedMs: speed) {
-                thoughtBusy = false
-            }
+            offerThoughtLine(text)
             clearThoughtInput()
+        }
+    }
+
+    /// 关键词内容按行拆（去空行去首尾空白）
+    private func thoughtContentLines(_ content: String) -> [String] {
+        content.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// 一句进发送通道：忙就排队，闲就直接开始逐字上屏
+    private func offerThoughtLine(_ line: String) {
+        if thoughtBusy {
+            thoughtQueue.append(line)
+        } else {
+            startThoughtLine(line)
+        }
+    }
+
+    private func startThoughtLine(_ line: String) {
+        let speed = IMESettingsStore.current.outputSpeed
+        thoughtBusy = true
+        // KeyboardRootView 是 struct，@State 本身引用存储，闭包直捕即可
+        controller.sendTypewriter(line, speedMs: speed) {
+            thoughtBusy = false
+            if !thoughtQueue.isEmpty {
+                let next = thoughtQueue.removeFirst()
+                startThoughtLine(next)
+            }
         }
     }
 
@@ -367,19 +399,29 @@ struct KeyboardRootView: View {
 
     /// 预览条是否处于「命中待输出」状态（决定文案深浅）
     private var thoughtPreviewHit: Bool {
-        !thoughtQueries.isEmpty && thoughtMatches.first != nil
+        if !thoughtQueries.isEmpty && thoughtMatches.first != nil { return true }
+        return thoughtQueries.isEmpty && activeThoughtKey != nil
     }
 
     /// 预览条文案：下一条回车会输出哪一句，按每个关键词自己的进度算
     private var thoughtPreview: String {
-        guard !thoughtQueries.isEmpty else { return "输入关键词 回车逐句输出" }
-        guard let hit = thoughtMatches.first else { return "未命中 回车原样发送" }
-        let lines = hit.content
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard !lines.isEmpty else { return "未命中 回车原样发送" }
-        let idx = min(thoughtLines[hit.id] ?? 0, lines.count - 1)
+        if !thoughtQueries.isEmpty {
+            if let hit = thoughtMatches.first {
+                return thoughtPreviewFor(hit)
+            }
+            return "未命中 回车原样发送"
+        }
+        if let id = activeThoughtKey, let it = thoughts.first(where: { $0.id == id }) {
+            return thoughtPreviewFor(it)
+        }
+        return "输入关键词 回车逐句输出"
+    }
+
+    private func thoughtPreviewFor(_ hit: ThoughtItem) -> String {
+        let lines = thoughtContentLines(hit.content)
+        guard !lines.isEmpty else { return "这个关键词还没有内容" }
+        let idx = thoughtLines[hit.id] ?? 0
+        if idx >= lines.count { return "本轮已出完 重新输入关键词从头再来" }
         return "下一句：" + lines[idx]
     }
 
