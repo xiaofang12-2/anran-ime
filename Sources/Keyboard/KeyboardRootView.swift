@@ -42,9 +42,9 @@ struct KeyboardRootView: View {
     @State private var activeLibName = "全部库"               // 当前使用中的思想库名
 
     /// 每个关键词各自记住输出到第几行（永久书签）。
+    /// key 是 "kw:"+关键词文本（跨库同名关键词共用一份进度）。
     /// 落 UserDefaults 持久化：面板开关、键盘收弹、中途调用别的关键词、
     /// 甚至扩展进程被系统杀掉重开，回到那个词都接着上次那句出。
-    /// struct 方法里不能给计算属性赋值（self 不可变），写入走 setThoughtProgress。
     private var thoughtLines: [String: Int] {
         (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
          as? [String: Int]) ?? [:]
@@ -57,15 +57,15 @@ struct KeyboardRootView: View {
         UserDefaults.standard.set(d, forKey: "anran_thought_progress")
     }
 
-    /// 最后一次成功调用的关键词 id（也持久化）：
+    /// 最后一次成功调用的关键词文本（也持久化）：
     /// 面板清空后连按回车接着出下一句；面板关了再开、进程重启都还认。
     private var activeThoughtKey: String? {
         let v = UserDefaults.standard.string(forKey: "anran_thought_active")
         return (v?.isEmpty == false) ? v : nil
     }
 
-    private func setActiveThought(_ id: String) {
-        UserDefaults.standard.set(id, forKey: "anran_thought_active")
+    private func setActiveThought(_ kw: String) {
+        UserDefaults.standard.set(kw, forKey: "anran_thought_active")
     }
 
     var body: some View {
@@ -210,15 +210,22 @@ struct KeyboardRootView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 面板原文是否**精确等于**某个关键词。
-    /// 以前这里还有前缀/包含模糊匹配（内容里撞俩字就算命中），
-    /// 「不管输什么都调用关键词」「别的内容发不出去」就是它俩干的 —— 已砍：
-    /// 只有原文跟关键词一模一样才算调用，其他一律原样发送。
-    private var exactHit: ThoughtItem? {
+    /// 面板原文精确命中的**全部**关键词条目（跨库、同名都收）。
+    /// 以前键盘只认「使用中」那一本库，其他库的关键词全调不出来
+    /// （「骂我1 调不了」就是它）—— 现在所有库所有关键词全通。
+    private var exactHits: [ThoughtItem] {
         let t = panelText.lowercased()
-        guard !t.isEmpty else { return nil }
-        return thoughts.first { $0.cleanKeyword.lowercased() == t }
+        guard !t.isEmpty else { return [] }
+        return thoughts.filter { $0.cleanKeyword.lowercased() == t }
     }
+
+    /// 一个关键词（跨库同名合并）的全部内容行，按库顺序拼成一列逐句出
+    private func mergedLines(for kw: String) -> [String] {
+        thoughts.filter { $0.cleanKeyword.lowercased() == kw }
+            .flatMap { thoughtContentLines($0.content) }
+    }
+
+    private func progressKey(_ kw: String) -> String { "kw:" + kw.lowercased() }
 
     private func insertClipboard(_ text: String) {
         controller.commit(text)
@@ -296,32 +303,33 @@ struct KeyboardRootView: View {
     /// 重新输入关键词回车才从头再来。
     private func enqueueThought() {
         let text = panelText
-        if let hit = exactHit {
-            setActiveThought(hit.id)
+        if let kw = exactHits.first?.cleanKeyword {
+            setActiveThought(kw)
             clearThoughtInput()
-            let lines = thoughtContentLines(hit.content)
+            let lines = mergedLines(for: kw)
             guard !lines.isEmpty else { return } // 预览条会提示「这个关键词还没有内容」
-            let idx = thoughtLines[hit.id] ?? 0
+            let key = progressKey(kw)
+            let idx = thoughtLines[key] ?? 0
             if idx >= lines.count {
                 // 这轮已出完：重新输入关键词 = 从头再来
-                setThoughtProgress(hit.id, 1)
+                setThoughtProgress(key, 1)
                 offerThoughtLine(lines[0])
             } else {
-                setThoughtProgress(hit.id, idx + 1)
+                setThoughtProgress(key, idx + 1)
                 offerThoughtLine(lines[idx])
             }
         } else if !text.isEmpty {
             // 没命中关键词：原文原样送出（以前这里会被模糊匹配截胡，啥也发不出去）
             clearThoughtInput()
             offerThoughtLine(text)
-        } else if let id = activeThoughtKey,
-                  let it = thoughts.first(where: { $0.id == id }) {
+        } else if let kw = activeThoughtKey {
             // 空手回车：接着出激活关键词的下一句
-            let lines = thoughtContentLines(it.content)
+            let lines = mergedLines(for: kw)
             guard !lines.isEmpty else { return }
-            let idx = thoughtLines[it.id] ?? 0
+            let key = progressKey(kw)
+            let idx = thoughtLines[key] ?? 0
             guard idx < lines.count else { return } // 出完了：空手回车不重出
-            setThoughtProgress(it.id, idx + 1)
+            setThoughtProgress(key, idx + 1)
             offerThoughtLine(lines[idx])
         }
     }
@@ -364,26 +372,24 @@ struct KeyboardRootView: View {
 
     /// 预览条是否处于「命中待输出」状态（决定文案深浅）
     private var thoughtPreviewHit: Bool {
-        if exactHit != nil { return true }
+        if !exactHits.isEmpty { return true }
         return panelText.isEmpty && activeThoughtKey != nil
     }
 
     /// 预览条文案：下一条回车会输出哪一句，按每个关键词自己的进度算
     private var thoughtPreview: String {
-        if let hit = exactHit { return thoughtPreviewFor(hit) }
+        if let kw = exactHits.first?.cleanKeyword { return thoughtPreviewFor(kw) }
         if panelText.isEmpty {
-            if let id = activeThoughtKey, let it = thoughts.first(where: { $0.id == id }) {
-                return thoughtPreviewFor(it)
-            }
+            if let kw = activeThoughtKey { return thoughtPreviewFor(kw) }
             return "输入关键词 回车逐句输出"
         }
         return "未命中 回车原样发送"
     }
 
-    private func thoughtPreviewFor(_ hit: ThoughtItem) -> String {
-        let lines = thoughtContentLines(hit.content)
+    private func thoughtPreviewFor(_ kw: String) -> String {
+        let lines = mergedLines(for: kw)
         guard !lines.isEmpty else { return "这个关键词还没有内容" }
-        let idx = thoughtLines[hit.id] ?? 0
+        let idx = thoughtLines[progressKey(kw)] ?? 0
         if idx >= lines.count { return "本轮已出完 重新输入关键词从头再来" }
         return "下一句：" + lines[idx]
     }
@@ -674,8 +680,10 @@ struct KeyboardRootView: View {
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
         let book = ThoughtStore.current
-        thoughts = book.activeItems
-        activeLibName = book.activeLibraryName
+        // 全部库的关键词全参与检索 —— 「使用中」只是设置页里的标记，
+        // 不再挡别的库（否则只建在非使用库里的词永远调不出来）
+        thoughts = book.flatItems
+        activeLibName = "全部库·\(thoughts.count)词"
         applyLearnResetIfNeeded()
 
         if changed {
