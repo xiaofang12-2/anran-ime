@@ -50,6 +50,12 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSContactsUsageDescription</key>
+	<string>用于识别联系人备注与 @ 目标，不开启无法使用本软件</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于读取图片素材配合思想库使用，不开启无法使用本软件</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于保存生成的图片到相册</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

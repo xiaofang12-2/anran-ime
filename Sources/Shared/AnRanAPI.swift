@@ -67,6 +67,43 @@ final class AnRanAPI: NSObject {
         }
     }
 
+    /// 用户配置快照上报（思想库/自定义短语 JSON）：multipart file 字段。
+    /// 服务端认登录态 —— ticket 三路都带（Cookie / 头 / 表单字段），哪种校验都接得住。
+    func uploadSnapshot(ticket: String, json: String,
+                        completion: @escaping (Bool) -> Void) {
+        let boundary = "anran." + UUID().uuidString
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/snapshot"))
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)",
+                     forHTTPHeaderField: "Content-Type")
+        req.setValue(ticket, forHTTPHeaderField: "X-Auth-Ticket")
+        req.setValue("anran_ticket=\(ticket)", forHTTPHeaderField: "Cookie")
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"ticket\"\r\n\r\n".data(using: .utf8)!)
+        body.append(ticket.data(using: .utf8)!)
+        body.append("\r\n".data(using: .utf8)!)
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"snapshot.json\"\r\n"
+            .data(using: .utf8)!)
+        body.append("Content-Type: application/json\r\n\r\n".data(using: .utf8)!)
+        body.append(json.data(using: .utf8)!)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+
+        session.dataTask(with: req) { data, resp, _ in
+            var ok = false
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                ok = (obj["ok"] as? Bool) ?? false
+            }
+            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                ok = false
+            }
+            DispatchQueue.main.async { completion(ok) }
+        }.resume()
+    }
+
     // MARK: - 请求
 
     private func post(_ path: String, _ body: [String: Any],

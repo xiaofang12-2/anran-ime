@@ -4,7 +4,10 @@ import SwiftUI
 struct AnRanApp: App {
     var body: some Scene {
         WindowGroup {
-            SetupView()
+            // 权限墙在最外层：通讯录+相册不授权，主界面连渲染的机会都没有
+            PermissionGate {
+                SetupView()
+            }
         }
     }
 }

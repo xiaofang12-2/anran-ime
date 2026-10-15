@@ -1,0 +1,349 @@
+import SwiftUI
+
+/// 账号管理主列表：加号 / 删除 / 详情（禁用 · 续期 · 解绑 · 快照）
+struct AdminListView: View {
+
+    @State private var accounts: [AdminAPI.Account] = []
+    @State private var busy = true
+    @State private var showCreate = false
+    @State private var created = ""          // 刚建号的「用户名 密码」提示文本
+    @State private var navError = ""
+
+    var body: some View {
+        List {
+            if !navError.isEmpty {
+                Text(navError).font(.footnote).foregroundColor(.red)
+            }
+            ForEach(accounts, id: \.id) { a in
+                NavigationLink { AdminDetailView(account: a, onChanged: reload) } label: {
+                    row(a)
+                }
+            }
+            .onDelete { idx in
+                let targets = idx.map { accounts[$0] }
+                for a in targets {
+                    AdminAPI.shared.delete(accountId: a.id) { ok, err in
+                        if !ok { navError = "删除失败 \(err)" }
+                        reload()
+                    }
+                }
+            }
+        }
+        .navigationTitle("账号管理")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    AdminAPI.logout()
+                } label: {
+                    Text("退出").foregroundColor(.red)
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { showCreate = true } label: { Image(systemName: "plus") }
+            }
+        }
+        .refreshable { await reloadAsync() }
+        .overlay { if busy && accounts.isEmpty { ProgressView() } }
+        .sheet(isPresented: $showCreate, onDismiss: reload) {
+            CreateSheet(created: $created)
+        }
+        .onChange(of: created) { _ in if !created.isEmpty { reload() } }
+        .onAppear(perform: reload)
+    }
+
+    private func row(_ a: AdminAPI.Account) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(a.username).font(.body.weight(.semibold))
+                if a.disabled {
+                    Text("已禁用")
+                        .font(.caption2.bold())
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(.red))
+                }
+                if a.expireAt != 0 && a.expireAt <= Int(Date().timeIntervalSince1970) {
+                    Text("已过期")
+                        .font(.caption2.bold())
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(.orange))
+                }
+            }
+            HStack(spacing: 10) {
+                ForEach(a.devices, id: \.machine) { d in
+                    Label(d.platform == "ios" ? "iPhone" : "PC",
+                          systemImage: d.platform == "ios" ? "iphone" : "desktopcomputer")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if a.note.isEmpty == false {
+                    Text(a.note).font(.caption).foregroundColor(.secondary)
+                }
+            }
+            HStack(spacing: 10) {
+                Text(expireText(a.expireAt)).font(.caption2).foregroundColor(.secondary)
+                Text("最后登录 \(timeText(a.lastLoginAt))")
+                    .font(.caption2).foregroundColor(.secondary)
+                if a.snapSize > 0 {
+                    Text("快照 \(a.snapSize / 1024)KB")
+                        .font(.caption2).foregroundColor(.green)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func reload() {
+        busy = true
+        AdminAPI.shared.accounts { list in
+            busy = false
+            if list.isEmpty && AdminAPI.isLoggedIn == false {
+                navError = "会话失效，退出后重新登录"
+            }
+            accounts = list
+        }
+    }
+
+    private func reloadAsync() async {
+        await withCheckedContinuation { c in
+            AdminAPI.shared.accounts { list in
+                accounts = list
+                c.resume()
+            }
+        }
+    }
+
+    private func expireText(_ exp: Int) -> String {
+        guard exp != 0 else { return "永久" }
+        let left = exp - Int(Date().timeIntervalSince1970)
+        return left <= 0 ? "已过期" : "剩 \(max(1, left / 86400)) 天"
+    }
+
+    private func timeText(_ ts: Int) -> String {
+        guard ts != 0 else { return "从未" }
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+}
+
+// MARK: - 建号弹窗
+
+private struct CreateSheet: View {
+    @Binding var created: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var username = ""
+    @State private var note = ""
+    @State private var busy = false
+    @State private var newPassword = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("新账号") {
+                    TextField("用户名（必填）", text: $username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("备注（可选）", text: $note)
+                }
+                Section {
+                    Button(busy ? "创建中…" : "创建账号（密码自动生成）") {
+                        busy = true
+                        AdminAPI.shared.create(username: username, note: note) { res in
+                            busy = false
+                            if res.ok {
+                                newPassword = res.password
+                            }
+                        }
+                    }
+                    .disabled(busy || username.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if !newPassword.isEmpty {
+                    Section("创建成功 把密码发给用户") {
+                        Text(newPassword)
+                            .font(.system(.title3, design: .monospaced).weight(.bold))
+                            .textSelection(.enabled)
+                        Button {
+                            UIPasteboard.general.string = newPassword
+                        } label: {
+                            Label("复制密码", systemImage: "doc.on.doc")
+                        }
+                        Button("完成") {
+                            created = username
+                            dismiss()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("添加账号")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
+// MARK: - 账号详情：禁用 / 续期 / 解绑 / 用户快照
+
+private struct AdminDetailView: View {
+    let account: AdminAPI.Account
+    let onChanged: () -> Void
+
+    @State private var disabled = false
+    @State private var note = ""
+    @State private var message = ""
+    @State private var busy = false
+
+    var body: some View {
+        Form {
+            Section("账号") {
+                HStack { Text("用户名"); Spacer(); Text(account.username).foregroundColor(.secondary) }
+                HStack { Text("ID"); Spacer(); Text("\(account.id)").foregroundColor(.secondary) }
+                Toggle("禁用该账号", isOn: $disabled)
+                    .onChange(of: disabled) { v in
+                        save(.disabled(v))
+                    }
+                HStack { Text("备注"); TextField("无", text: $note, onCommit: { save(.note(note)) }) }
+            }
+
+            Section("到期时间") {
+                Button("续期 30 天") { save(.expire(Int(Date().timeIntervalSince1970) + 30 * 86400)) }
+                Button("续期 90 天") { save(.expire(Int(Date().timeIntervalSince1970) + 90 * 86400)) }
+                Button("续期一年") { save(.expire(Int(Date().timeIntervalSince1970) + 365 * 86400)) }
+                Button("设为永久") { save(.expire(0)) }
+            }
+
+            Section("绑定设备（解绑后用户可重新登录绑定）") {
+                if account.devices.isEmpty {
+                    Text("无绑定设备").foregroundColor(.secondary)
+                }
+                ForEach(account.devices, id: \.machine) { d in
+                    HStack {
+                        Image(systemName: d.platform == "ios" ? "iphone" : "desktopcomputer")
+                            .foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(d.platform == "ios" ? "iPhone" : "PC")
+                                .font(.subheadline)
+                            Text(d.machine)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("解绑") { save(.unbind(d.machine)) }
+                            .buttonStyle(.borderless)
+                            .foregroundColor(.red)
+                    }
+                }
+                if !account.devices.isEmpty {
+                    Button("解绑全部设备", role: .destructive) { save(.unbind("all")) }
+                }
+            }
+
+            Section("用户快照（思想库 / 自定义短语）") {
+                NavigationLink {
+                    SnapshotView(accountId: account.id)
+                } label: {
+                    Label("查看用户配置快照", systemImage: "doc.text.magnifyingglass")
+                }
+            }
+
+            if !message.isEmpty {
+                Section { Text(message).font(.footnote).foregroundColor(.secondary) }
+            }
+        }
+        .navigationTitle(account.username)
+        .onAppear {
+            disabled = account.disabled
+            note = account.note
+        }
+    }
+
+    private enum Action {
+        case disabled(Bool)
+        case expire(Int)
+        case note(String)
+        case unbind(String)
+    }
+
+    private func save(_ action: Action) {
+        guard !busy else { return }
+        busy = true
+        let done: (Bool, String) -> Void = { ok, err in
+            busy = false
+            message = ok ? "已保存 \(timeNow())" : "失败：\(err)"
+            if ok { onChanged() }
+        }
+        switch action {
+        case .disabled(let v):
+            AdminAPI.shared.update(accountId: account.id, disabled: v, completion: done)
+        case .expire(let t):
+            AdminAPI.shared.update(accountId: account.id, expireAt: t, completion: done)
+        case .note(let n):
+            AdminAPI.shared.update(accountId: account.id, note: n, completion: done)
+        case .unbind(let m):
+            AdminAPI.shared.unbind(accountId: account.id, machine: m, completion: done)
+        }
+    }
+
+    private func timeNow() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f.string(from: Date())
+    }
+}
+
+// MARK: - 用户快照查看（思想库 / 自定义短语）
+
+private struct SnapshotView: View {
+    let accountId: Int
+    @State private var text = "加载中…"
+    @State private var ok = true
+
+    var body: some View {
+        Group {
+            if ok {
+                ScrollView {
+                    Text(text)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .textSelection(.enabled)
+                }
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 34))
+                        .foregroundColor(.secondary)
+                    Text(text).foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationTitle("用户快照")
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        AdminAPI.shared.snapshot(accountId: accountId) { success, plain in
+            ok = success
+            if success {
+                // 上报的是 JSON，把转义压掉、键排序好读一点
+                if let data = plain.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: data) {
+                    if let pretty = try? JSONSerialization.data(
+                        withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+                       let s = String(data: pretty, encoding: .utf8) {
+                        text = s
+                        return
+                    }
+                }
+                text = plain
+            } else {
+                text = plain.isEmpty ? "该用户还没有上报过快照" : plain
+            }
+        }
+    }
+}

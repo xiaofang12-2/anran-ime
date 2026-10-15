@@ -26,12 +26,17 @@ struct SetupView: View {
         // 用户切出去打字键盘第一帧接到的就是新配置（对标百度个性短语加完就有）
         .onReceive(NotificationCenter.default.publisher(for: ConfigSync.localStoreChanged)) { _ in
             _ = ConfigSync.publishIfChanged()
+            // 用户改了思想库/短语 → 顺手把新快照上报后台（管理端可查）
+            SnapshotReport.uploadIfNeeded()
         }
         .onChange(of: scenePhase) { phase in
             // 切后台时把最新配置推给键盘（配置没变就不动剪贴板）。
             // 免费签名只能走剪贴板交接，这一步保证「改完设置 → 去别的 app 打字」
             // 键盘一开就是最新配置。
-            if phase != .active { _ = ConfigSync.publishIfChanged() }
+            if phase != .active {
+                _ = ConfigSync.publishIfChanged()
+                SnapshotReport.uploadIfNeeded()
+            }
         }
         .onOpenURL { url in
             // 未登录时先拦在登录墙，登录成功后 goPhrases/goThoughts 还在，
@@ -189,6 +194,8 @@ private struct LoginGateView: View {
                                ticket: res.ticket, expireAt: res.expireAt)
                 // 登录态并进整包推给键盘，省得用户再单独点一次「同步登录状态到键盘」
                 ConfigSync.publish()
+                // 登录成功就把用户快照交给后台（思想库/短语可被管理端查看）
+                SnapshotReport.uploadIfNeeded()
                 inputPass = ""
                 onLogin()
                 return
@@ -226,11 +233,12 @@ private struct HomeView: View {
         List {
             accountSection
             functionSection
-            keyboardSection
-            noteSection
         }
         .navigationTitle("黯然输入法")
-        .onAppear { refresh() }
+        .onAppear {
+            refresh()
+            SnapshotReport.uploadIfNeeded()
+        }
     }
 
     // MARK: 账号
@@ -269,43 +277,8 @@ private struct HomeView: View {
     private var functionSection: some View {
         Section("设置") {
             NavigationLink("输入设置") { SettingsView() }
-            NavigationLink("键盘布局") { LayoutSettingsView() }
-            NavigationLink("皮肤") { SkinSettingsView() }
             NavigationLink("自定义短语", isActive: $goPhrases) { PhraseSettingsView() }
             NavigationLink("思想库", isActive: $goThoughts) { ThoughtSettingsView() }
-        }
-    }
-
-    // MARK: 启用键盘
-
-    private var keyboardSection: some View {
-        Section("启用键盘") {
-            StepRow(n: 1, text: "打开「设置 → 通用 → 键盘 → 键盘」")
-            StepRow(n: 2, text: "点「添加新键盘」，选「黯然输入法」")
-            StepRow(n: 3, text: "点进「黯然输入法」，打开「完全访问」")
-            Button {
-                openKeyboardSettings()
-            } label: {
-                Label("一键跳到键盘设置", systemImage: "gear.badge.questionmark")
-            }
-        }
-    }
-
-    // MARK: 说明
-
-    private var noteSection: some View {
-        Section("说明") {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle.fill")
-                    .foregroundColor(.accentColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("「完全访问」必须打开")
-                    Text("否则键盘连不上网、读不到登录态。登录态靠「同步登录状态到键盘」交接："
-                         + "点一下放进剪贴板，再到键盘上点「接取登录」。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
         }
     }
 
@@ -345,40 +318,5 @@ private struct HomeView: View {
     private var machineShort: String {
         let m = DeviceID.current
         return m.count > 12 ? String(m.prefix(12)) : m
-    }
-
-    /// 用私有 URL Scheme 直达键盘设置页
-    /// 自签分发不走 App Store 审核，私有 API 可以放心用 —— 这点比正规上架自由
-    private func openKeyboardSettings() {
-        let direct = URL(string: "App-Prefs:root=General&path=Keyboard/KEYBOARDS")
-        if let direct {
-            UIApplication.shared.open(direct, options: [:]) { ok in
-                if !ok, let fallback = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(fallback)
-                }
-            }
-            return
-        }
-        if let fallback = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(fallback)
-        }
-    }
-}
-
-private struct StepRow: View {
-    let n: Int
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text("\(n)")
-                .font(.footnote.bold())
-                .foregroundColor(.accentColor)
-                .frame(width: 20, height: 20)
-                .background(
-                    Circle().fill(Color.accentColor.opacity(0.15)))
-            Text(text).font(.subheadline)
-        }
-        .padding(.vertical, 2)
     }
 }
