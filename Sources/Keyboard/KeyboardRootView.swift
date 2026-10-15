@@ -44,30 +44,28 @@ struct KeyboardRootView: View {
     /// 每个关键词各自记住输出到第几行（永久书签）。
     /// 落 UserDefaults 持久化：面板开关、键盘收弹、中途调用别的关键词、
     /// 甚至扩展进程被系统杀掉重开，回到那个词都接着上次那句出。
+    /// struct 方法里不能给计算属性赋值（self 不可变），写入走 setThoughtProgress。
     private var thoughtLines: [String: Int] {
-        get {
-            (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
-             as? [String: Int]) ?? [:]
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "anran_thought_progress")
-        }
+        (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
+         as? [String: Int]) ?? [:]
+    }
+
+    private func setThoughtProgress(_ id: String, _ value: Int) {
+        var d = (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
+                 as? [String: Int]) ?? [:]
+        d[id] = value
+        UserDefaults.standard.set(d, forKey: "anran_thought_progress")
     }
 
     /// 最后一次成功调用的关键词 id（也持久化）：
     /// 面板清空后连按回车接着出下一句；面板关了再开、进程重启都还认。
     private var activeThoughtKey: String? {
-        get {
-            let v = UserDefaults.standard.string(forKey: "anran_thought_active")
-            return (v?.isEmpty == false) ? v : nil
-        }
-        set {
-            if let v = newValue {
-                UserDefaults.standard.set(v, forKey: "anran_thought_active")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "anran_thought_active")
-            }
-        }
+        let v = UserDefaults.standard.string(forKey: "anran_thought_active")
+        return (v?.isEmpty == false) ? v : nil
+    }
+
+    private func setActiveThought(_ id: String) {
+        UserDefaults.standard.set(id, forKey: "anran_thought_active")
     }
 
     var body: some View {
@@ -351,17 +349,17 @@ struct KeyboardRootView: View {
         }
 
         if let hit {
-            activeThoughtKey = hit.id
+            setActiveThought(hit.id)
             let lines = thoughtContentLines(hit.content)
             guard !lines.isEmpty else { return }
             let idx = thoughtLines[hit.id] ?? 0
             if idx >= lines.count {
                 // 这轮已出完：只有「重新输入关键词」才从头再调用；空手连按回车不重出
                 guard viaQuery else { return }
-                thoughtLines[hit.id] = 1
+                setThoughtProgress(hit.id, 1)
                 offerThoughtLine(lines[0])
             } else {
-                thoughtLines[hit.id] = idx + 1
+                setThoughtProgress(hit.id, idx + 1)
                 offerThoughtLine(lines[idx])
             }
             // 发送即清：关键词不留在面板里（连按回车走 activeThoughtKey 继续）
