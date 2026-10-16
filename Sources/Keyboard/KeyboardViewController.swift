@@ -119,12 +119,27 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshAuth()
+        // 会话中每 60 秒再心跳一次：后台禁用账号后，用户不用收起键盘
+        // 也会在一分钟内被踢下线（服务端对禁用账号的心跳直接回 403 disabled）
+        if hbTimer == nil {
+            hbTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                self?.refreshAuth()
+            }
+        }
         // 键盘每次弹出都让界面重拉一次主程序下发的配置。
         // 配置（布局/自定义短语/设置/思想库）走剪贴板整包交接，而 SwiftUI 的
         // onAppear 在扩展进程存活期间只会触发一次 —— 不补这一下，主程序改完
         // 短语再回到键盘不会更新，表现为「设置了自定义等于没设置」。
         NotificationCenter.default.post(name: .anranKeyboardWillAppear, object: nil)
     }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        hbTimer?.invalidate()
+        hbTimer = nil
+    }
+
+    private var hbTimer: Timer?
 
     // MARK: - 授权
 

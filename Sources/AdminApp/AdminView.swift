@@ -43,7 +43,20 @@ struct AdminListView: View {
             }
         }
         .refreshable { await reloadAsync() }
-        .overlay { if busy && accounts.isEmpty { ProgressView() } }
+        .overlay {
+            if busy && accounts.isEmpty {
+                ProgressView()
+            } else if !busy && accounts.isEmpty && navError.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 34))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text("还没有账号 点右上角 + 创建")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
         .sheet(isPresented: $showCreate, onDismiss: reload) {
             CreateSheet(created: $created)
         }
@@ -135,8 +148,13 @@ private struct CreateSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var username = ""
     @State private var note = ""
+    @State private var password = ""     // 留空 = 服务端自动生成
+    @State private var days = 30         // 有效期天数，0 = 永久
     @State private var busy = false
+    @State private var errorMessage = ""
     @State private var newPassword = ""
+
+    private let dayOptions = [7, 30, 90, 365]
 
     var body: some View {
         NavigationView {
@@ -147,17 +165,39 @@ private struct CreateSheet: View {
                         .autocorrectionDisabled()
                     TextField("备注（可选）", text: $note)
                 }
-                Section {
-                    Button(busy ? "创建中…" : "创建账号（密码自动生成）") {
-                        busy = true
-                        AdminAPI.shared.create(username: username, note: note) { res in
-                            busy = false
-                            if res.ok {
-                                newPassword = res.password
+                Section("有效期") {
+                    Picker("能用多久", selection: $days) {
+                        ForEach(dayOptions, id: \.self) { Text("\($0) 天").tag($0) }
+                        Text("永久").tag(0)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                Section("密码") {
+                    HStack {
+                        TextField("留空自动生成", text: $password)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        if !password.isEmpty {
+                            Button { password = "" } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary.opacity(0.6))
                             }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .disabled(busy || username.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if !password.isEmpty && password.count < 6 {
+                        Text("密码太短 至少 6 位").font(.footnote).foregroundColor(.orange)
+                    }
+                }
+                Section {
+                    Button(busy ? "创建中…" : "创建账号") {
+                        create()
+                    }
+                    .disabled(busy || username.trimmingCharacters(in: .whitespaces).isEmpty
+                              || (!password.isEmpty && password.count < 6))
+                    if !errorMessage.isEmpty {
+                        Text(errorMessage).font(.footnote).foregroundColor(.red)
+                    }
                 }
                 if !newPassword.isEmpty {
                     Section("创建成功 把密码发给用户") {
@@ -184,6 +224,34 @@ private struct CreateSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func create() {
+        busy = true
+        errorMessage = ""
+        let u = username.trimmingCharacters(in: .whitespaces)
+        AdminAPI.shared.create(username: u, note: note, password: password, days: days) { res in
+            if !res.ok {
+                busy = false
+                errorMessage = res.error.isEmpty ? "创建失败" : "失败：\(res.error)"
+                return
+            }
+            // 永久 = 建完把到期时间改成 0（服务端建号接口不认 days=0）
+            if days == 0 {
+                AdminAPI.shared.update(accountId: res.id, expireAt: 0) { ok, err in
+                    busy = false
+                    if ok {
+                        newPassword = res.password
+                    } else {
+                        errorMessage = "已建号 但设永久失败：\(err)"
+                        newPassword = res.password
+                    }
+                }
+            } else {
+                busy = false
+                newPassword = res.password
+            }
+        }
     }
 }
 

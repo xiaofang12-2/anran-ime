@@ -64,9 +64,14 @@ final class AdminAPI: NSObject {
     }
 
     func accounts(completion: @escaping ([Account]) -> Void) {
-        post("/admin/api/accounts", [:]) { obj in
+        // 服务端这个接口只认 GET，POST 会 405（列表空白的根因）
+        var req = URLRequest(url: baseURL.appendingPathComponent("/admin/api/accounts"))
+        req.httpMethod = "GET"
+        session.dataTask(with: req) { data, resp, _ in
             var list: [Account] = []
-            if let arr = obj["accounts"] as? [[String: Any]] {
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let arr = obj["accounts"] as? [[String: Any]] {
                 for a in arr {
                     var devs: [Device] = []
                     if let ds = a["devices"] as? [[String: Any]] {
@@ -88,15 +93,17 @@ final class AdminAPI: NSObject {
                         devices: devs))
                 }
             }
-            completion(list)
-        }
+            DispatchQueue.main.async { completion(list) }
+        }.resume()
     }
 
-    /// 建号：服务端自动生成密码并返回
-    func create(username: String, note: String,
+    /// 建号：密码留空则服务端自动生成；days 为有效期天数（服务端不接受 0，
+    /// 永久由调用方建完再 update expire_at=0）
+    func create(username: String, note: String, password: String, days: Int,
                 completion: @escaping (CreateResult) -> Void) {
-        var body: [String: Any] = ["username": username]
+        var body: [String: Any] = ["username": username, "days": days]
         if !note.isEmpty { body["note"] = note }
+        if !password.isEmpty { body["password"] = password }
         post("/admin/api/account/create", body) { obj in
             completion(CreateResult(
                 ok: (obj["ok"] as? Bool) ?? false,
