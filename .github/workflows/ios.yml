@@ -70,7 +70,7 @@ jobs:
           set -o pipefail
           xcodebuild \
             -project AnRanIME.xcodeproj \
-            -target AnRanAdmin \
+            -scheme AnRanAdmin \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \

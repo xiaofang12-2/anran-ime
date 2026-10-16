@@ -343,3 +343,11 @@ schemes:
       config: Debug
     archive:
       config: Release
+  AnRanAdmin:
+    build:
+      targets:
+        AnRanAdmin: all
+    run:
+      config: Debug
+    archive:
+      config: Release
