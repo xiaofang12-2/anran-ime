@@ -99,6 +99,13 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranKeyboardWillAppear)) { _ in
             check()
         }
+        // 后台把账号禁用/解绑后，心跳回调广播踢人 —— 立刻收掉键盘切回登录墙
+        .onReceive(NotificationCenter.default.publisher(for: .anranAuthKicked)) { _ in
+            authorized = false
+            composing = ""
+            candidates = []
+            panel = nil
+        }
         // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
         .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in

@@ -36,7 +36,14 @@ struct SetupView: View {
             if phase != .active {
                 _ = ConfigSync.publishIfChanged()
                 SnapshotReport.uploadIfNeeded()
+            } else {
+                // 回前台立刻验一次票：后台禁用/解绑的账号一回到主程序就被踢回登录墙
+                kickCheck()
             }
+        }
+        // 主程序待着不动也要持续验票：后台一旦禁用，最迟一分钟主界面整体退回登录墙
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            kickCheck()
         }
         .onOpenURL { url in
             // 未登录时先拦在登录墙，登录成功后 goPhrases/goThoughts 还在，
@@ -45,6 +52,20 @@ struct SetupView: View {
             case "phrases": goPhrases = true
             case "thoughts": goThoughts = true
             default: break
+            }
+        }
+    }
+
+    /// 服务端明确说禁用/解绑/无此号/设备不匹配 → 本地登录态作废，整体退回登录墙。
+    /// 网络不通不算数（离线宽限，跟键盘端同一套口径）。
+    private func kickCheck() {
+        guard logged, let s = AuthStore.current, !s.ticket.isEmpty else { return }
+        AnRanAPI.shared.heartbeat(ticket: s.ticket, machine: s.machine) { res in
+            if ["disabled", "unbound", "no_account", "machine_mismatch"].contains(res.error) {
+                AuthStore.clear()
+                logged = false
+            } else if res.ok {
+                AuthStore.save(username: s.username, ticket: res.ticket, expireAt: res.expireAt)
             }
         }
     }

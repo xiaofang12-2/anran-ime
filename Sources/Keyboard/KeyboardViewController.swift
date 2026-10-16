@@ -119,10 +119,10 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshAuth()
-        // 会话中每 60 秒再心跳一次：后台禁用账号后，用户不用收起键盘
-        // 也会在一分钟内被踢下线（服务端对禁用账号的心跳直接回 403 disabled）
+        // 会话中每 30 秒再心跳一次：后台禁用账号后，用户不用收起键盘
+        // 也会在半分钟内被踢下线（服务端对禁用账号的心跳直接回 403 disabled）
         if hbTimer == nil {
-            hbTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            hbTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
                 self?.refreshAuth()
             }
         }
@@ -154,6 +154,8 @@ final class KeyboardViewController: UIInputViewController {
             } else if ["disabled", "unbound", "no_account",
                        "machine_mismatch"].contains(res.error) {
                 AuthStore.clear()
+                // 界面层立刻收到广播切回登录墙，不等下一次 pull
+                NotificationCenter.default.post(name: .anranAuthKicked, object: nil)
             }
         }
     }
@@ -183,6 +185,9 @@ extension KeyboardViewController: UIInputViewAudioFeedback {
 extension Notification.Name {
     /// 键盘每次弹出时广播一次，界面据此重新拉取主程序下发的配置
     static let anranKeyboardWillAppear = Notification.Name("anran.keyboard.willAppear")
+
+    /// 服务端踢人（禁用/解绑）后广播一次，键盘界面立刻切回登录墙
+    static let anranAuthKicked = Notification.Name("anran.auth.kicked")
 
     /// librime 后台部署收尾时广播一次（成功失败都发），界面据此刷新引擎诊断串
     static let anranRimeReady = Notification.Name("anran.rime.ready")
