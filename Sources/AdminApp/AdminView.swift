@@ -282,17 +282,13 @@ private struct AdminDetailView: View {
                     TextField("未填写", text: $phone)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
-                        .foregroundColor(phone.isEmpty ? .secondary : .primary)
-                        .onCommit { if phone != account.phone { save(.phone(phone)) } }
+                        .foregroundColor(phoneColor)
+                        .onCommit(savePhone)
                 }
                 if phoneAt > 0 {
-                    HStack {
-                        Text("")
-                        Spacer()
-                        Text("填于 \(phoneDate)  点号码可直接改")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                    Text("填于 \(phoneDate)  点号码可直接改")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
                 Toggle("禁用该账号", isOn: $disabled)
                     .onChange(of: disabled) { v in
@@ -371,6 +367,14 @@ private struct AdminDetailView: View {
                 phoneAt = (obj["phone_at"] as? NSNumber)?.intValue ?? 0
             }
         }
+    }
+
+    private var phoneColor: Color {
+        phone.isEmpty ? Color.secondary : Color.primary
+    }
+
+    private func savePhone() {
+        if phone != account.phone { save(.phone(phone)) }
     }
 
     private var phoneDate: String {
