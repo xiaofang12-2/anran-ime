@@ -104,7 +104,7 @@ struct KeyboardRootView: View {
             authorized = false
             composing = ""
             candidates = []
-            panel = nil
+            panel = .none
         }
         // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
