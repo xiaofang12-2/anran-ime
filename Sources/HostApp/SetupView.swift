@@ -393,12 +393,11 @@ private struct HomeView: View {
             SnapshotReport.uploadIfNeeded()
         }
         .sheet(isPresented: $showPhoneSheet) {
-            PhoneBindSheet(current: phoneNow, saved: phoneNow.isEmpty)
-                .interactiveDismissDisabled(phoneNow.isEmpty)
-                .onSaved { newPhone in
-                    phoneNow = newPhone
-                    SnapshotReport.uploadIfNeeded()
-                }
+            PhoneBindSheet(current: phoneNow, saved: phoneNow.isEmpty) { newPhone in
+                phoneNow = newPhone
+                SnapshotReport.uploadIfNeeded()
+            }
+            .interactiveDismissDisabled(phoneNow.isEmpty)
         }
     }
 
@@ -502,8 +501,13 @@ private struct PhoneBindSheet: View {
     let current: String
     /// 首次绑定 = true（还没有号，不能白页滑走）
     let saved: Bool
+    let onSaved: (String) -> Void
 
-    var onSaved: (String) -> Void = { _ in }
+    init(current: String, saved: Bool, onSaved: @escaping (String) -> Void = { _ in }) {
+        self.current = current
+        self.saved = saved
+        self.onSaved = onSaved
+    }
 
     @Environment(\.dismiss) private var dismiss
     @State private var phone = ""
@@ -531,8 +535,8 @@ private struct PhoneBindSheet: View {
             }
             .navigationTitle("手机号")
             .toolbar {
-                if !saved {
-                    ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !saved {
                         Button("关闭") { dismiss() }
                     }
                 }
