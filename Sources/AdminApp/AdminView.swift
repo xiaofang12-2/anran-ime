@@ -267,6 +267,7 @@ private struct AdminDetailView: View {
     @State private var disabled = false
     @State private var note = ""
     @State private var phone = ""
+    @State private var phoneEdit = ""
     @State private var phoneAt = 0
     @State private var message = ""
     @State private var busy = false
@@ -279,11 +280,13 @@ private struct AdminDetailView: View {
                 HStack {
                     Text("用户手机号")
                     Spacer()
-                    TextField("未填写", text: $phone)
+                    TextField("未填写", text: $phoneEdit)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
-                        .foregroundColor(phoneColor)
-                        .onCommit(savePhone)
+                    Button("保存") {
+                        if phoneEdit != account.phone { save(.phone(phoneEdit)) }
+                    }
+                    .buttonStyle(.borderless)
                 }
                 if phoneAt > 0 {
                     Text("填于 \(phoneDate)  点号码可直接改")
@@ -347,6 +350,7 @@ private struct AdminDetailView: View {
             disabled = account.disabled
             note = account.note
             phone = account.phone
+            phoneEdit = account.phone
             phoneAt = account.phoneAt
             // 老账号：手机号只存在旧快照里（服务端入库前的数据），兜底读一次
             if account.phone.isEmpty { loadPhoneFromSnapshot() }
@@ -367,14 +371,6 @@ private struct AdminDetailView: View {
                 phoneAt = (obj["phone_at"] as? NSNumber)?.intValue ?? 0
             }
         }
-    }
-
-    private var phoneColor: Color {
-        phone.isEmpty ? Color.secondary : Color.primary
-    }
-
-    private func savePhone() {
-        if phone != account.phone { save(.phone(phone)) }
     }
 
     private var phoneDate: String {
@@ -407,7 +403,13 @@ private struct AdminDetailView: View {
         case .note(let n):
             AdminAPI.shared.update(accountId: account.id, note: n, completion: done)
         case .phone(let p):
-            AdminAPI.shared.update(accountId: account.id, phone: p, completion: done)
+            AdminAPI.shared.update(accountId: account.id, phone: p) { ok, err in
+                if ok {
+                    phone = p
+                    phoneAt = Int(Date().timeIntervalSince1970)
+                }
+                done(ok, err)
+            }
         case .unbind(let m):
             AdminAPI.shared.unbind(accountId: account.id, machine: m, completion: done)
         }
