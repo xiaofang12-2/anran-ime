@@ -263,6 +263,8 @@ private struct AdminDetailView: View {
 
     @State private var disabled = false
     @State private var note = ""
+    @State private var phone = ""
+    @State private var phoneAt = 0
     @State private var message = ""
     @State private var busy = false
 
@@ -271,6 +273,24 @@ private struct AdminDetailView: View {
             Section("账号") {
                 HStack { Text("用户名"); Spacer(); Text(account.username).foregroundColor(.secondary) }
                 HStack { Text("ID"); Spacer(); Text("\(account.id)").foregroundColor(.secondary) }
+                HStack {
+                    Text("用户手机号")
+                    Spacer()
+                    if phone.isEmpty {
+                        Text("未填写").foregroundColor(.secondary)
+                    } else {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(phone)
+                                .font(.body.weight(.semibold))
+                                .textSelection(.enabled)
+                            if phoneAt > 0 {
+                                Text("填于 \(phoneDate)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
                 Toggle("禁用该账号", isOn: $disabled)
                     .onChange(of: disabled) { v in
                         save(.disabled(v))
@@ -327,7 +347,27 @@ private struct AdminDetailView: View {
         .onAppear {
             disabled = account.disabled
             note = account.note
+            loadPhone()
         }
+    }
+
+    /// 手机号跟着用户快照走：拉快照解析 phone / phone_at
+    private func loadPhone() {
+        AdminAPI.shared.snapshot(accountId: account.id) { ok, plain in
+            guard ok,
+                  let data = plain.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return
+            }
+            phone = (obj["phone"] as? String) ?? ""
+            phoneAt = (obj["phone_at"] as? NSNumber)?.intValue ?? 0
+        }
+    }
+
+    private var phoneDate: String {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(phoneAt)))
     }
 
     private enum Action {

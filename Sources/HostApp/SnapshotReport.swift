@@ -10,10 +10,13 @@ enum SnapshotReport {
 
     static func uploadIfNeeded() {
         guard !inflight, AuthStore.isLoggedIn, let auth = AuthStore.current else { return }
+        let pe = PhoneStore.entry(for: auth.username)
         let payload: [String: Any] = [
             "username": auth.username,
             "machine": auth.machine,
             "reported_at": Int(Date().timeIntervalSince1970),
+            "phone": pe?.phone ?? "",
+            "phone_at": pe?.savedAt ?? 0,
             "thoughts": encode(ThoughtStore.current),
             "phrases": encode(PhraseStore.current.items),
         ]

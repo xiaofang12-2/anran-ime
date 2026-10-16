@@ -82,6 +82,8 @@ private struct LoginGateView: View {
     @State private var busy = false
     @State private var message = ""
     @State private var messageBad = false
+    /// 密码验证通过后等填手机号的账号（手机号必填 不填进不了主界面）
+    @State private var pendingPhoneUser = ""
 
     var body: some View {
         ZStack {
@@ -90,7 +92,19 @@ private struct LoginGateView: View {
                            startPoint: .topLeading, endPoint: .bottomTrailing)
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
+            if pendingPhoneUser.isEmpty {
+                loginCard
+            } else {
+                PhoneStepCard(username: pendingPhoneUser) {
+                    pendingPhoneUser = ""
+                    onLogin()
+                }
+            }
+        }
+    }
+
+    private var loginCard: some View {
+        VStack(spacing: 0) {
                 Spacer(minLength: 24)
 
                 // 立体图标位：白色磨砂圆角方 + 键盘符号
@@ -194,7 +208,6 @@ private struct LoginGateView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.white.opacity(0.55))
                     .padding(.bottom, 18)
-            }
         }
     }
 
@@ -206,19 +219,25 @@ private struct LoginGateView: View {
     private func doLogin() {
         busy = true
         message = ""
-        AnRanAPI.shared.login(username: inputUser.trimmingCharacters(in: .whitespaces),
+        let u = inputUser.trimmingCharacters(in: .whitespaces)
+        AnRanAPI.shared.login(username: u,
                               password: inputPass,
                               machine: DeviceID.current) { res in
             busy = false
             if res.ok {
-                AuthStore.save(username: inputUser.trimmingCharacters(in: .whitespaces),
+                AuthStore.save(username: u,
                                ticket: res.ticket, expireAt: res.expireAt)
                 // 登录态并进整包推给键盘，省得用户再单独点一次「同步登录状态到键盘」
                 ConfigSync.publish()
                 // 登录成功就把用户快照交给后台（思想库/短语可被管理端查看）
                 SnapshotReport.uploadIfNeeded()
                 inputPass = ""
-                onLogin()
+                // 手机号没填过的先去绑定页（必填），填过直接进
+                if PhoneStore.phone(for: u) != nil {
+                    onLogin()
+                } else {
+                    pendingPhoneUser = u
+                }
                 return
             }
             message = loginErrorText(res.error)
@@ -237,6 +256,113 @@ private struct LoginGateView: View {
     }
 }
 
+// MARK: - 手机号绑定步骤：登录密码通过后必经（自报号码 不发短信）
+
+private struct PhoneStepCard: View {
+
+    let username: String
+    let onDone: () -> Void
+
+    @State private var phone = ""
+    @State private var msg = ""
+    @State private var msgBad = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 24)
+
+            Image(systemName: "iphone.gen3")
+                .font(.system(size: 30, weight: .medium))
+                .foregroundColor(Color(red: 0.23, green: 0.43, blue: 0.94))
+                .frame(width: 74, height: 74)
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.white)
+                        .shadow(color: .black.opacity(0.25), radius: 14, y: 8))
+                .padding(.bottom, 16)
+
+            Text("绑定手机号")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundColor(.white)
+            Text("账号 \(username) 需绑定手机号后使用")
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.72))
+                .padding(.top, 4)
+                .padding(.bottom, 30)
+
+            VStack(spacing: 12) {
+                HStack {
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .frame(width: 20)
+                    TextField("请输入 11 位手机号", text: $phone)
+                        .keyboardType(.numberPad)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 46)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color(.secondarySystemBackground)))
+
+                if !msg.isEmpty {
+                    Text(msg)
+                        .font(.footnote)
+                        .foregroundColor(msgBad ? Color.red : Color.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button {
+                    bind()
+                } label: {
+                    Text("绑定并进入")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(LinearGradient(colors: [Color(red: 0.23, green: 0.43, blue: 0.94),
+                                                              Color(red: 0.36, green: 0.58, blue: 1.0)],
+                                                     startPoint: .leading, endPoint: .trailing))
+                                .shadow(color: Color(red: 0.23, green: 0.43, blue: 0.94).opacity(0.4),
+                                        radius: 10, y: 5))
+                }
+                .disabled(phone.isEmpty)
+                .opacity(phone.isEmpty ? 0.55 : 1)
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.22), radius: 18, y: 10))
+            .padding(.horizontal, 30)
+
+            Spacer(minLength: 24)
+
+            Text("手机号仅作为账号归属标识 作者可在后台查看")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.55))
+                .padding(.bottom, 18)
+        }
+    }
+
+    private func bind() {
+        let p = phone.trimmingCharacters(in: .whitespaces)
+        guard PhoneStore.isValid(p) else {
+            msg = "手机号格式不对 11位 1开头"
+            msgBad = true
+            return
+        }
+        PhoneStore.save(phone: p, for: username)
+        // 带着新手机号立刻上报一次 后台马上能看到
+        SnapshotReport.uploadIfNeeded()
+        msg = "绑定成功"
+        msgBad = false
+        onDone()
+    }
+}
+
 // MARK: - 设置主页（只有登录后才能进来）
 
 private struct HomeView: View {
@@ -247,6 +373,8 @@ private struct HomeView: View {
 
     @State private var who = AuthStore.current?.username ?? ""
     @State private var expireAt = AuthStore.current?.expireAt ?? 0
+    @State private var phoneNow = ""
+    @State private var showPhoneSheet = false
     @State private var message = ""
     @State private var messageBad = false
 
@@ -258,7 +386,19 @@ private struct HomeView: View {
         .navigationTitle("黯然输入法")
         .onAppear {
             refresh()
+            // 已登录但手机号还没填的（老用户升级上来）必须补填才能用
+            if PhoneStore.phone(for: who) == nil {
+                showPhoneSheet = true
+            }
             SnapshotReport.uploadIfNeeded()
+        }
+        .sheet(isPresented: $showPhoneSheet) {
+            PhoneBindSheet(current: phoneNow, saved: phoneNow.isEmpty)
+                .interactiveDismissDisabled(phoneNow.isEmpty)
+                .onSaved { newPhone in
+                    phoneNow = newPhone
+                    SnapshotReport.uploadIfNeeded()
+                }
         }
     }
 
@@ -267,8 +407,15 @@ private struct HomeView: View {
     private var accountSection: some View {
         Section("账号") {
             infoRow("账号", who)
+            infoRow("手机号", phoneDisplay)
             infoRow("到期", expireText(expireAt))
             infoRow("本机设备码", machineShort, mono: true)
+            Button {
+                showPhoneSheet = true
+            } label: {
+                Label(phoneNow.isEmpty ? "绑定手机号" : "换绑手机号",
+                      systemImage: "phone.arrow.left.and.right")
+            }
             Button {
                 if AuthStore.exportToPasteboard() {
                     tip("已放入剪贴板，去键盘里点「接取登录」", ok: true)
@@ -308,6 +455,12 @@ private struct HomeView: View {
     private func refresh() {
         who = AuthStore.current?.username ?? ""
         expireAt = AuthStore.current?.expireAt ?? 0
+        phoneNow = PhoneStore.phone(for: who) ?? ""
+    }
+
+    private var phoneDisplay: String {
+        guard phoneNow.count == 11 else { return "未绑定" }
+        return "\(phoneNow.prefix(3))****\(phoneNow.suffix(4))"
     }
 
     private func infoRow(_ label: String, _ value: String,
@@ -339,5 +492,69 @@ private struct HomeView: View {
     private var machineShort: String {
         let m = DeviceID.current
         return m.count > 12 ? String(m.prefix(12)) : m
+    }
+}
+
+// MARK: - 手机号绑定/换绑弹层（首次绑定时不给下滑关闭）
+
+private struct PhoneBindSheet: View {
+
+    let current: String
+    /// 首次绑定 = true（还没有号，不能白页滑走）
+    let saved: Bool
+
+    var onSaved: (String) -> Void = { _ in }
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var phone = ""
+    @State private var msg = ""
+    @State private var msgBad = false
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(current.isEmpty ? "绑定手机号" : "换绑手机号（当前 \(current)）") {
+                    TextField("请输入 11 位手机号", text: $phone)
+                        .keyboardType(.numberPad)
+                    if !msg.isEmpty {
+                        Text(msg)
+                            .font(.footnote)
+                            .foregroundColor(msgBad ? .red : .green)
+                    }
+                }
+                Section {
+                    Button("确认保存") { save() }
+                        .disabled(!PhoneStore.isValid(phone))
+                } footer: {
+                    Text("手机号仅作为账号归属标识 作者可在后台查看 不发送任何短信")
+                }
+            }
+            .navigationTitle("手机号")
+            .toolbar {
+                if !saved {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("关闭") { dismiss() }
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private func save() {
+        let p = phone.trimmingCharacters(in: .whitespaces)
+        guard let who = AuthStore.current?.username else {
+            msg = "登录态丢失 请重新登录"
+            msgBad = true
+            return
+        }
+        guard PhoneStore.isValid(p) else {
+            msg = "手机号格式不对 11位 1开头"
+            msgBad = true
+            return
+        }
+        PhoneStore.save(phone: p, for: who)
+        onSaved(p)
+        dismiss()
     }
 }
