@@ -409,11 +409,13 @@ private struct HomeView: View {
             infoRow("手机号", phoneDisplay)
             infoRow("到期", expireText(expireAt))
             infoRow("本机设备码", machineShort, mono: true)
-            Button {
-                showPhoneSheet = true
-            } label: {
-                Label(phoneNow.isEmpty ? "绑定手机号" : "换绑手机号",
-                      systemImage: "phone.arrow.left.and.right")
+            // 换绑只走管理端 —— 用户绑错号只能找管理员，主App绑过就不给入口
+            if phoneNow.isEmpty {
+                Button {
+                    showPhoneSheet = true
+                } label: {
+                    Label("绑定手机号", systemImage: "phone.arrow.left.and.right")
+                }
             }
             Button {
                 if AuthStore.exportToPasteboard() {

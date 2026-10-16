@@ -139,20 +139,28 @@ final class AdminAPI: NSObject {
         }
     }
 
-    /// 用户上报的快照原文（思想库/自定义短语 JSON）
+    /// 用户上报的快照原文（思想库/自定义短语 JSON）。
+    /// 服务端返回 plain（明文）或 raw_b64（原样base64）——实测它解不了App的
+    /// JSON格式时会走 raw_b64，内容本身就是明文JSON，解一层base64即可读。
     func snapshot(accountId: Int, completion: @escaping (Bool, String) -> Void) {
         var req = URLRequest(url: baseURL.appendingPathComponent(
             "/admin/api/account/snapshot?account_id=\(accountId)"))
         req.httpMethod = "GET"
         session.dataTask(with: req) { data, resp, _ in
             var ok = false
-            var plain = ""
+            var json = ""
             if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 ok = (obj["ok"] as? Bool) ?? false
-                plain = (obj["plain"] as? String) ?? ""
+                json = (obj["plain"] as? String) ?? ""
+                if json.isEmpty,
+                   let b64 = obj["raw_b64"] as? String,
+                   let decoded = Data(base64Encoded: b64),
+                   let s = String(data: decoded, encoding: .utf8) {
+                    json = s
+                }
             }
             if let http = resp as? HTTPURLResponse, http.statusCode == 401 { ok = false }
-            DispatchQueue.main.async { completion(ok, plain) }
+            DispatchQueue.main.async { completion(ok, json) }
         }.resume()
     }
 
