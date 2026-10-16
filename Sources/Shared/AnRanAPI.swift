@@ -67,8 +67,8 @@ final class AnRanAPI: NSObject {
         }
     }
 
-    /// 用户配置快照上报（思想库/自定义短语 JSON）：multipart file 字段。
-    /// 服务端认登录态 —— ticket 三路都带（Cookie / 头 / 表单字段），哪种校验都接得住。
+    /// 用户配置快照上报（思想库/自定义短语/手机号 JSON）：multipart file 字段。
+    /// 实测服务端只认 X-Ticket 头做鉴权（X-Auth-Ticket/Cookie/表单字段全被 401 挡）。
     func uploadSnapshot(ticket: String, json: String,
                         completion: @escaping (Bool) -> Void) {
         let boundary = "anran." + UUID().uuidString
@@ -76,7 +76,7 @@ final class AnRanAPI: NSObject {
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)",
                      forHTTPHeaderField: "Content-Type")
-        req.setValue(ticket, forHTTPHeaderField: "X-Auth-Ticket")
+        req.setValue(ticket, forHTTPHeaderField: "X-Ticket")
         req.setValue("anran_ticket=\(ticket)", forHTTPHeaderField: "Cookie")
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
