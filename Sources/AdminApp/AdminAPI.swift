@@ -28,6 +28,8 @@ final class AdminAPI: NSObject {
         var note: String
         var lastLoginAt: Int
         var snapSize: Int
+        var phone: String
+        var phoneAt: Int
         var devices: [Device]
     }
 
@@ -90,6 +92,8 @@ final class AdminAPI: NSObject {
                         note: (a["note"] as? String) ?? "",
                         lastLoginAt: (a["last_login_at"] as? NSNumber)?.intValue ?? 0,
                         snapSize: (a["snap_size"] as? NSNumber)?.intValue ?? 0,
+                        phone: (a["phone"] as? String) ?? "",
+                        phoneAt: (a["phone_at"] as? NSNumber)?.intValue ?? 0,
                         devices: devs))
                 }
             }
@@ -113,13 +117,15 @@ final class AdminAPI: NSObject {
         }
     }
 
-    /// 改号：禁用/启用、改到期（0=永久）、改备注
+    /// 改号：禁用/启用、改到期（0=永久）、改备注、改手机号
     func update(accountId: Int, disabled: Bool? = nil, expireAt: Int? = nil,
-                note: String? = nil, completion: @escaping (Bool, String) -> Void) {
+                note: String? = nil, phone: String? = nil,
+                completion: @escaping (Bool, String) -> Void) {
         var body: [String: Any] = ["account_id": accountId]
         if let disabled { body["disabled"] = disabled ? 1 : 0 }
         if let expireAt { body["expire_at"] = expireAt }
         if let note { body["note"] = note }
+        if let phone { body["phone"] = phone }
         post("/admin/api/account/update", body) { obj in
             completion((obj["ok"] as? Bool) ?? false, (obj["error"] as? String) ?? "")
         }

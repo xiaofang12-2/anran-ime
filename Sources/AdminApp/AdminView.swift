@@ -93,6 +93,9 @@ struct AdminListView: View {
                 if a.note.isEmpty == false {
                     Text(a.note).font(.caption).foregroundColor(.secondary)
                 }
+                if a.phone.isEmpty == false {
+                    Text(a.phone).font(.caption).foregroundColor(.blue)
+                }
             }
             HStack(spacing: 10) {
                 Text(expireText(a.expireAt)).font(.caption2).foregroundColor(.secondary)
@@ -276,19 +279,19 @@ private struct AdminDetailView: View {
                 HStack {
                     Text("用户手机号")
                     Spacer()
-                    if phone.isEmpty {
-                        Text("未填写").foregroundColor(.secondary)
-                    } else {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(phone)
-                                .font(.body.weight(.semibold))
-                                .textSelection(.enabled)
-                            if phoneAt > 0 {
-                                Text("填于 \(phoneDate)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+                    TextField("未填写", text: $phone)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .foregroundColor(phone.isEmpty ? .secondary : .primary)
+                        .onCommit { if phone != account.phone { save(.phone(phone)) } }
+                }
+                if phoneAt > 0 {
+                    HStack {
+                        Text("")
+                        Spacer()
+                        Text("填于 \(phoneDate)  点号码可直接改")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
                 Toggle("禁用该账号", isOn: $disabled)
@@ -347,20 +350,26 @@ private struct AdminDetailView: View {
         .onAppear {
             disabled = account.disabled
             note = account.note
-            loadPhone()
+            phone = account.phone
+            phoneAt = account.phoneAt
+            // 老账号：手机号只存在旧快照里（服务端入库前的数据），兜底读一次
+            if account.phone.isEmpty { loadPhoneFromSnapshot() }
         }
     }
 
-    /// 手机号跟着用户快照走：拉快照解析 phone / phone_at
-    private func loadPhone() {
+    /// 服务端入库（2026-10-16）之前绑定的号只随旧快照走，从快照里补读
+    private func loadPhoneFromSnapshot() {
         AdminAPI.shared.snapshot(accountId: account.id) { ok, plain in
             guard ok,
                   let data = plain.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return
             }
-            phone = (obj["phone"] as? String) ?? ""
-            phoneAt = (obj["phone_at"] as? NSNumber)?.intValue ?? 0
+            let p = (obj["phone"] as? String) ?? ""
+            if !p.isEmpty && phone.isEmpty {
+                phone = p
+                phoneAt = (obj["phone_at"] as? NSNumber)?.intValue ?? 0
+            }
         }
     }
 
@@ -374,6 +383,7 @@ private struct AdminDetailView: View {
         case disabled(Bool)
         case expire(Int)
         case note(String)
+        case phone(String)
         case unbind(String)
     }
 
@@ -392,6 +402,8 @@ private struct AdminDetailView: View {
             AdminAPI.shared.update(accountId: account.id, expireAt: t, completion: done)
         case .note(let n):
             AdminAPI.shared.update(accountId: account.id, note: n, completion: done)
+        case .phone(let p):
+            AdminAPI.shared.update(accountId: account.id, phone: p, completion: done)
         case .unbind(let m):
             AdminAPI.shared.unbind(accountId: account.id, machine: m, completion: done)
         }
