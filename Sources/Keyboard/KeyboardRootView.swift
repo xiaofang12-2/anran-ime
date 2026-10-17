@@ -39,18 +39,27 @@ struct KeyboardRootView: View {
     @State private var thoughtQueue: [String] = []           // 排队待发：上一句还在逐字上屏时按回车 先排这里
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
-    @State private var activeLibName = "全部库"               // 当前使用中的思想库名
 
-    /// 每个关键词各自记住输出到第几行（永久书签）。
-    /// key 是 "kw:"+关键词文本（跨库同名关键词共用一份进度）。
-    /// 落 UserDefaults 持久化：面板开关、键盘收弹、中途调用别的关键词、
+    // 登录墙：6位配对码输入（主程序「同步数据」出的码 在这里领登录态）
+    @State private var pairCode = ""
+    @State private var pairing = false
+
+    /// 每个关键词各自记住输出到第几行（永久书签）的内存镜像。
+    /// 用 @State 而不直接读 UserDefaults：回车一按预览条立刻跳到下一句，
+    /// 不用等整句逐字发完那一下 @State 变动才重画（「预览跟着回车走」就是它）。
+    /// UserDefaults 落盘：面板开关、键盘收弹、中途调用别的关键词、
     /// 甚至扩展进程被系统杀掉重开，回到那个词都接着上次那句出。
-    private var thoughtLines: [String: Int] {
-        (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
-         as? [String: Int]) ?? [:]
+    @State private var thoughtProgress: [String: Int] = [:]
+
+    private func loadThoughtProgress() {
+        thoughtProgress = (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
+                           as? [String: Int]) ?? [:]
     }
 
+    private func thoughtLineIndex(_ key: String) -> Int { thoughtProgress[key] ?? 0 }
+
     private func setThoughtProgress(_ id: String, _ value: Int) {
+        thoughtProgress[id] = value
         var d = (UserDefaults.standard.dictionary(forKey: "anran_thought_progress")
                  as? [String: Int]) ?? [:]
         d[id] = value
@@ -139,7 +148,6 @@ struct KeyboardRootView: View {
             if panel == .thought {
                 ThoughtPanel(query: thoughtQuery,
                              composing: thoughtComposing,
-                             libName: activeLibName,
                              preview: thoughtPreview,
                              previewHit: thoughtPreviewHit,
                              onClose: closePanel)
@@ -180,13 +188,9 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// 剪贴板面板只显示用户自己复制的东西。
-    /// 主程序把配置（布局/短语/设置/思想库/登录态）打包塞进剪贴板交接，
-    /// 那段 ANRAN-* 文本不是给用户看的，露出来只会让人一脸懵。
+    /// 剪贴板面板显示用户自己复制的东西，直接透出即可
     private static func visibleClipboard() -> String {
-        let raw = UIPasteboard.general.string ?? ""
-        if raw.hasPrefix(SyncBundle.prefix) || raw.hasPrefix("ANRAN-") { return "" }
-        return raw
+        UIPasteboard.general.string ?? ""
     }
 
     private func toggleThought() {
@@ -314,7 +318,7 @@ struct KeyboardRootView: View {
             let lines = mergedLines(for: kw)
             guard !lines.isEmpty else { return } // 预览条会提示「这个关键词还没有内容」
             let key = progressKey(kw)
-            let idx = thoughtLines[key] ?? 0
+            let idx = thoughtLineIndex(key)
             if idx >= lines.count {
                 // 这轮已出完：重新输入关键词 = 从头再来
                 setThoughtProgress(key, 1)
@@ -332,7 +336,7 @@ struct KeyboardRootView: View {
             let lines = mergedLines(for: kw)
             guard !lines.isEmpty else { return }
             let key = progressKey(kw)
-            let idx = thoughtLines[key] ?? 0
+            let idx = thoughtLineIndex(key)
             guard idx < lines.count else { return } // 出完了：空手回车不重出
             setThoughtProgress(key, idx + 1)
             offerThoughtLine(lines[idx])
@@ -399,7 +403,7 @@ struct KeyboardRootView: View {
     private func thoughtPreviewFor(_ kw: String) -> String {
         let lines = mergedLines(for: kw)
         guard !lines.isEmpty else { return "这个关键词还没有内容" }
-        let idx = thoughtLines[progressKey(kw)] ?? 0
+        let idx = thoughtLineIndex(progressKey(kw))
         if idx >= lines.count { return "本轮已出完 重新输入关键词从头再来" }
         return "下一句：" + lines[idx]
     }
@@ -628,49 +632,109 @@ struct KeyboardRootView: View {
         }
     }
 
-    // MARK: - 未授权：授权门
+    // MARK: - 未授权：授权门（配对码连接器）
 
     private var gate: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 26))
                 .foregroundColor(.secondary)
             Text("未授权")
                 .font(.system(size: 16, weight: .semibold))
             Text(hint.isEmpty
-                 ? "请先在「黯然输入法」里登录账号  然后设置内点「同步数据」\n再到系统设置给键盘开「允许完全访问」 同步零弹窗"
+                 ? "主程序登录后点「同步数据」出一个6位配对码\n在下面输入配对码  一次配对 永久自动同步\n系统设置需给本键盘开「允许完全访问」"
                  : hint)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-            HStack(spacing: 10) {
-                GateButton(label: "接取登录") {
-                    // 整包（带登录态）先接；接不到再退旧式单票据
-                    _ = ConfigSync.pull()
-                    if !AuthStore.isLoggedIn { _ = AuthStore.importFromPasteboard() }
-                    if AuthStore.isLoggedIn {
-                        hint = ""
-                        check()
-                    } else {
-                        hint = "没接到登录态 请先在主程序点「同步数据」"
-                    }
+
+            // 配对码格子
+            HStack(spacing: 8) {
+                ForEach(0..<6, id: \.self) { i in
+                    Text(i < pairCode.count ? String(pairCode[pairCode.index(pairCode.startIndex, offsetBy: i)]) : "")
+                        .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                        .foregroundColor(KBMetrics.themeCandidateTextColor)
+                        .frame(width: 34, height: 44)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(KBMetrics.themeKeyColor.opacity(0.92)))
                 }
-                GateButton(label: "打开主程序") { controller.openHostApp() }
-                GateButton(label: "重试") { check() }
             }
             .padding(.top, 2)
+
+            // 数字小键盘：1-9 / 删除 0 配对
+            VStack(spacing: 8) {
+                ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
+                    HStack(spacing: 8) {
+                        ForEach(row, id: \.self) { n in
+                            padButton(String(n)) { pairCode += String(n) }
+                        }
+                    }
+                }
+                HStack(spacing: 8) {
+                    padButton("删除") {
+                        if !pairCode.isEmpty { pairCode.removeLast() }
+                    }
+                    padButton("0") { pairCode += "0" }
+                    padButton(pairing ? "配对中" : "配对") { doPairClaim() }
+                        .opacity((pairCode.count == 6 && !pairing) ? 1 : 0.55)
+                }
+            }
+
+            GateButton(label: "打开主程序") { controller.openHostApp() }
+            if !hint.isEmpty {
+                GateButton(label: "重试") { check() }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func padButton(_ label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            KeySound.play()
+            action()
+        } label: {
+            Text(label)
+                .font(.system(size: 16, weight: .medium, design: .monospaced))
+                .foregroundColor(KBMetrics.themeCandidateTextColor)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(KBMetrics.themeKeyColor.opacity(0.92))
+                        .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 配对码换登录态，成了立刻拉一次整包配置
+    private func doPairClaim() {
+        guard pairCode.count == 6, !pairing else { return }
+        pairing = true
+        AnRanAPI.shared.pairClaim(code: pairCode) { res in
+            pairing = false
+            if res.ok, !res.ticket.isEmpty {
+                AuthStore.write(AuthState(username: res.username,
+                                          ticket: res.ticket,
+                                          machine: res.machine,
+                                          expireAt: res.expireAt,
+                                          savedAt: Int(Date().timeIntervalSince1970)))
+                pairCode = ""
+                hint = ""
+                check()
+            } else if res.error == "bad_or_expired" {
+                hint = "配对码不对或已过期  主程序重新点「同步数据」拿新码"
+            } else {
+                hint = "配对失败（\(res.error.isEmpty ? "网络不通" : res.error)）"
+            }
+        }
+    }
+
     private func check() {
-        // 先接整包（配置 + 登录态一起落），再兜底接旧式单票据。
-        // 整包里带登录态，所以这里落完 AuthStore 就能直接判登录了。
+        // 先把本地已落盘的配置刷一遍，再异步从服务器拉新包（配对/主程序推送的）
+        loadThoughtProgress()
         pullSettings()
         refreshReturnLabel()
-        if !AuthStore.isLoggedIn {
-            _ = AuthStore.importFromPasteboard()
-        }
         authorized = AuthStore.isLoggedIn
         if authorized {
             hint = ""
@@ -685,20 +749,21 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// 从主程序接「键盘布局」「自定义短语」「输入设置」：剪贴板里有更新的整包就换，换完重画
-    private func pullSettings() {
-        let changed = ConfigSync.pull()
-
+    /// 主程序下发的配置：本地已落盘的先刷上，服务器有新包拉到再刷一遍
+    private func refreshLocalStores() {
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
-        let book = ThoughtStore.current
-        // 全部库的关键词全参与检索 —— 「使用中」只是设置页里的标记，
-        // 不再挡别的库（否则只建在非使用库里的词永远调不出来）
-        thoughts = book.flatItems
-        activeLibName = "全部库·\(thoughts.count)词"
+        // 只认「使用中」的那本思想库 没选库 = 全部库都参与
+        // （设置页左滑点「使用」选中的库 其他库的关键词一概不调）
+        thoughts = ThoughtStore.current.activeItems
         applyLearnResetIfNeeded()
+    }
 
-        if changed {
+    private func pullSettings() {
+        refreshLocalStores()
+        ConfigSync.pullFromServer { changed in
+            guard changed else { return }
+            refreshLocalStores()
             controller.setRows(KBMetrics.rows)
             cfgRev += 1
             if !composing.isEmpty { refresh() }

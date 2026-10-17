@@ -51,6 +51,7 @@ struct PhraseSettingsView: View {
             }
         }
         .navigationTitle("自定义短语")
+        .arListPage()
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $draft) { p in
             PhraseEditView(phrase: p) { saved in

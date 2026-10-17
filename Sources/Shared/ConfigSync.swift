@@ -1,35 +1,35 @@
 import Foundation
-import UIKit
 
 /// 主程序 → 键盘的整包交接：布局 + 短语 + 输入设置 + 思想库 + 登录态，一次带过去。
 ///
-/// 免费签名用不了 App Groups，只能走剪贴板；而剪贴板只有一个槽，几份配置各写各的
-/// 会互相覆盖（推了设置就把短语冲掉、推了登录态就把配置冲掉）。所以合成一个包，
-/// 主程序任何一次改动都推全量快照，键盘一次接全。
+/// 走服务器中转（不碰剪贴板）：主程序任何一次改动都把全量快照推到服务端，
+/// 键盘那边凭自己的票据自动拉。第一次连接用「配对码」：主程序点「同步数据」
+/// 出一个6位码，键盘登录墙输一次，之后永久自动同步。
 struct SyncBundle: Codable, Equatable {
     var layout: KBConfig?
     var phrases: PhraseBook?
     var settings: IMESettings?
     var thoughts: ThoughtBook?
-    /// 登录态也并进来：以前登录态单独占剪贴板，一推就把配置冲没了。
+    /// 登录态并进整包，键盘落包时顺手换新票据
     var auth: AuthState?
     var rev: Int = 0
-
-    static let prefix = "ANRAN-SYNC::"
 }
 
 enum ConfigSync {
 
-    /// 本机任一 Store 落盘后发（saveLocal 尾部）。主程序监听它即时推剪贴板，
-    /// 「加完关键词/短语切出去打字」键盘第一帧就是新配置，不用等切后台。
-    /// 键盘侧也调 saveLocal 但不监听，无副作用。
+    /// 本机任一 Store 落盘后发（saveLocal 尾部）。主程序监听它即时推服务器，
+    /// 键盘下一轮拉取就是新配置。
     static let localStoreChanged = Notification.Name("anran_local_store_changed")
 
     /// 键盘侧：上一次接过的整包原文。用内容比对判新旧 —— 比时间戳稳：
     /// 时钟回拨、同一毫秒连改两条、rev 没来得及变大，都不会把新配置吞掉。
     private static let appliedKey = "anran_sync_applied"
-    /// 主程序侧：上一次推过的配置内容（不含 rev）。用来避免切后台时无谓地覆盖用户剪贴板。
+    /// 主程序侧：上一次推过的配置内容（不含 rev），没变就不重复推。
     private static let publishedKey = "anran_sync_published"
+    /// 推送节流：1.5 秒内的连续改动合并成一次请求
+    private static var lastPushAt = Date.distantPast
+    private static var pendingPush = false
+    private static var stagedPush: Data?
 
     /// 组装当前全量配置（rev 置 0，纯粹拿来比对内容）
     private static func snapshot(auth: AuthState? = nil) -> SyncBundle {
@@ -46,8 +46,9 @@ enum ConfigSync {
         return String(data: d, encoding: .utf8)
     }
 
-    /// 主程序用：把当前全部配置打包塞剪贴板。传了哪份就用新值并顺手存本机，
+    /// 主程序用：把当前全部配置推到服务器。传了哪份就用新值并顺手存本机，
     /// 没传的取本机现值（这样推任意一份都不会把别的冲掉）。
+    /// 没登录（没票据）时不推，等登录/配对后键盘自然能拉到新包。
     @discardableResult
     static func publish(layout: KBConfig? = nil,
                         phrases: PhraseBook? = nil,
@@ -61,61 +62,87 @@ enum ConfigSync {
 
         var bundle = snapshot(auth: auth)
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
-        guard let s = encoded(bundle) else { return false }
-        if let marker = encoded(snapshot(auth: auth)) {
-            UserDefaults.standard.set(marker, forKey: publishedKey)
-        }
-        UIPasteboard.general.string = SyncBundle.prefix + s
+        guard let marker = encoded(snapshot(auth: auth)) else { return false }
+        UserDefaults.standard.set(marker, forKey: publishedKey)
+        push(bundle)
         return true
     }
 
-    /// 主程序切后台时用：配置真变了才推。没变就不动剪贴板，
-    /// 免得用户刚复制的字被我们的同步包覆盖掉。
+    /// 主程序切后台/页面动作时用：配置真变了才推，没变不发请求。
     @discardableResult
     static func publishIfChanged() -> Bool {
         let snap = snapshot()
         guard let marker = encoded(snap) else { return false }
         if marker == UserDefaults.standard.string(forKey: publishedKey) { return false }
+        UserDefaults.standard.set(marker, forKey: publishedKey)
         var bundle = snap
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
-        guard let s = encoded(bundle) else { return false }
-        UserDefaults.standard.set(marker, forKey: publishedKey)
-        UIPasteboard.general.string = SyncBundle.prefix + s
+        push(bundle)
         return true
     }
 
-    /// 键盘用：剪贴板里有跟上次不一样的整包才接（配置 + 登录态一起落）
-    /// 隐藏粘贴三板斧：
-    ///   1. changeCount 没变就一个字节都不读 —— iOS 的「粘贴自」弹窗是读内容才触发，
-    ///      查次数不触发，键盘每回弹出不再骚扰用户；
-    ///   2. 真要读，读完立刻把 ANRAN 包清掉，用户长按粘贴不会粘出乱码；
-    ///   3. 想彻底无感，主程序引导用户开「允许完全访问」（开了以后读剪贴板零弹窗）。
+    /// 推到服务器（带主程序票据）。1.5 秒内的连续改动合并成一次请求。
+    private static func push(_ bundle: SyncBundle) {
+        guard let auth = AuthStore.current, !auth.ticket.isEmpty,
+              let data = try? JSONEncoder().encode(bundle) else { return }
+        stagedPush = data
+        let now = Date()
+        guard now.timeIntervalSince(lastPushAt) >= 1.5 else {
+            scheduleFlush()
+            return
+        }
+        lastPushAt = now
+        if let staged = stagedPush {
+            AnRanAPI.shared.pushSync(ticket: auth.ticket, data: staged)
+        }
+    }
+
+    private static func scheduleFlush() {
+        guard !pendingPush else { return }
+        pendingPush = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            pendingPush = false
+            guard let auth = AuthStore.current, !auth.ticket.isEmpty,
+                  let staged = stagedPush else { return }
+            lastPushAt = Date()
+            AnRanAPI.shared.pushSync(ticket: auth.ticket, data: staged)
+        }
+    }
+
+    /// 键盘用：从服务器拉最新整包（异步，不卡首帧）。
+    /// 拉到跟上次不一样的新包就落盘（配置 + 登录态一起），回调 true。
     @discardableResult
-    static func pull() -> Bool {
-        let cc = UIPasteboard.general.changeCount
-        let seenKey = "anran_sync_seen_change"
-        if cc == UserDefaults.standard.integer(forKey: seenKey) { return false }
-        guard let raw = UIPasteboard.general.string,
-              raw.hasPrefix(SyncBundle.prefix) else {
-            UserDefaults.standard.set(cc, forKey: seenKey)
+    static func pullFromServer(_ done: ((Bool) -> Void)? = nil) -> Bool {
+        guard let auth = AuthStore.current, !auth.ticket.isEmpty else {
+            done?(false)
             return false
         }
-        UserDefaults.standard.set(cc, forKey: seenKey)
-        defer { UIPasteboard.general.string = "" }
-        let json = String(raw.dropFirst(SyncBundle.prefix.count))
-        guard let d = json.data(using: .utf8),
-              let bundle = try? JSONDecoder().decode(SyncBundle.self, from: d) else { return false }
-        // 跟上次接过的一模一样就不用再落一遍
-        if json == UserDefaults.standard.string(forKey: appliedKey) { return false }
+        AnRanAPI.shared.pullSync(ticket: auth.ticket) { data in
+            guard let data,
+                  let bundle = try? JSONDecoder().decode(SyncBundle.self, from: data) else {
+                done?(false)
+                return
+            }
+            let json = String(data: data, encoding: .utf8) ?? ""
+            if json == UserDefaults.standard.string(forKey: appliedKey) {
+                done?(false)
+                return
+            }
+            apply(bundle)
+            UserDefaults.standard.set(json, forKey: appliedKey)
+            done?(true)
+        }
+        return true
+    }
+
+    /// 整包落盘：配置各归各库，登录态只收本机设备的票据
+    private static func apply(_ bundle: SyncBundle) {
         if let l = bundle.layout { KBConfigStore.saveLocal(l) }
         if let p = bundle.phrases { PhraseStore.saveLocal(p) }
         if let s = bundle.settings { IMESettingsStore.saveLocal(s) }
         if let t = bundle.thoughts { ThoughtStore.saveLocal(t) }
-        // 登录态：设备号必须就是本机，防止把别的机器的票据搬过来
         if let a = bundle.auth, !a.ticket.isEmpty, a.machine == DeviceID.current {
             AuthStore.write(a)
         }
-        UserDefaults.standard.set(json, forKey: appliedKey)
-        return true
     }
 }

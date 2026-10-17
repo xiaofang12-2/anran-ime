@@ -1,10 +1,9 @@
 import Foundation
-import UIKit
 
 /// 输入法行为设置（对标百度「输入设置 / 键盘设置」）。
 ///
-/// 与「键盘布局」「自定义短语」一样，主程序改完走剪贴板交给键盘
-/// （免费签名用不了 App Groups，见 ConfigSync）。
+/// 与「键盘布局」「自定义短语」一样，主程序改完整包推服务器、键盘自动拉
+/// （见 ConfigSync）。
 struct IMESettings: Codable, Equatable {
     /// 模糊音：zh/z、ch/c、sh/s、ang/an、n/l 等互相容错
     var fuzzyPinyin = true
@@ -31,7 +30,6 @@ struct IMESettings: Codable, Equatable {
     var rev: Int = 0
 
     static let fallback = IMESettings()
-    static let pastePrefix = "ANRAN-IMSET::"
 
     static let candidateRange: ClosedRange<Int> = 10...60
     static let outputSpeedRange: ClosedRange<Int> = 0...200

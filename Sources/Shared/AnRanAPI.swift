@@ -104,6 +104,95 @@ final class AnRanAPI: NSObject {
         }.resume()
     }
 
+    // MARK: - 配置同步连接器
+
+    /// 主App：登记一个6位配对码（键盘输这个码来领登录态），10分钟有效
+    func pairStart(ticket: String, code: String,
+                   completion: @escaping (Bool) -> Void) {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/pair/start"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(ticket, forHTTPHeaderField: "X-Ticket")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["code": code])
+        session.dataTask(with: req) { data, resp, _ in
+            var ok = false
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                ok = (obj["ok"] as? Bool) ?? false
+            }
+            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                ok = false
+            }
+            DispatchQueue.main.async { completion(ok) }
+        }.resume()
+    }
+
+    struct ClaimResult {
+        var ok: Bool
+        var error: String
+        var username: String
+        var machine: String
+        var ticket: String
+        var expireAt: Int
+    }
+
+    /// 键盘：配对码换登录态（一次性 用掉即作废）
+    func pairClaim(code: String, completion: @escaping (ClaimResult) -> Void) {
+        post("/api/pair/claim", ["code": code]) { obj in
+            completion(ClaimResult(
+                ok: (obj["ok"] as? Bool) ?? false,
+                error: (obj["error"] as? String) ?? "",
+                username: (obj["username"] as? String) ?? "",
+                machine: (obj["machine"] as? String) ?? "",
+                ticket: (obj["ticket"] as? String) ?? "",
+                expireAt: (obj["expire_at"] as? NSNumber)?.intValue ?? 0))
+        }
+    }
+
+    /// 主App：推送全量配置包（布局+短语+设置+思想库+登录态）
+    func pushSync(ticket: String, data: Data,
+                  completion: ((Bool) -> Void)? = nil) {
+        let boundary = "anran." + UUID().uuidString
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/sync"))
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)",
+                     forHTTPHeaderField: "Content-Type")
+        req.setValue(ticket, forHTTPHeaderField: "X-Ticket")
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"bundle.json\"\r\n"
+            .data(using: .utf8)!)
+        body.append("Content-Type: application/json\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+        session.dataTask(with: req) { data, resp, _ in
+            var ok = false
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                ok = (obj["ok"] as? Bool) ?? false
+            }
+            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                ok = false
+            }
+            DispatchQueue.main.async { completion?(ok) }
+        }.resume()
+    }
+
+    /// 键盘：拉取最新配置包（没有推送过时服务端回 404）
+    func pullSync(ticket: String, completion: @escaping (Data?) -> Void) {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/sync"))
+        req.httpMethod = "GET"
+        req.setValue(ticket, forHTTPHeaderField: "X-Ticket")
+        session.dataTask(with: req) { data, resp, _ in
+            var payload: Data?
+            if let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                payload = data
+            }
+            DispatchQueue.main.async { completion(payload) }
+        }.resume()
+    }
+
     // MARK: - 请求
 
     private func post(_ path: String, _ body: [String: Any],

@@ -69,6 +69,7 @@ struct ThoughtSettingsView: View {
             }
         }
         .navigationTitle("思想库")
+        .arListPage()
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showNewLib) {
             TextInputSheet(title: "新建思想库",

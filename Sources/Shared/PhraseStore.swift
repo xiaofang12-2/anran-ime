@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 /// 一条自定义短语：打 code（拼音/字母串）就出 text
 struct Phrase: Codable, Identifiable, Equatable {
@@ -23,7 +22,6 @@ struct PhraseBook: Codable, Equatable {
     var rev: Int = 0
 
     static let fallback = PhraseBook()
-    static let pastePrefix = "ANRAN-PHRASE::"
 
     /// 去掉空码/空内容与重复触发码，后写的覆盖先写的
     var sanitized: PhraseBook {
@@ -60,31 +58,5 @@ enum PhraseStore {
             UserDefaults.standard.set(d, forKey: key)
         }
         NotificationCenter.default.post(name: ConfigSync.localStoreChanged, object: nil)
-    }
-
-    /// 主程序用：存本机 + 塞剪贴板
-    @discardableResult
-    static func publish(_ b: PhraseBook) -> Bool {
-        var n = b.sanitized
-        n.rev = Int(Date().timeIntervalSince1970)
-        saveLocal(n)
-        guard let d = try? JSONEncoder().encode(n),
-              let s = String(data: d, encoding: .utf8) else { return false }
-        UIPasteboard.general.string = PhraseBook.pastePrefix + s
-        return true
-    }
-
-    /// 键盘用：剪贴板里有更新的短语本才接
-    @discardableResult
-    static func pullFromPasteboard() -> Bool {
-        guard let raw = UIPasteboard.general.string,
-              raw.hasPrefix(PhraseBook.pastePrefix) else { return false }
-        let json = String(raw.dropFirst(PhraseBook.pastePrefix.count))
-        guard let d = json.data(using: .utf8),
-              let incoming = try? JSONDecoder().decode(PhraseBook.self, from: d)
-        else { return false }
-        guard incoming.rev > current.rev else { return false }
-        saveLocal(incoming)
-        return true
     }
 }

@@ -89,6 +89,7 @@ struct SkinSettingsView: View {
             }
         }
         .navigationTitle("皮肤")
+        .arListPage()
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: cfg) { newValue in
             KBConfigStore.saveLocal(newValue)

@@ -67,6 +67,7 @@ struct LayoutSettingsView: View {
             }
         }
         .navigationTitle("键盘布局")
+        .arListPage()
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: selectedID) { _ in syncEditFields() }
         .onChange(of: cfg) { newValue in

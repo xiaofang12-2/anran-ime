@@ -363,7 +363,7 @@ private struct PhoneStepCard: View {
     }
 }
 
-// MARK: - 设置主页（只有登录后才能进来）
+// MARK: - 设置主页（只有登录后才能进来）：深蓝渐变 + 白卡片 简约立体
 
 private struct HomeView: View {
 
@@ -375,15 +375,47 @@ private struct HomeView: View {
     @State private var expireAt = AuthStore.current?.expireAt ?? 0
     @State private var phoneNow = ""
     @State private var showPhoneSheet = false
+    @State private var syncing = false
+    @State private var pairCode = ""
+    @State private var showPairSheet = false
     @State private var message = ""
     @State private var messageBad = false
 
     var body: some View {
-        List {
-            accountSection
-            functionSection
+        ZStack {
+            ARTheme.background
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 12) {
+                    hero
+
+                    ARTheme.sectionTitle("账号")
+                    accountCard
+
+                    ARTheme.sectionTitle("键盘连接")
+                    syncCard
+
+                    ARTheme.sectionTitle("设置")
+                    entriesCard
+
+                    ARTheme.sectionTitle("")
+                    logoutCard
+
+                    if !message.isEmpty {
+                        Text(message)
+                            .font(.system(size: 12))
+                            .foregroundColor(messageBad
+                                             ? Color(red: 1.0, green: 0.55, blue: 0.55)
+                                             : Color.white.opacity(0.9))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 6)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 4)
+                .padding(.bottom, 28)
+            }
         }
-        .navigationTitle("黯然输入法")
+        .navigationBarHidden(true)
         .onAppear {
             refresh()
             // 已登录但手机号还没填的（老用户升级上来）必须补填才能用
@@ -399,59 +431,134 @@ private struct HomeView: View {
             }
             .interactiveDismissDisabled(phoneNow.isEmpty)
         }
+        .sheet(isPresented: $showPairSheet) {
+            PairSheet(code: pairCode)
+        }
     }
 
-    // MARK: 账号
+    // MARK: 头部
 
-    private var accountSection: some View {
-        Section("账号") {
-            infoRow("账号", who)
-            infoRow("手机号", phoneDisplay)
-            infoRow("到期", expireText(expireAt))
-            infoRow("本机设备码", machineShort, mono: true)
-            // 换绑只走管理端 —— 用户绑错号只能找管理员，主App绑过就不给入口
-            if phoneNow.isEmpty {
-                Button {
-                    showPhoneSheet = true
-                } label: {
-                    Label("绑定手机号", systemImage: "phone.arrow.left.and.right")
-                }
+    private var hero: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "keyboard")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundColor(ARTheme.blue)
+                .frame(width: 62, height: 62)
+                .background(
+                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .fill(Color.white)
+                        .shadow(color: .black.opacity(0.25), radius: 12, y: 6))
+            Text("黯然输入法")
+                .font(.system(size: 21, weight: .bold))
+                .foregroundColor(.white)
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: 账号卡
+
+    private var accountCard: some View {
+        ARTheme.card {
+            ARRow(title: "账号") { rowValue(who) }
+            arDivider()
+            ARRow(title: "手机号") { rowValue(phoneDisplay) }
+            arDivider()
+            ARRow(title: "到期") { rowValue(expireText(expireAt)) }
+            arDivider()
+            ARRow(title: "本机设备码") {
+                Text(machineShort)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundColor(.secondary)
             }
-            Button {
-                if AuthStore.exportToPasteboard() {
-                    tip("已打包好 去键盘里点「接取登录」", ok: true)
-                } else {
-                    tip("同步失败，请重新登录", ok: false)
-                }
-            } label: {
-                Label("同步数据", systemImage: "arrow.triangle.2.circlepath")
+        }
+    }
+
+    // MARK: 键盘连接卡（同步连接器）
+
+    private var syncCard: some View {
+        ARTheme.card {
+            VStack(spacing: 10) {
+                ARPrimaryButton(title: syncing ? "正在生成配对码…" : "同步数据",
+                                busy: syncing) { startSync() }
+                Text("点一下出一个6位配对码  在键盘登录墙输入即可连接\n配对一次永久自动同步  改关键词 短语 布局 设置都自动到键盘")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 10)
             }
-            Button(role: .destructive) {
+            .padding(.vertical, 12)
+        }
+    }
+
+    // MARK: 设置入口卡
+
+    private var entriesCard: some View {
+        ARTheme.card {
+            ARNavRow(title: "输入设置") { SettingsView() }
+            arDivider()
+            NavigationLink(destination: PhraseSettingsView(), isActive: $goPhrases) {
+                navLabel("自定义短语")
+            }
+            .buttonStyle(.plain)
+            arDivider()
+            NavigationLink(destination: ThoughtSettingsView(), isActive: $goThoughts) {
+                navLabel("思想库")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func navLabel(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundColor(.black.opacity(0.85))
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.black.opacity(0.25))
+        }
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
+    }
+
+    // MARK: 退出登录卡
+
+    private var logoutCard: some View {
+        ARTheme.card {
+            ARActionRow(title: "退出登录", icon: "rectangle.portrait.and.arrow.right",
+                        tint: Color(red: 0.85, green: 0.27, blue: 0.27)) {
                 AuthStore.clear()
                 refresh()
                 onLogout()
-            } label: {
-                Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
-            }
-            if !message.isEmpty {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundColor(messageBad ? .red : .secondary)
             }
         }
     }
 
-    // MARK: 功能入口
+    // MARK: 动作
 
-    private var functionSection: some View {
-        Section("设置") {
-            NavigationLink("输入设置") { SettingsView() }
-            NavigationLink("自定义短语", isActive: $goPhrases) { PhraseSettingsView() }
-            NavigationLink("思想库", isActive: $goThoughts) { ThoughtSettingsView() }
+    /// 同步连接器：登记配对码 + 推全量配置包，弹层展示配对码
+    private func startSync() {
+        guard let s = AuthStore.current, !s.ticket.isEmpty else {
+            tip("登录态丢失 请重新登录", ok: false)
+            return
+        }
+        syncing = true
+        let code = String(format: "%06d", Int.random(in: 0...999_999))
+        AnRanAPI.shared.pairStart(ticket: s.ticket, code: code) { ok in
+            syncing = false
+            if ok {
+                // 码已登记：顺手把全量配置推上服务器 键盘配完第一拉就是最新
+                _ = ConfigSync.publish()
+                SnapshotReport.uploadIfNeeded()
+                pairCode = code
+                showPairSheet = true
+            } else {
+                tip("同步失败 请检查网络后重试", ok: false)
+            }
         }
     }
-
-    // MARK: 工具
 
     private func refresh() {
         who = AuthStore.current?.username ?? ""
@@ -464,15 +571,10 @@ private struct HomeView: View {
         return "\(phoneNow.prefix(3))****\(phoneNow.suffix(4))"
     }
 
-    private func infoRow(_ label: String, _ value: String,
-                         mono: Bool = false) -> some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(value)
-                .font(mono ? .system(.footnote, design: .monospaced) : .body)
-                .foregroundColor(.secondary)
-        }
+    private func rowValue(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14))
+            .foregroundColor(.secondary)
     }
 
     private func tip(_ text: String, ok: Bool) {
@@ -493,6 +595,69 @@ private struct HomeView: View {
     private var machineShort: String {
         let m = DeviceID.current
         return m.count > 12 ? String(m.prefix(12)) : m
+    }
+}
+
+// MARK: - 配对码弹层：主程序出码 键盘输入 永久连接
+
+private struct PairSheet: View {
+
+    let code: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 36, height: 5)
+                .padding(.top, 10)
+
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundColor(ARTheme.blue)
+                .frame(width: 64, height: 64)
+                .background(
+                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .fill(Color.white)
+                        .shadow(color: .black.opacity(0.22), radius: 10, y: 5))
+                .padding(.top, 6)
+
+            Text("连接键盘")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(.white)
+            Text("在「黯然输入法」键盘的登录墙上输入这个配对码")
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.75))
+                .multilineTextAlignment(.center)
+
+            // 6位配对码
+            HStack(spacing: 8) {
+                ForEach(Array(code.enumerated()), id: \.offset) { _, ch in
+                    Text(String(ch))
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .foregroundColor(ARTheme.blue)
+                        .frame(width: 44, height: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.white)
+                                .shadow(color: .black.opacity(0.18), radius: 6, y: 3))
+                }
+            }
+            .padding(.vertical, 8)
+
+            Text("配对码10分钟内有效  一次配对 永久自动同步\n以后改关键词 短语 布局 设置 键盘自动接住 无需再点")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.7))
+                .multilineTextAlignment(.center)
+
+            ARPrimaryButton(title: "完成") { dismiss() }
+                .padding(.top, 10)
+                .padding(.horizontal, 30)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ARTheme.background)
+        .arMediumSheet()
     }
 }
 
