@@ -176,11 +176,11 @@ struct ARSliderRow: View {
 struct ARNavRow<Destination: View>: View {
     let title: String
     var icon: String = "chevron.right"
-    let destination: Destination
+    @ViewBuilder let destination: () -> Destination
 
     var body: some View {
         NavigationLink {
-            destination
+            destination()
         } label: {
             HStack {
                 Text(title)
