@@ -43,6 +43,20 @@ struct KeyboardRootView: View {
     // 登录墙：6位配对码输入（主程序「同步数据」出的码 在这里领登录态）
     @State private var pairCode = ""
     @State private var pairing = false
+    /// 登录墙已把键盘撑高过（配对码小键盘比普通键盘高一截）
+    @State private var gateExpanded = false
+
+    /// 登录墙需要放下配对码键盘：撑高；授权通过后收回去
+    private func updateGateExtra() {
+        if !authorized {
+            gateExpanded = true
+            controller.setExtraHeight(210)
+        } else if gateExpanded {
+            gateExpanded = false
+            panel = .none
+            controller.setExtraHeight(0)
+        }
+    }
 
     /// 每个关键词各自记住输出到第几行（永久书签）的内存镜像。
     /// 用 @State 而不直接读 UserDefaults：回车一按预览条立刻跳到下一句，
@@ -114,6 +128,7 @@ struct KeyboardRootView: View {
             composing = ""
             candidates = []
             panel = .none
+            updateGateExtra()
         }
         // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
@@ -736,6 +751,7 @@ struct KeyboardRootView: View {
         pullSettings()
         refreshReturnLabel()
         authorized = AuthStore.isLoggedIn
+        updateGateExtra()
         if authorized {
             hint = ""
             // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
