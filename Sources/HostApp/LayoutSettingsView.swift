@@ -9,6 +9,9 @@ struct LayoutSettingsView: View {
     @State private var cfg = KBConfigStore.current
     @State private var selectedID: String?
     @State private var newKeyLabel = ""
+    /// 宽高输入框的原始文本（选中键变化时从配置同步，输入过程不被格式化打断）
+    @State private var widthInput = ""
+    @State private var heightInput = ""
 
     /// 应用覆盖 + 挂上自定义键之后的最终键位（编辑器预览 = 键盘真实键位）
     private var appliedRows: [[KeySpec]] {
@@ -65,6 +68,7 @@ struct LayoutSettingsView: View {
         }
         .navigationTitle("键盘布局")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedID) { _ in syncEditFields() }
         .onChange(of: cfg) { newValue in
             KBConfigStore.saveLocal(newValue)
             ConfigSync.publish(layout: newValue)
@@ -86,25 +90,29 @@ struct LayoutSettingsView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text("宽度")
-                    Spacer()
-                    Text(widthText(spec))
-                        .font(.footnote.monospacedDigit())
-                        .foregroundColor(.secondary)
-                }
-                Slider(value: widthBinding(spec), in: 0.6...3.0)
+            HStack {
+                Text("宽度")
+                Spacer()
+                TextField("1.0", text: $widthInput)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 90)
+                    .onChange(of: widthInput) { s in
+                        guard let v = Double(s), v >= 0.6, v <= 3.0 else { return }
+                        setOverride(spec) { $0.weight = v }
+                    }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text("高度")
-                    Spacer()
-                    Text(heightText(spec))
-                        .font(.footnote.monospacedDigit())
-                        .foregroundColor(.secondary)
-                }
-                Slider(value: heightBinding(spec), in: 28...80)
+            HStack {
+                Text("高度")
+                Spacer()
+                TextField("45", text: $heightInput)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 90)
+                    .onChange(of: heightInput) { s in
+                        guard let v = Double(s), v >= 28, v <= 80 else { return }
+                        setOverride(spec) { $0.height = v }
+                    }
             }
             HStack {
                 Text("上滑符号")
@@ -180,20 +188,17 @@ struct LayoutSettingsView: View {
         }
     }
 
-    private func widthBinding(_ spec: KeySpec) -> Binding<Double> {
-        Binding {
-            cfg.keyOverrides?[spec.id]?.weight ?? Double(spec.weight)
-        } set: { v in
-            setOverride(spec) { $0.weight = v }
+    /// 宽高输入框跟随选中的键（换选中就把配置值填进输入框）
+    private func syncEditFields() {
+        guard let spec = selectedSpec else {
+            widthInput = ""
+            heightInput = ""
+            return
         }
-    }
-
-    private func heightBinding(_ spec: KeySpec) -> Binding<Double> {
-        Binding {
-            cfg.keyOverrides?[spec.id]?.height ?? Double(cfg.keyHeight)
-        } set: { v in
-            setOverride(spec) { $0.height = v }
-        }
+        widthInput = String(format: "%.2f",
+                            cfg.keyOverrides?[spec.id]?.weight ?? Double(spec.weight))
+        let h = cfg.keyOverrides?[spec.id]?.height ?? Double(cfg.keyHeight)
+        heightInput = "\(Int(h.rounded()))"
     }
 
     private func swipeBinding(_ spec: KeySpec) -> Binding<String> {
@@ -202,15 +207,6 @@ struct LayoutSettingsView: View {
         } set: { v in
             setOverride(spec) { $0.swipe = v.isEmpty ? nil : v }
         }
-    }
-
-    private func widthText(_ spec: KeySpec) -> String {
-        String(format: "%.2fx", cfg.keyOverrides?[spec.id]?.weight ?? Double(spec.weight))
-    }
-
-    private func heightText(_ spec: KeySpec) -> String {
-        let h = cfg.keyOverrides?[spec.id]?.height ?? Double(cfg.keyHeight)
-        return "\(Int(h.rounded()))pt"
     }
 }
 
