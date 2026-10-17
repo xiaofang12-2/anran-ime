@@ -269,6 +269,7 @@ private struct AdminDetailView: View {
     @State private var phone = ""
     @State private var phoneEdit = ""
     @State private var phoneAt = 0
+    @State private var pwdEdit = ""
     @State private var message = ""
     @State private var busy = false
 
@@ -292,6 +293,16 @@ private struct AdminDetailView: View {
                     Text("填于 \(phoneDate)  点号码可直接改")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("登录密码")
+                    Spacer()
+                    SecureField("输入新密码", text: $pwdEdit)
+                        .multilineTextAlignment(.trailing)
+                    Button("改密") {
+                        if !pwdEdit.isEmpty { save(.password(pwdEdit)) }
+                    }
+                    .buttonStyle(.borderless)
                 }
                 Toggle("禁用该账号", isOn: $disabled)
                     .onChange(of: disabled) { v in
@@ -384,6 +395,7 @@ private struct AdminDetailView: View {
         case expire(Int)
         case note(String)
         case phone(String)
+        case password(String)
         case unbind(String)
     }
 
@@ -408,6 +420,11 @@ private struct AdminDetailView: View {
                     phone = p
                     phoneAt = Int(Date().timeIntervalSince1970)
                 }
+                done(ok, err)
+            }
+        case .password(let p):
+            AdminAPI.shared.update(accountId: account.id, password: p) { ok, err in
+                if ok { pwdEdit = "" }
                 done(ok, err)
             }
         case .unbind(let m):

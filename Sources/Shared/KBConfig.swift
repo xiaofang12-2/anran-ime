@@ -1,13 +1,42 @@
 import Foundation
 import SwiftUI
 
-/// 单个按键的自定义覆盖：宽度（行内权重）+ 行内位置偏移。
+/// 单个按键的自定义覆盖：宽度 + 行内位置 + 高度 + 上滑符号 + 删除。
 /// id 用 KeySpec 的 id（如 "Lq"、"backspace"、"space"）。
 struct KeyOverride: Codable, Equatable {
     /// 宽度权重覆盖（nil = 跟默认一样）
     var weight: Double?
-    /// 行内位置偏移：负 = 左移几格，正 = 右移几格（0 = 原位）
+    /// 行内位置偏移：负 = 左移几格，正 = 右移几格（0 = 原位）。
+    /// 旧字段，新的绝对定位用 pos；老数据解码后照常生效。
     var shift: Int = 0
+    /// 行内绝对位置（从 1 开始）。nil = 不动
+    var pos: Int?
+    /// 单键高度（pt）。nil = 跟整行一样
+    var height: Double?
+    /// 上滑打出的符号。nil = 跟默认一样
+    var swipe: String?
+    /// 删除该键
+    var deleted: Bool = false
+
+    /// 一个覆盖是不是等于"没改过"（省得存一堆空覆盖）
+    func isEmpty(vs baseWeight: Double) -> Bool {
+        (weight == nil || abs(weight! - baseWeight) < 0.01)
+            && shift == 0 && pos == nil && height == nil
+            && (swipe == nil || swipe!.isEmpty) && !deleted
+    }
+}
+
+/// 用户自己加的按键（布局编辑器「添加按键」造出来）
+struct CustomKey: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    /// 键帽文字（也是点按直接上屏的内容）
+    var label: String = ""
+    /// 放在哪一行：0 = qwertyuiop / 1 = asdfghjkl / 2 = zxcvbnm
+    var row: Int = 2
+    /// 上滑打出的符号
+    var swipe: String?
+    /// 宽度权重（1 = 标准键宽）
+    var weight: Double = 1
 }
 
 /// 主题配色：颜色一律存 hex（含 #AARRGGBB 形式），跨剪贴板整包交接。
@@ -79,8 +108,10 @@ struct KBConfig: Codable, Equatable {
     var bottomInset: Double = 7
     /// 主题配色（皮肤）
     var theme: KBTheme?
-    /// 按键级覆盖：id → 宽度/位置调整（「自定义键位」编辑器写进来）
+    /// 按键级覆盖：id → 宽度/位置/高度/上滑/删除（「键盘布局」编辑器写进来）
     var keyOverrides: [String: KeyOverride]?
+    /// 用户自己新增的按键
+    var customKeys: [CustomKey]?
     /// 版本戳，主程序每存一次就刷新，键盘按它判新旧，不会拿旧的盖新的
     var rev: Int = 0
 
@@ -121,27 +152,55 @@ struct KBConfig: Codable, Equatable {
 
 enum KeyOverrideApplier {
 
-    /// 把用户对单个键的宽度/位置调整套到三层键位表上。
-    /// 先做行内移位（同一行里把键挪左/挪右），再套宽度覆盖。
+    /// 把用户对单个键的调整套到键位表上：
+    /// 删除 → 行内移位（旧字段）→ 绝对位置 → 宽度/高度/上滑。
     static func apply(_ rows: [[KeySpec]], overrides: [String: KeyOverride]?) -> [[KeySpec]] {
         guard let ov = overrides, !ov.isEmpty else { return rows }
         return rows.map { row in
-            var r = row
-            // 移位：把键跟目标位置的键交换（shift 是相对默认位置的偏移）
+            var r = row.filter { !(ov[$0.id]?.deleted ?? false) }
+            // 旧式移位：把键跟目标位置的键交换
             for (origIdx, key) in row.enumerated() {
                 guard let o = ov[key.id], o.shift != 0 else { continue }
                 guard let cur = r.firstIndex(where: { $0.id == key.id }) else { continue }
                 let target = min(max(origIdx + o.shift, 0), r.count - 1)
                 if target != cur { r.swapAt(cur, target) }
             }
-            // 宽度覆盖：重建 KeySpec
+            // 绝对位置：把键挪到第 pos 格（1 起算，越界贴到行尾）
+            for key in row {
+                guard let o = ov[key.id], let p = o.pos, p >= 1 else { continue }
+                guard let cur = r.firstIndex(where: { $0.id == key.id }) else { continue }
+                let target = min(p - 1, r.count - 1)
+                if target != cur {
+                    r.remove(at: cur)
+                    r.insert(key, at: min(target, r.count))
+                }
+            }
+            // 宽度/高度/上滑覆盖：重建 KeySpec
             return r.map { k in
-                guard let o = ov[k.id], let w = o.weight, w > 0 else { return k }
+                guard let o = ov[k.id] else { return k }
+                let w = (o.weight.flatMap { $0 > 0 ? $0 : nil }) ?? Double(k.weight)
+                let h = o.height.flatMap { $0 > 0 ? CGFloat($0) : nil }
+                let s = (o.swipe?.isEmpty == false) ? o.swipe : k.swipe
+                if w == Double(k.weight) && h == nil && s == k.swipe { return k }
                 return KeySpec(k.id, k.label, CGFloat(w), k.action,
                                special: k.special, popup: k.popup,
-                               active: k.active, swipe: k.swipe, symbol: k.symbol)
+                               active: k.active, swipe: s, symbol: k.symbol,
+                               height: h)
             }
         }
+    }
+
+    /// 把用户新增的按键挂到对应行尾（键盘和编辑器预览共用）
+    static func addCustom(_ rows: [[KeySpec]], keys: [CustomKey]?) -> [[KeySpec]] {
+        guard let custom = keys, !custom.isEmpty else { return rows }
+        var r = rows
+        for k in custom {
+            let rowIdx = min(max(k.row, 0), r.count - 1)
+            let spec = KeySpec(k.id, k.label, CGFloat(k.weight), .text(k.label),
+                               swipe: (k.swipe?.isEmpty == false) ? k.swipe : nil)
+            r[rowIdx].append(spec)
+        }
+        return r
     }
 }
 

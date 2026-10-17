@@ -78,6 +78,7 @@ enum AuthStore {
         // 票据里的设备号必须就是本机，防止把别的机器的票据搬过来
         guard state.machine == DeviceID.current else { return false }
         write(state)
+        UIPasteboard.general.string = ""
         return true
     }
 }

@@ -419,12 +419,12 @@ private struct HomeView: View {
             }
             Button {
                 if AuthStore.exportToPasteboard() {
-                    tip("已放入剪贴板，去键盘里点「接取登录」", ok: true)
+                    tip("已打包好 去键盘里点「接取登录」", ok: true)
                 } else {
                     tip("同步失败，请重新登录", ok: false)
                 }
             } label: {
-                Label("同步登录状态到键盘", systemImage: "arrow.triangle.2.circlepath")
+                Label("同步数据", systemImage: "arrow.triangle.2.circlepath")
             }
             Button(role: .destructive) {
                 AuthStore.clear()

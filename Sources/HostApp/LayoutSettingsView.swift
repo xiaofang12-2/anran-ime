@@ -1,261 +1,285 @@
 import SwiftUI
 
-/// 「键盘布局」设置页：26 键每个键的高矮、宽窄、间距、圆角、字号，用户自己拖。
-///
-/// 拖一下即时存本机并推给键盘（见 KBConfigStore / ConfigSync），
-/// 去键盘上重新调出一次就能看到，不用再点「应用到键盘」。
+/// 「键盘布局」编辑器（对标百度输入法皮肤编辑器）：
+/// 画布上点任意一个键选中，下面直接改它的 位置 / 宽度 / 高度 / 上滑符号，
+/// 可以删掉任何一个键，也可以自己加新键。改完即时推给键盘，
+/// 去键盘重新调出一次就能看到，不用再点「应用到键盘」。
 struct LayoutSettingsView: View {
 
     @State private var cfg = KBConfigStore.current
+    @State private var selectedID: String?
+    @State private var newKeyLabel = ""
+
+    /// 应用覆盖 + 挂上自定义键之后的最终键位（编辑器预览 = 键盘真实键位）
+    private var appliedRows: [[KeySpec]] {
+        let base = Array(KeyboardLayout.letterRows(shift: false, swipe: false).prefix(3))
+        return KeyOverrideApplier.addCustom(
+            KeyOverrideApplier.apply(base, overrides: cfg.keyOverrides),
+            keys: cfg.customKeys)
+    }
+
+    /// 选中键的（行号, 行内下标）
+    private var selectedLocation: (row: Int, idx: Int)? {
+        guard let id = selectedID else { return nil }
+        for (r, row) in appliedRows.enumerated() {
+            if let i = row.firstIndex(where: { $0.id == id }) { return (r, i) }
+        }
+        return nil
+    }
+
+    private var selectedSpec: KeySpec? {
+        guard let loc = selectedLocation else { return nil }
+        return appliedRows[loc.row][loc.idx]
+    }
 
     var body: some View {
         List {
-            Section("实时预览") {
-                KBPreview(cfg: cfg)
-                    .frame(height: 190)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12,
-                                              bottom: 8, trailing: 12))
-            }
-
-            Section("按键尺寸") {
-                row("按键高度", $cfg.keyHeight, 34...70, "pt")
-                row("按键间距", $cfg.keyGap, 2...14, "pt")
-                row("行间距", $cfg.rowGap, 2...14, "pt")
-                row("键帽圆角", $cfg.corner, 0...16, "pt")
-                row("字号大小", $cfg.fontScale, 0.7...1.5, "x")
-                row("左右边距", $cfg.sideInset, 0...16, "pt")
-                row("底部留白", $cfg.bottomInset, 0...16, "pt")
-            }
-
             Section {
-                KeyEditor(cfg: $cfg)
-                    .frame(height: 150)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12,
-                                              bottom: 8, trailing: 12))
-                Button("恢复全部默认键位", role: .destructive) {
-                    cfg.keyOverrides = nil
+                EditorCanvas(cfg: $cfg, selectedID: selectedID) { spec in
+                    selectedID = (selectedID == spec.id) ? nil : spec.id
                 }
+                .frame(height: 180)
+                .listRowInsets(EdgeInsets(top: 8, leading: 10,
+                                          bottom: 8, trailing: 10))
             } header: {
-                Text("自定义键位")
+                Text("点按键选中")
             } footer: {
-                Text("点上面的按键：可调它的宽度，也可以让它在那一行里左移/右移。改完去键盘重新调出一次就能看到。")
+                Text("选中的键带蓝框  下面直接改它的属性")
             }
 
+            if let spec = selectedSpec, let loc = selectedLocation {
+                keyEditSection(spec, loc)
+            }
+
+            addKeySection
+
             Section {
-                Button("恢复默认", role: .destructive) { cfg = KBConfig() }
+                Button("恢复全部默认", role: .destructive) {
+                    cfg.keyOverrides = nil
+                    cfg.customKeys = nil
+                    selectedID = nil
+                }
             } footer: {
-                Text("改动即时生效，去键盘上重新调出一次即可看到。")
+                Text("改动即时生效 去键盘重新调出一次即可看到")
             }
         }
         .navigationTitle("键盘布局")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: cfg) { newValue in
-            // 拖一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
             KBConfigStore.saveLocal(newValue)
             ConfigSync.publish(layout: newValue)
         }
     }
 
-    // MARK: - 一行滑杆
+    // MARK: - 选中键的属性面板
 
-    private func row(_ label: String, _ value: Binding<Double>,
-                     _ range: ClosedRange<Double>, _ unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(label)
-                Spacer()
-                Text(fmt(value.wrappedValue) + unit)
-                    .font(.footnote.monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
-            Slider(value: value, in: range)
-        }
-    }
-
-    private func fmt(_ v: Double) -> String {
-        let s = String(format: "%.1f", v)
-        return s.hasSuffix(".0") ? String(s.dropLast(2)) : s
-    }
-}
-
-/// 迷你键盘预览：按当前配置实时画出键高、间距、圆角、字号，
-/// 内容自动缩放到卡片里，拖滑杆能立刻看出变化。
-private struct KBPreview: View {
-
-    let cfg: KBConfig
-
-    private let rows: [[String]] = [
-        Array("qwertyuiop").map { String($0) },
-        Array("asdfghjkl").map { String($0) },
-        Array("zxcvbnm").map { String($0) },
-    ]
-
-    var body: some View {
-        GeometryReader { geo in
-            let rawH = cfg.keyHeight * 3 + cfg.rowGap * 2 + cfg.bottomInset
-            let scale = min(1, max(0.2, (geo.size.height - 10) / max(rawH, 1)))
-            VStack(spacing: cfg.rowGap * scale) {
-                RoundedRectangle(cornerRadius: 6 * scale, style: .continuous)
-                    .fill(Color.white.opacity(0.9))
-                    .frame(height: 30 * scale)
-                ForEach(rows.indices, id: \.self) { r in
-                    HStack(spacing: cfg.keyGap * scale) {
-                        ForEach(rows[r], id: \.self) { k in
-                            RoundedRectangle(cornerRadius: cfg.corner * scale,
-                                             style: .continuous)
-                                .fill(Color.white)
-                                .shadow(color: .black.opacity(0.25),
-                                        radius: 0, x: 0, y: 1)
-                                .overlay(
-                                    Text(k)
-                                        .font(.system(size: 20 * cfg.fontScale * scale))
-                                        .foregroundColor(.black))
-                        }
-                    }
-                    .frame(height: cfg.keyHeight * scale)
+    @ViewBuilder
+    private func keyEditSection(_ spec: KeySpec, _ loc: (row: Int, idx: Int)) -> some View {
+        let rowCount = appliedRows[loc.row].count
+        Section("按键「\(spec.label)」  第\(loc.row + 1)行") {
+            Stepper(value: positionBinding(spec, rowCount: rowCount), in: 1...rowCount) {
+                HStack {
+                    Text("位置")
+                    Spacer()
+                    Text("第\(loc.idx + 1)个")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, cfg.sideInset * scale)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(hex: cfg.activeTheme.bg))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("宽度")
+                    Spacer()
+                    Text(widthText(spec))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
+                Slider(value: widthBinding(spec), in: 0.6...3.0)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("高度")
+                    Spacer()
+                    Text(heightText(spec))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
+                Slider(value: heightBinding(spec), in: 28...80)
+            }
+            HStack {
+                Text("上滑符号")
+                Spacer()
+                TextField("无", text: swipeBinding(spec))
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 90)
+            }
+            Button("恢复这个键的默认", role: .destructive) {
+                var map = cfg.keyOverrides ?? [:]
+                map.removeValue(forKey: spec.id)
+                cfg.keyOverrides = map.isEmpty ? nil : map
+            }
+            if isCustom(spec) {
+                Button("删除这个按键", role: .destructive) {
+                    cfg.customKeys = (cfg.customKeys ?? []).filter { $0.id != spec.id }
+                    selectedID = nil
+                }
+            } else {
+                Button("删除这个按键", role: .destructive) {
+                    setOverride(spec) { $0.deleted = true }
+                    selectedID = nil
+                }
+            }
         }
+    }
+
+    // MARK: - 添加按键
+
+    private var addKeySection: some View {
+        Section("添加按键") {
+            TextField("键帽文字（如 @ 或 呵呵）", text: $newKeyLabel)
+                .autocorrectionDisabled()
+            Button("添加到第\((selectedLocation?.row ?? 2) + 1)行末尾") {
+                let label = newKeyLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !label.isEmpty else { return }
+                let key = CustomKey(label: label,
+                                    row: selectedLocation?.row ?? 2,
+                                    swipe: nil, weight: 1)
+                cfg.customKeys = (cfg.customKeys ?? []) + [key]
+                newKeyLabel = ""
+                selectedID = key.id
+            }
+            .disabled(newKeyLabel
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    // MARK: - 覆盖读写
+
+    private func isCustom(_ spec: KeySpec) -> Bool {
+        (cfg.customKeys ?? []).contains { $0.id == spec.id }
+    }
+
+    /// 改一个键的覆盖；改完等于没改过就清掉（不存垃圾数据）
+    private func setOverride(_ spec: KeySpec, _ mutate: (inout KeyOverride) -> Void) {
+        var map = cfg.keyOverrides ?? [:]
+        var ov = map[spec.id] ?? KeyOverride()
+        mutate(&ov)
+        if ov.isEmpty(vs: Double(spec.weight)) && !(ov.deleted) {
+            map.removeValue(forKey: spec.id)
+        } else {
+            map[spec.id] = ov
+        }
+        cfg.keyOverrides = map.isEmpty ? nil : map
+    }
+
+    private func positionBinding(_ spec: KeySpec, rowCount: Int) -> Binding<Int> {
+        Binding {
+            selectedLocation?.idx == nil ? 1 : (selectedLocation!.idx + 1)
+        } set: { v in
+            setOverride(spec) { $0.pos = min(max(v, 1), rowCount) }
+        }
+    }
+
+    private func widthBinding(_ spec: KeySpec) -> Binding<Double> {
+        Binding {
+            cfg.keyOverrides?[spec.id]?.weight ?? Double(spec.weight)
+        } set: { v in
+            setOverride(spec) { $0.weight = v }
+        }
+    }
+
+    private func heightBinding(_ spec: KeySpec) -> Binding<Double> {
+        Binding {
+            cfg.keyOverrides?[spec.id]?.height ?? Double(cfg.keyHeight)
+        } set: { v in
+            setOverride(spec) { $0.height = v }
+        }
+    }
+
+    private func swipeBinding(_ spec: KeySpec) -> Binding<String> {
+        Binding {
+            cfg.keyOverrides?[spec.id]?.swipe ?? spec.swipe ?? ""
+        } set: { v in
+            setOverride(spec) { $0.swipe = v.isEmpty ? nil : v }
+        }
+    }
+
+    private func widthText(_ spec: KeySpec) -> String {
+        String(format: "%.2fx", cfg.keyOverrides?[spec.id]?.weight ?? Double(spec.weight))
+    }
+
+    private func heightText(_ spec: KeySpec) -> String {
+        let h = cfg.keyOverrides?[spec.id]?.height ?? Double(cfg.keyHeight)
+        return "\(Int(h.rounded()))pt"
     }
 }
 
-/// 键位编辑器：把三层键位按「应用了宽度/位置覆盖后的最终样子」画出来，
-/// 点任意键弹出编辑面板 —— 调宽度、行内左移/右移、恢复该键默认。
-/// 数据直接写 cfg.keyOverrides，onChange 自动推给键盘。
-struct KeyEditor: View {
+// MARK: - 编辑器画布
+
+/// 键位画布：画「应用覆盖后」的最终键位（含自定义键、删除、单键高度），
+/// 点键回调给宿主做选中。
+private struct EditorCanvas: View {
 
     @Binding var cfg: KBConfig
-    @State private var editing: KeySpec?
+    let selectedID: String?
+    let onTap: (KeySpec) -> Void
 
-    /// 编辑器里画哪些键：字母三行 + 退格（最常用的部分，太多键小屏点不准）
     private var appliedRows: [[KeySpec]] {
         let base = Array(KeyboardLayout.letterRows(shift: false, swipe: false).prefix(3))
-        return KeyOverrideApplier.apply(base, overrides: cfg.keyOverrides)
+        return KeyOverrideApplier.addCustom(
+            KeyOverrideApplier.apply(base, overrides: cfg.keyOverrides),
+            keys: cfg.customKeys)
     }
 
     var body: some View {
         GeometryReader { geo in
-            let rows = appliedRows
             let gap: CGFloat = 4
-            let h = geo.size.height
-            let keyH = (h - gap * 2) / 3
+            let baseH: CGFloat = 42
+            let rowHs: [CGFloat] = appliedRows.map { row in
+                (row.compactMap { $0.height }.max().map { max($0, baseH) } ?? baseH)
+            }
+            let totalH = rowHs.reduce(0, +) + gap * CGFloat(max(appliedRows.count - 1, 0))
+            let scale = min(1, (geo.size.height - 6) / max(totalH, 1))
             VStack(spacing: gap) {
-                ForEach(rows.indices, id: \.self) { r in
+                ForEach(appliedRows.indices, id: \.self) { r in
+                    let row = appliedRows[r]
+                    let unit = (geo.size.width - gap * CGFloat(max(row.count - 1, 0)))
+                        / CGFloat(max(row.reduce(0) { $0 + $1.weight }, 0.1))
                     HStack(spacing: gap) {
-                        ForEach(rows[r]) { k in
-                            editorKey(k)
+                        ForEach(row) { k in
+                            canvasKey(k, scale: scale,
+                                      h: (k.height.map { CGFloat($0) } ?? rowHs[r]) * scale,
+                                      w: unit * k.weight)
                         }
                     }
-                    .frame(height: keyH)
+                    .frame(height: rowHs[r] * scale, alignment: .center)
                 }
             }
-        }
-        .sheet(item: $editing) { spec in
-            KeyEditSheet(spec: spec, cfg: $cfg)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     @ViewBuilder
-    private func editorKey(_ k: KeySpec) -> some View {
-        let overridden = cfg.keyOverrides?[k.id] != nil
-        Button { editing = k } label: {
+    private func canvasKey(_ k: KeySpec, scale: CGFloat, h: CGFloat, w: CGFloat) -> some View {
+        let selected = selectedID == k.id
+        Button { onTap(k) } label: {
             Text(k.label)
-                .font(.system(size: k.label.count > 1 ? 11 : 15, weight: .medium))
+                .font(.system(size: (k.label.count > 1 ? 11 : 15) * scale,
+                              weight: .medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .foregroundColor(Color(hex: cfg.activeTheme.text))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: w, height: h)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(Color(hex: cfg.activeTheme.key))
                         .overlay(
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .strokeBorder(overridden ? Color(hex: cfg.activeTheme.accent)
-                                                         : Color.black.opacity(0.12),
-                                              lineWidth: overridden ? 2 : 0.5))
+                                .strokeBorder(selected ? Color(hex: cfg.activeTheme.accent)
+                                                        : Color.black.opacity(0.12),
+                                              lineWidth: selected ? 2.5 : 0.5))
                         .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 1))
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// 单键编辑面板：宽度滑块 + 左移/右移 + 恢复该键
-private struct KeyEditSheet: View {
-
-    let spec: KeySpec
-    @Binding var cfg: KBConfig
-    @Environment(\.dismiss) private var dismiss
-
-    private var ovBinding: Binding<KeyOverride> {
-        Binding {
-            cfg.keyOverrides?[spec.id] ?? KeyOverride(weight: nil, shift: 0)
-        } set: { v in
-            var map = cfg.keyOverrides ?? [:]
-            let isDefault = (v.weight == nil || abs(v.weight! - Double(spec.weight)) < 0.01)
-                && v.shift == 0
-            if isDefault { map.removeValue(forKey: spec.id) } else { map[spec.id] = v }
-            cfg.keyOverrides = map.isEmpty ? nil : map
-        }
-    }
-
-    var body: some View {
-        NavigationView {
-            Form {
-                Section("按键「\(spec.label)」") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("宽度")
-                            Spacer()
-                            Text(wText)
-                                .font(.footnote.monospacedDigit())
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: Binding(
-                            get: { ovBinding.wrappedValue.weight ?? Double(spec.weight) },
-                            set: { ovBinding.wrappedValue.weight = $0 }), in: 0.6...3.0)
-                    }
-                    Stepper(value: ovBinding.shift, in: -3...3) {
-                        HStack {
-                            Text("行内位置")
-                            Spacer()
-                            Text(ovBinding.wrappedValue.shift == 0
-                                 ? "默认位置"
-                                 : (ovBinding.wrappedValue.shift < 0
-                                    ? "左移\(-ovBinding.wrappedValue.shift)格"
-                                    : "右移\(ovBinding.wrappedValue.shift)格"))
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                Section {
-                    Button("恢复这个键的默认", role: .destructive) {
-                        var map = cfg.keyOverrides ?? [:]
-                        map.removeValue(forKey: spec.id)
-                        cfg.keyOverrides = map.isEmpty ? nil : map
-                    }
-                } footer: {
-                    Text("宽度 1.0 是标准键宽（shift/退格这种宽键有自己的默认值）。改完去键盘重新调出一次即可看到。")
-                }
-            }
-            .navigationTitle("自定义键位")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
-    }
-
-    private var wText: String {
-        let w = ovBinding.wrappedValue.weight ?? Double(spec.weight)
-        return String(format: "%.2fx", w)
     }
 }

@@ -85,10 +85,23 @@ enum ConfigSync {
     }
 
     /// 键盘用：剪贴板里有跟上次不一样的整包才接（配置 + 登录态一起落）
+    /// 隐藏粘贴三板斧：
+    ///   1. changeCount 没变就一个字节都不读 —— iOS 的「粘贴自」弹窗是读内容才触发，
+    ///      查次数不触发，键盘每回弹出不再骚扰用户；
+    ///   2. 真要读，读完立刻把 ANRAN 包清掉，用户长按粘贴不会粘出乱码；
+    ///   3. 想彻底无感，主程序引导用户开「允许完全访问」（开了以后读剪贴板零弹窗）。
     @discardableResult
     static func pull() -> Bool {
+        let cc = UIPasteboard.general.changeCount
+        let seenKey = "anran_sync_seen_change"
+        if cc == UserDefaults.standard.integer(forKey: seenKey) { return false }
         guard let raw = UIPasteboard.general.string,
-              raw.hasPrefix(SyncBundle.prefix) else { return false }
+              raw.hasPrefix(SyncBundle.prefix) else {
+            UserDefaults.standard.set(cc, forKey: seenKey)
+            return false
+        }
+        UserDefaults.standard.set(cc, forKey: seenKey)
+        defer { UIPasteboard.general.string = "" }
         let json = String(raw.dropFirst(SyncBundle.prefix.count))
         guard let d = json.data(using: .utf8),
               let bundle = try? JSONDecoder().decode(SyncBundle.self, from: d) else { return false }

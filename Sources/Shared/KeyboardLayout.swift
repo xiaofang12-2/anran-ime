@@ -36,11 +36,13 @@ struct KeySpec: Identifiable {
     let swipe: String?
     /// SF Symbol 名（shift / 退格这种画图标的键）。有它画图标，没有才画 label
     let symbol: String?
+    /// 单键高度覆盖（pt）。nil = 跟整行一样高（布局编辑器里给单键调高矮用）
+    let height: CGFloat?
 
     init(_ id: String, _ label: String, _ weight: CGFloat,
          _ action: KeyAction, special: Bool = false,
          popup: Bool = false, active: Bool = false,
-         swipe: String? = nil, symbol: String? = nil) {
+         swipe: String? = nil, symbol: String? = nil, height: CGFloat? = nil) {
         self.id = id
         self.label = label
         self.weight = weight
@@ -50,6 +52,7 @@ struct KeySpec: Identifiable {
         self.active = active
         self.swipe = swipe
         self.symbol = symbol
+        self.height = height
     }
 }
 

@@ -280,12 +280,21 @@ struct KeyRow: View {
                 ForEach(keys) { spec in
                     keyView(spec)
                         .frame(width: m.unit * spec.weight)
+                        // 单键高度覆盖（布局编辑器调的）：矮的键在行里垂直居中
+                        .frame(height: spec.height ?? geo.size.height,
+                               alignment: .center)
                 }
             }
             .frame(width: m.rowWidth, height: geo.size.height)
             .position(x: geo.size.width / 2, y: geo.size.height / 2)
         }
-        .frame(height: KBMetrics.keyHeight)
+        .frame(height: rowHeight)
+    }
+
+    /// 行高 = 行里最高的键（没单键覆盖就是标准键高）
+    private var rowHeight: CGFloat {
+        let custom = keys.compactMap { $0.height }.max() ?? 0
+        return max(custom, KBMetrics.keyHeight)
     }
 
     /// 一行怎么摆：
@@ -328,9 +337,8 @@ struct KeyRow: View {
 }
 
 /// 键盘顶栏（学百度输入法）：一行装下 LOGO / 候选词 / 功能入口 ——
-///   左 = 软件图标   中 = 拼音串或候选词   右 = 剪贴板 / 自定义短语 / 思想库 / 收起
+///   左 = 软件图标   中 = 拼音串或候选词   右 = 剪贴板 / 思想库 / 收起
 /// 功能栏不再单独占一条横（用户点名难看的那道横就是它），候选与功能同栏共存。
-/// 有候选时候选区横向滚动，没候选时露出拼音串或引擎诊断。
 struct TopBar: View {
 
     let thoughtOn: Bool
@@ -341,11 +349,7 @@ struct TopBar: View {
     let candidates: [PinyinCandidate]
     let onPick: (PinyinCandidate) -> Void
     let onForget: (String) -> Void
-    /// 引擎诊断串（方案 id + 真实候选条数），空闲时露一眼。
-    /// 没有 App Groups 时这是确认 librime 到底有没有在干活的唯一途径。
-    var diag: String = ""
     let onClipboard: () -> Void
-    let onPhrase: () -> Void
     let onThought: () -> Void
     let onThoughtLongPress: () -> Void
     let onCollapse: () -> Void
@@ -359,20 +363,11 @@ struct TopBar: View {
             logo
             Group {
                 if shown.isEmpty {
-                    // 没候选：正在打的拼音串优先露出来，空闲时改露引擎诊断
-                    if composing.isEmpty && !diag.isEmpty {
-                        Text(diag)
-                            .font(.system(size: 11 * scale))
-                            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.35))
-                            .padding(.horizontal, 10)
-                        Spacer(minLength: 0)
-                    } else {
-                        Text(composing)
-                            .font(.system(size: 15 * scale))
-                            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
-                            .padding(.horizontal, 10)
-                        Spacer(minLength: 0)
-                    }
+                    Text(composing)
+                        .font(.system(size: 15 * scale))
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
+                        .padding(.horizontal, 10)
+                    Spacer(minLength: 0)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
@@ -406,8 +401,6 @@ struct TopBar: View {
             if !typing {
                 icon("doc.on.clipboard", active: clipboardOn,
                      tap: onClipboard, longPress: nil)
-                icon("text.badge.plus", active: false,
-                     tap: onPhrase, longPress: nil)
                 icon("lightbulb", active: thoughtOn,
                      tap: onThought, longPress: onThoughtLongPress)
                 icon("keyboard.chevron.compact.down", active: false,

@@ -126,9 +126,7 @@ struct KeyboardRootView: View {
                    candidates: panel == .thought ? thoughtCands : candidates,
                    onPick: panel == .thought ? pickThought : pick,
                    onForget: panel == .thought ? { _ in } : forget,
-                   diag: panel == .thought ? "" : engineDiag,
                    onClipboard: toggleClipboard,
-                   onPhrase: { controller.openHost("phrases") },
                    onThought: toggleThought,
                    onThoughtLongPress: { controller.openHost("thoughts") },
                    onCollapse: { controller.dismissKeyboardNow() })
@@ -342,10 +340,15 @@ struct KeyboardRootView: View {
     }
 
     /// 关键词内容按行拆（去空行去首尾空白）
+    /// 智能分行：按 Unicode 标准换行拆（\n / \r\n / \r / U+2028/U+2029 全认），
+    /// 不管从微信、网页还是备忘录粘进来的多行内容，一句是一句，绝不叠成一行。
     private func thoughtContentLines(_ content: String) -> [String] {
-        content.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        var lines: [String] = []
+        content.enumerateLines { line, _ in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty { lines.append(t) }
+        }
+        return lines
     }
 
     /// 一句进发送通道：忙就排队，闲就直接开始逐字上屏
@@ -406,15 +409,17 @@ struct KeyboardRootView: View {
                                        shift: shiftOn || capsLock,
                                        swipe: IMESettingsStore.current.swipeNumber)
         let applied = KeyOverrideApplier.apply(base, overrides: KBMetrics.cfg.keyOverrides)
-        guard returnLabel != "换行" else { return applied }
+        // 用户自己加的按键挂到行尾
+        let withCustom = KeyOverrideApplier.addCustom(applied, keys: KBMetrics.cfg.customKeys)
+        guard returnLabel != "换行" else { return withCustom }
         // 回车键文案换成宿主 App 要的那个（发送 / 搜索 / 前往…）
-        return applied.map { row in
+        return withCustom.map { row in
             row.map { spec in
                 guard case .ret = spec.action else { return spec }
                 return KeySpec(spec.id, returnLabel, spec.weight, spec.action,
                                special: spec.special, popup: spec.popup,
                                active: spec.active, swipe: spec.swipe,
-                               symbol: spec.symbol)
+                               symbol: spec.symbol, height: spec.height)
             }
         }
     }
@@ -633,7 +638,7 @@ struct KeyboardRootView: View {
             Text("未授权")
                 .font(.system(size: 16, weight: .semibold))
             Text(hint.isEmpty
-                 ? "请先在「黯然输入法」里登录账号"
+                 ? "请先在「黯然输入法」里登录账号  然后设置内点「同步数据」\n再到系统设置给键盘开「允许完全访问」 同步零弹窗"
                  : hint)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
@@ -647,7 +652,7 @@ struct KeyboardRootView: View {
                         hint = ""
                         check()
                     } else {
-                        hint = "没接到登录态，请先在主程序点「同步登录状态到键盘」"
+                        hint = "没接到登录态 请先在主程序点「同步数据」"
                     }
                 }
                 GateButton(label: "打开主程序") { controller.openHostApp() }
