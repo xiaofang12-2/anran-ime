@@ -486,7 +486,7 @@ private struct HomeView: View {
                 .padding(.vertical, 12)
                 // 长按 = 强制出配对码（换新键盘 / 解绑后重连用），平时用不到
                 .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 1.2).onEnded { forcePair() })
+                    LongPressGesture(minimumDuration: 1.2).onEnded { _ in forcePair() })
         }
     }
 
