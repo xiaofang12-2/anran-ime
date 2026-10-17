@@ -380,6 +380,9 @@ private struct HomeView: View {
     @State private var showPairSheet = false
     @State private var message = ""
     @State private var messageBad = false
+    /// 长按按钮强制出配对码的触发时刻：长按松手后 Button 的点击还会跟着来一次，
+    /// 用时间窗把它挡掉，一次长按不至于变成「配对 + 同步」两连发
+    @State private var forcePairAt = Date.distantPast
 
     var body: some View {
         ZStack {
@@ -478,16 +481,12 @@ private struct HomeView: View {
 
     private var syncCard: some View {
         ARTheme.card {
-            VStack(spacing: 10) {
-                ARPrimaryButton(title: syncing ? "正在生成配对码…" : "同步数据",
-                                busy: syncing) { startSync() }
-                Text("点一下出一个6位配对码  在键盘登录墙输入即可连接\n配对一次永久自动同步  改关键词 短语 布局 设置都自动到键盘")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.bottom, 10)
-            }
-            .padding(.vertical, 12)
+            ARPrimaryButton(title: syncing ? "正在同步…" : "同步数据",
+                            busy: syncing) { startSync() }
+                .padding(.vertical, 12)
+                // 长按 = 强制出配对码（换新键盘 / 解绑后重连用），平时用不到
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 1.2).onEnded { forcePair() })
         }
     }
 
@@ -538,8 +537,36 @@ private struct HomeView: View {
 
     // MARK: 动作
 
-    /// 同步连接器：登记配对码 + 推全量配置包，弹层展示配对码
+    /// 同步连接器：先问服务端这个账号配没配对过键盘——
+    /// 配过 = 静默把全量配置推上去（不出码不弹层）；没配过 = 出配对码走首次配对
     private func startSync() {
+        // 长按松手后 Button 还会补一次点击 这一下忽略
+        if Date().timeIntervalSince(forcePairAt) < 0.6 { return }
+        guard let s = AuthStore.current, !s.ticket.isEmpty else {
+            tip("登录态丢失 请重新登录", ok: false)
+            return
+        }
+        syncing = true
+        AnRanAPI.shared.pairStatus(ticket: s.ticket) { paired in
+            syncing = false
+            if paired {
+                // 已配对：只更新输入法的改动 自定义 短语 布局 设置 思想库全量推
+                _ = ConfigSync.publish()
+                SnapshotReport.uploadIfNeeded()
+                tip("已同步  改动已推给键盘 重新调出键盘即生效", ok: true)
+            } else {
+                runPairFlow()
+            }
+        }
+    }
+
+    /// 出配对码的完整流程：首次配对 / 长按重配新键盘时走这里
+    private func forcePair() {
+        forcePairAt = Date()
+        runPairFlow()
+    }
+
+    private func runPairFlow() {
         guard let s = AuthStore.current, !s.ticket.isEmpty else {
             tip("登录态丢失 请重新登录", ok: false)
             return

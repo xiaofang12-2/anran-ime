@@ -106,6 +106,22 @@ final class AnRanAPI: NSObject {
 
     // MARK: - 配置同步连接器
 
+    /// 主App：查本账号是否已有键盘配对过（决定「同步数据」走静默推送还是出配对码）
+    func pairStatus(ticket: String,
+                    completion: @escaping (_ paired: Bool) -> Void) {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/pair/status"))
+        req.httpMethod = "GET"
+        req.setValue(ticket, forHTTPHeaderField: "X-Ticket")
+        session.dataTask(with: req) { data, resp, _ in
+            var paired = false
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                paired = (obj["paired"] as? Bool) ?? false
+            }
+            DispatchQueue.main.async { completion(paired) }
+        }.resume()
+    }
+
     /// 主App：登记一个6位配对码（键盘输这个码来领登录态），10分钟有效
     func pairStart(ticket: String, code: String,
                    completion: @escaping (Bool) -> Void) {
