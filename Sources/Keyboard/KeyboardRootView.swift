@@ -436,12 +436,40 @@ struct KeyboardRootView: View {
         return lines
     }
 
+    /// 尾巴：开启后思想库发出去的每句尾部带设置的符号。
+    /// 尾部已有任何符号（Unicode 标点/符号类全认）→ 不重复带；
+    /// 尾部是空格 → 替换成尾巴；其他 → 直接补上。
+    private func tailApplied(_ line: String) -> String {
+        let s = IMESettingsStore.current
+        guard s.tailEnabled, !s.tailSymbol.isEmpty, !line.isEmpty else { return line }
+        var t = line
+        while let last = t.last, last.isWhitespace { t.removeLast() }
+        guard let last = t.last else { return line }
+        return isSymbolChar(last) ? t : t + s.tailSymbol
+    }
+
+    /// 符号判定：Unicode 标点类与符号类全算（中英文标点 数学/货币/装饰符号都拦）
+    private func isSymbolChar(_ c: Character) -> Bool {
+        c.unicodeScalars.contains { sc in
+            switch sc.properties.generalCategory {
+            case .otherPunctuation, .openPunctuation, .closePunctuation,
+                 .initialPunctuation, .finalPunctuation, .dashPunctuation,
+                 .connectorPunctuation, .mathSymbol, .currencySymbol,
+                 .modifierSymbol, .otherSymbol:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     /// 一句进发送通道：忙就排队，闲就直接开始逐字上屏
     private func offerThoughtLine(_ line: String) {
+        let out = tailApplied(line)
         if thoughtBusy {
-            thoughtQueue.append(line)
+            thoughtQueue.append(out)
         } else {
-            startThoughtLine(line)
+            startThoughtLine(out)
         }
     }
 

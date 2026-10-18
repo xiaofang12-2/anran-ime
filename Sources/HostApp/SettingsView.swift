@@ -54,6 +54,8 @@ struct SettingsView: View {
                     ARTheme.sectionTitle("个性化")
                     ARTheme.card {
                         ARNavRow(title: "键盘布局") { LayoutSettingsView() }
+                        arDivider()
+                        ARNavRow(title: "尾巴") { TailSettingsView() }
                     }
                     Text("自定义短语和思想库都从主页入口进。")
                         .font(.system(size: 11))

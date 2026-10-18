@@ -24,6 +24,10 @@ struct IMESettings: Codable, Equatable {
     /// 「清空打字学习记录」的一次性令牌：主程序点一次就刷新时间戳，
     /// 键盘见到比本地新就清一次（键盘沙盒里读不到主程序的存储，只能这么传令）
     var clearLearnToken = 0
+    /// 尾巴：开启后思想库发出去的每句尾部带尾巴符号
+    var tailEnabled = false
+    /// 尾巴符号（单个，如 。 或 .）
+    var tailSymbol = ""
     /// 版本戳
     var rev: Int = 0
 
@@ -32,12 +36,38 @@ struct IMESettings: Codable, Equatable {
     static let candidateRange: ClosedRange<Int> = 10...60
     static let outputSpeedRange: ClosedRange<Int> = 0...300
 
+    private enum CodingKeys: String, CodingKey {
+        case fuzzyPinyin, abbrevInput, smartCorrect, autoCapitalize
+        case keySound, vibration, candidateCount, outputSpeed
+        case clearLearnToken, tailEnabled, tailSymbol, rev
+    }
+
+    /// 老版本存的 JSON 缺新字段也能解（缺的补默认值），设置不会被整体重置
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fuzzyPinyin     = try c.decodeIfPresent(Bool.self, forKey: .fuzzyPinyin) ?? true
+        abbrevInput     = try c.decodeIfPresent(Bool.self, forKey: .abbrevInput) ?? true
+        smartCorrect    = try c.decodeIfPresent(Bool.self, forKey: .smartCorrect) ?? true
+        autoCapitalize  = try c.decodeIfPresent(Bool.self, forKey: .autoCapitalize) ?? true
+        keySound        = try c.decodeIfPresent(Bool.self, forKey: .keySound) ?? true
+        vibration       = try c.decodeIfPresent(Bool.self, forKey: .vibration) ?? false
+        candidateCount  = try c.decodeIfPresent(Int.self, forKey: .candidateCount) ?? 40
+        outputSpeed     = try c.decodeIfPresent(Int.self, forKey: .outputSpeed) ?? 20
+        clearLearnToken = try c.decodeIfPresent(Int.self, forKey: .clearLearnToken) ?? 0
+        tailEnabled     = try c.decodeIfPresent(Bool.self, forKey: .tailEnabled) ?? false
+        tailSymbol      = try c.decodeIfPresent(String.self, forKey: .tailSymbol) ?? ""
+        rev             = try c.decodeIfPresent(Int.self, forKey: .rev) ?? 0
+    }
+
     var sanitized: IMESettings {
         var s = self
         s.candidateCount = min(max(s.candidateCount, IMESettings.candidateRange.lowerBound),
                                IMESettings.candidateRange.upperBound)
         s.outputSpeed = min(max(s.outputSpeed, IMESettings.outputSpeedRange.lowerBound),
                             IMESettings.outputSpeedRange.upperBound)
+        if s.tailSymbol.count > 1 { s.tailSymbol = String(s.tailSymbol.prefix(1)) }
         return s
     }
 }

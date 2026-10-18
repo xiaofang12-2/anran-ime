@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.12"
-    CURRENT_PROJECT_VERSION: "47"
+    MARKETING_VERSION: "0.9.13"
+    CURRENT_PROJECT_VERSION: "48"
     SWIFT_VERSION: "5.0"
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
     CODE_SIGN_STYLE: Manual
