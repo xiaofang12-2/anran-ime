@@ -32,6 +32,7 @@ struct KeyboardRootView: View {
 
     // 顶部功能栏 / 浮层面板
     @State private var panel: KBPanel = .none
+    @State private var expandedCandidates = false          // 展开候选栏（网格）
     @State private var thoughtQuery = ""
     @State private var thoughtComposing = ""                 // 面板里的拼音串
     @State private var thoughtCands: [PinyinCandidate] = []
@@ -145,13 +146,16 @@ struct KeyboardRootView: View {
         VStack(spacing: KBMetrics.rowGap) {
             // 顶栏一行装下 LOGO + 候选词 + 功能图标（学百度，不再分两栏）
             // 正在打拼音时功能图标整组让位，候选词拉满整行
+            // （思想库面板里打关键词/拼音同样让位 —— 显示什么就发什么）
             TopBar(thoughtOn: panel == .thought,
                    clipboardOn: panel == .clipboard,
-                   typing: panel != .thought && !composing.isEmpty,
-                   composing: panel == .thought ? thoughtComposing : composing,
+                   typing: typing,
+                   composing: panel == .thought ? (thoughtQuery + thoughtComposing) : composing,
                    candidates: panel == .thought ? thoughtCands : candidates,
                    onPick: panel == .thought ? pickThought : pick,
                    onForget: panel == .thought ? { _ in } : forget,
+                   expandOn: expandedCandidates,
+                   onToggleExpand: toggleExpandCandidates,
                    onClipboard: toggleClipboard,
                    onThought: toggleThought,
                    onThoughtLongPress: { controller.openHost("thoughts") },
@@ -170,6 +174,12 @@ struct KeyboardRootView: View {
                              onClose: closeThoughtPanel)
             }
 
+            // 展开候选栏：单行候选一键铺成网格（思想库模式下点词落进面板输入框）
+            if expandedCandidates {
+                CandidateGridPanel(candidates: panel == .thought ? thoughtCands : candidates,
+                                   onPick: panel == .thought ? pickThought : pick)
+            }
+
             ForEach(rows.indices, id: \.self) { i in
                 KeyRow(keys: rows[i],
                        onKey: handle,
@@ -179,6 +189,17 @@ struct KeyboardRootView: View {
                        onLongPress: longPress)
             }
         }
+        // 候选空了（上完屏/删光）展开栏自动收起，不留一块空白
+        .onChange(of: candidates) { _ in syncExpandAuto() }
+        .onChange(of: thoughtCands) { _ in syncExpandAuto() }
+    }
+
+    /// 功能栏（顶栏右侧图标组）隐藏规则：正在输入就让位 ——
+    /// 普通打字看拼音串，思想库模式看面板里的关键词/拼音串，打完自动恢复。
+    private var typing: Bool {
+        panel == .thought
+            ? (!thoughtQuery.isEmpty || !thoughtComposing.isEmpty)
+            : !composing.isEmpty
     }
 
     // MARK: - 功能栏 / 面板
@@ -186,14 +207,39 @@ struct KeyboardRootView: View {
     /// 面板开合：把多出来的高度报给键盘容器，否则展开的行会被裁掉
     private func setPanel(_ p: KBPanel) {
         panel = p
-        let extra: CGFloat
-        switch p {
-        case .none: extra = 0
+        applyExtraHeight()
+        syncExpandAuto()
+    }
+
+    /// 当前额外总高度 = 面板（剪贴板/思想库）+ 展开候选栏，两块可叠加
+    private func applyExtraHeight() {
+        var extra: CGFloat = 0
+        switch panel {
+        case .none: break
         case .clipboard: extra = KBMetrics.panelHeight + KBMetrics.rowGap
         // 思想库面板：输入框面板（thoughtPanelHeight 已含真实高度）+ 顶层多一个间隔
         case .thought: extra = KBMetrics.thoughtPanelHeight + KBMetrics.rowGap
         }
+        if expandedCandidates {
+            extra += KBMetrics.candidatePanelHeight + KBMetrics.rowGap
+        }
         controller.setExtraHeight(extra)
+    }
+
+    /// 展开候选栏开合
+    private func toggleExpandCandidates() {
+        expandedCandidates.toggle()
+        applyExtraHeight()
+    }
+
+    /// 候选空了（上完屏/删光/切面板）展开栏自动收起
+    private func syncExpandAuto() {
+        guard expandedCandidates else { return }
+        let list = panel == .thought ? thoughtCands : candidates
+        if list.isEmpty {
+            expandedCandidates = false
+            applyExtraHeight()
+        }
     }
 
     private func toggleClipboard() {
@@ -441,8 +487,7 @@ struct KeyboardRootView: View {
 
     private var rows: [[KeySpec]] {
         let base = KeyboardLayout.rows(layer: layer,
-                                       shift: shiftOn || capsLock,
-                                       swipe: IMESettingsStore.current.swipeNumber)
+                                       shift: shiftOn || capsLock)
         let applied = KeyOverrideApplier.apply(base, overrides: KBMetrics.cfg.keyOverrides)
         // 用户自己加的按键挂到行尾
         let withCustom = KeyOverrideApplier.addCustom(applied, keys: KBMetrics.cfg.customKeys)
@@ -577,11 +622,14 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// 字母键上滑：直接把副字符（数字）打出去
+    /// 字母键上滑（q~o = 1~9）：选候选拦对应位置的候选。
+    /// 没打字、候选拦是空的，上滑就没效果 —— 上滑只做选候选 不打数字。
     private func swipe(_ spec: KeySpec, _ ch: String) {
-        commitComposing()
-        controller.insert(ch)
-        candidates = []
+        guard let n = Int(ch), n >= 1 else { return }
+        let list = panel == .thought ? thoughtCands : candidates
+        guard n <= list.count else { return }
+        let c = list[n - 1]
+        if panel == .thought { pickThought(c) } else { pick(c) }
     }
 
     /// 退格上滑：清掉整串拼音
@@ -654,9 +702,8 @@ struct KeyboardRootView: View {
         let rest = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
         composing = rest
         if rest.isEmpty {
-            // 上屏后立刻联想下一个字
-            candidates = InputEngine.shared.associate(c.word)
-                .map { PinyinCandidate(word: $0, score: 0) }
+            // 上屏完就完 不做联想：候选拦只跟着拼音串走
+            candidates = []
         } else {
             controller.setComposing(rest)
             candidates = InputEngine.shared.candidates(for: rest)
@@ -749,7 +796,8 @@ struct KeyboardRootView: View {
                                           ticket: res.ticket,
                                           machine: res.machine,
                                           expireAt: res.expireAt,
-                                          savedAt: Int(Date().timeIntervalSince1970)))
+                                          savedAt: Int(Date().timeIntervalSince1970),
+                                          logoutSeq: res.logoutSeq))
                 pairCode = ""
                 hint = ""
                 check()

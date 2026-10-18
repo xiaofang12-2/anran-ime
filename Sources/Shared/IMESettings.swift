@@ -11,8 +11,6 @@ struct IMESettings: Codable, Equatable {
     var abbrevInput = true
     /// 智能纠错：按错相邻键也能出词（nihap → 你好）
     var smartCorrect = true
-    /// 字母键上滑出数字
-    var swipeNumber = true
     /// 句首自动大写（英文）
     var autoCapitalize = true
     /// 按键音效

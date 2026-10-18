@@ -144,18 +144,25 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: - 授权
 
     /// 心跳续票据：能连上就刷新，连不上先用本机缓存撑着（离线宽限）
-    /// 只有服务端明确说禁用 / 解绑 / 无此账号，才把登录态清掉
+    /// 只有服务端明确说禁用 / 解绑 / 无此账号，或账号在别处退登过（登出序号
+    /// 对不上），才把登录态清掉 —— 键盘立刻锁死切回登录墙
     func refreshAuth() {
         guard let s = AuthStore.current, !s.ticket.isEmpty else { return }
         AnRanAPI.shared.heartbeat(ticket: s.ticket, machine: s.machine) { res in
-            if res.ok {
-                AuthStore.save(username: s.username, ticket: res.ticket,
-                               expireAt: res.expireAt)
-            } else if ["disabled", "unbound", "no_account",
-                       "machine_mismatch"].contains(res.error) {
+            if ["disabled", "unbound", "no_account",
+                "machine_mismatch"].contains(res.error) {
                 AuthStore.clear()
                 // 界面层立刻收到广播切回登录墙，不等下一次 pull
                 NotificationCenter.default.post(name: .anranAuthKicked, object: nil)
+            } else if res.ok {
+                if let seq = res.logoutSeq, seq != (s.logoutSeq ?? 0) {
+                    AuthStore.clear()
+                    NotificationCenter.default.post(name: .anranAuthKicked, object: nil)
+                    return
+                }
+                AuthStore.save(username: s.username, ticket: res.ticket,
+                               expireAt: res.expireAt,
+                               logoutSeq: res.logoutSeq ?? s.logoutSeq)
             }
         }
     }

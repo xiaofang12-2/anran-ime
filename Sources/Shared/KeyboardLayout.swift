@@ -97,6 +97,8 @@ enum KBMetrics {
     static let panelHeight: CGFloat = 38
     /// 思想库输入框面板实际高度（输入框34 + 间距6 + 预览条20 + 上下边距16）
     static let thoughtPanelHeight: CGFloat = 76
+    /// 展开候选栏高度（4行 x 8个 = 32个候选：上下边距16 + 行高32x4 + 行距6x3）
+    static let candidatePanelHeight: CGFloat = 162
     static let topInset: CGFloat = 6
 
     /// 字母/数字/符号三层都是 4 行
@@ -131,14 +133,11 @@ enum KeyboardLayout {
     private static let letterRow2 = Array("asdfghjkl")
     private static let letterRow3 = Array("zxcvbnm")
 
-    /// 字母键上滑出对应数字
+    /// 字母键上滑 = 选候选拦对应位置的候选（q~o 对标候选拦第 1~9 个；
+    /// 没有候选时上滑没效果 —— 见 KeyboardRootView.swipe）
     private static let letterSwipe: [Character: String] = [
         "q": "1", "w": "2", "e": "3", "r": "4", "t": "5",
-        "y": "6", "u": "7", "i": "8", "o": "9", "p": "0",
-        "a": "1", "s": "2", "d": "3", "f": "4", "g": "5",
-        "h": "6", "j": "7", "k": "8", "l": "9",
-        "z": "1", "x": "2", "c": "3", "v": "4", "b": "5",
-        "n": "6", "m": "7",
+        "y": "6", "u": "7", "i": "8", "o": "9",
     ]
 
     static func rows(layer: KBLayer, shift: Bool, swipe: Bool = true) -> [[KeySpec]] {

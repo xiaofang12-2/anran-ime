@@ -349,6 +349,9 @@ struct TopBar: View {
     let candidates: [PinyinCandidate]
     let onPick: (PinyinCandidate) -> Void
     let onForget: (String) -> Void
+    /// 候选展开栏开着（按钮点亮 + 网格铺开）
+    var expandOn: Bool = false
+    let onToggleExpand: () -> Void
     let onClipboard: () -> Void
     let onThought: () -> Void
     let onThoughtLongPress: () -> Void
@@ -398,6 +401,11 @@ struct TopBar: View {
             }
             .frame(maxWidth: .infinity)
 
+            // 展开候选栏：候选一键铺成网格 不用来回横滑
+            if !shown.isEmpty {
+                expandButton
+            }
+
             if !typing {
                 icon("doc.on.clipboard", active: clipboardOn,
                      tap: onClipboard, longPress: nil)
@@ -445,6 +453,18 @@ struct TopBar: View {
             .contentShape(Rectangle())
             .onTapGesture { tap() }
             .onLongPressGesture(minimumDuration: 0.5) { longPress?() }
+    }
+
+    /// 展开候选栏按钮：展开后点亮，再点收起
+    private var expandButton: some View {
+        Image(systemName: expandOn ? "chevron.up" : "chevron.down")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(expandOn ? .white
+                                      : KBMetrics.themeSpecialTextColor.opacity(0.85))
+            .frame(width: 30, height: KBMetrics.barHeight)
+            .background(expandOn ? KBMetrics.themeAccentColor : Color.clear)
+            .contentShape(Rectangle())
+            .onTapGesture { onToggleExpand() }
     }
 
     /// 软件图标：键盘 target 里随包带的 ime_logo.png
@@ -573,5 +593,51 @@ struct ThoughtPanel: View {
                 caretOn.toggle()
             }
         }
+    }
+}
+
+/// 展开候选栏：把单行横滑的候选铺成 4 x 8 网格，一次看全。
+/// 点词直接上屏（思想库模式下落进面板输入框），打完/删光候选空了就自动收起。
+struct CandidateGridPanel: View {
+
+    let candidates: [PinyinCandidate]
+    let onPick: (PinyinCandidate) -> Void
+
+    private var shown: [PinyinCandidate] { Array(candidates.prefix(32)) }
+
+    private var gridRows: [[PinyinCandidate]] {
+        stride(from: 0, to: shown.count, by: 8).map {
+            Array(shown[$0..<min($0 + 8, shown.count)])
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(gridRows.indices, id: \.self) { r in
+                HStack(spacing: 0) {
+                    ForEach(gridRows[r].indices, id: \.self) { i in
+                        let c = gridRows[r][i]
+                        Text(c.word)
+                            .font(.system(size: 16,
+                                          weight: (r == 0 && i == 0) ? .semibold : .regular))
+                            .foregroundColor(c.literal
+                                             ? KBMetrics.themeAccentColor.opacity(0.6)
+                                             : KBMetrics.themeCandidateTextColor)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .padding(.horizontal, 2)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 32)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onPick(c) }
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .frame(height: KBMetrics.candidatePanelHeight, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(KBMetrics.themeBarColor))
     }
 }

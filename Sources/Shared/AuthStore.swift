@@ -7,6 +7,10 @@ struct AuthState: Codable, Equatable {
     var machine: String
     var expireAt: Int      // 0 表示永久
     var savedAt: Int
+    /// 账号级登出序号：服务端 /api/logout 每次退登 +1。
+    /// 心跳带回来的对不上 = 这个账号在别处退登过，旧票据全部作废。
+    /// 可选：老票据没这字段也能照常解码。
+    var logoutSeq: Int?
 }
 
 /// 登录态存储
@@ -33,12 +37,13 @@ enum AuthStore {
 
     @discardableResult
     static func save(username: String, ticket: String,
-                     expireAt: Int) -> AuthState {
+                     expireAt: Int, logoutSeq: Int? = nil) -> AuthState {
         let state = AuthState(username: username,
                               ticket: ticket,
                               machine: DeviceID.current,
                               expireAt: expireAt,
-                              savedAt: Int(Date().timeIntervalSince1970))
+                              savedAt: Int(Date().timeIntervalSince1970),
+                              logoutSeq: logoutSeq)
         write(state)
         return state
     }

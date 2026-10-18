@@ -19,6 +19,7 @@ final class AnRanAPI: NSObject {
         var ticket: String
         var expireAt: Int
         var boundNew: Bool
+        var logoutSeq: Int?
     }
 
     struct HeartbeatResult {
@@ -26,6 +27,7 @@ final class AnRanAPI: NSObject {
         var error: String
         var ticket: String
         var expireAt: Int
+        var logoutSeq: Int?
     }
 
     private lazy var session: URLSession = {
@@ -52,7 +54,8 @@ final class AnRanAPI: NSObject {
                 error: (obj["error"] as? String) ?? "",
                 ticket: (obj["ticket"] as? String) ?? "",
                 expireAt: (obj["expire_at"] as? NSNumber)?.intValue ?? 0,
-                boundNew: (obj["bound_new"] as? Bool) ?? false))
+                boundNew: (obj["bound_new"] as? Bool) ?? false,
+                logoutSeq: (obj["logout_seq"] as? NSNumber)?.intValue))
         }
     }
 
@@ -63,7 +66,16 @@ final class AnRanAPI: NSObject {
                 ok: (obj["ok"] as? Bool) ?? false,
                 error: (obj["error"] as? String) ?? "",
                 ticket: (obj["ticket"] as? String) ?? "",
-                expireAt: (obj["expire_at"] as? NSNumber)?.intValue ?? 0))
+                expireAt: (obj["expire_at"] as? NSNumber)?.intValue ?? 0,
+                logoutSeq: (obj["logout_seq"] as? NSNumber)?.intValue))
+        }
+    }
+
+    /// 主App退登：服务端给这个账号的登出序号 +1，
+    /// 所有还活着的票据（键盘等）下一跳心跳就对不上号，全部锁死
+    func logout(ticket: String, completion: @escaping (Bool) -> Void) {
+        post("/api/logout", ["ticket": ticket]) { obj in
+            completion((obj["ok"] as? Bool) ?? false)
         }
     }
 
@@ -150,6 +162,7 @@ final class AnRanAPI: NSObject {
         var machine: String
         var ticket: String
         var expireAt: Int
+        var logoutSeq: Int?
     }
 
     /// 键盘：配对码换登录态（一次性 用掉即作废）
@@ -161,7 +174,8 @@ final class AnRanAPI: NSObject {
                 username: (obj["username"] as? String) ?? "",
                 machine: (obj["machine"] as? String) ?? "",
                 ticket: (obj["ticket"] as? String) ?? "",
-                expireAt: (obj["expire_at"] as? NSNumber)?.intValue ?? 0))
+                expireAt: (obj["expire_at"] as? NSNumber)?.intValue ?? 0,
+                logoutSeq: (obj["logout_seq"] as? NSNumber)?.intValue))
         }
     }
 

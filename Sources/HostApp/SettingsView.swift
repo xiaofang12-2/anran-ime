@@ -39,9 +39,6 @@ struct SettingsView: View {
                         ARToggleRow(title: "按键震动", note: "默认关闭，用按键音效替代",
                                     isOn: $s.vibration)
                         arDivider()
-                        ARToggleRow(title: "上滑输入数字", note: "字母键上滑打对应数字",
-                                    isOn: $s.swipeNumber)
-                        arDivider()
                         ARStepperRow(title: "候选数量",
                                      valueText: "\(s.candidateCount)",
                                      range: IMESettings.candidateRange,

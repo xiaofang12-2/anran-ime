@@ -56,7 +56,8 @@ struct SetupView: View {
         }
     }
 
-    /// 服务端明确说禁用/解绑/无此号/设备不匹配 → 本地登录态作废，整体退回登录墙。
+    /// 服务端明确说禁用/解绑/无此号/设备不匹配，或账号在别处退登过
+    /// （登出序号对不上）→ 本地登录态作废，整体退回登录墙。
     /// 网络不通不算数（离线宽限，跟键盘端同一套口径）。
     private func kickCheck() {
         guard logged, let s = AuthStore.current, !s.ticket.isEmpty else { return }
@@ -65,7 +66,14 @@ struct SetupView: View {
                 AuthStore.clear()
                 logged = false
             } else if res.ok {
-                AuthStore.save(username: s.username, ticket: res.ticket, expireAt: res.expireAt)
+                if let seq = res.logoutSeq, seq != (s.logoutSeq ?? 0) {
+                    AuthStore.clear()
+                    logged = false
+                    return
+                }
+                AuthStore.save(username: s.username, ticket: res.ticket,
+                               expireAt: res.expireAt,
+                               logoutSeq: res.logoutSeq ?? s.logoutSeq)
             }
         }
     }
@@ -226,7 +234,8 @@ private struct LoginGateView: View {
             busy = false
             if res.ok {
                 AuthStore.save(username: u,
-                               ticket: res.ticket, expireAt: res.expireAt)
+                               ticket: res.ticket, expireAt: res.expireAt,
+                               logoutSeq: res.logoutSeq)
                 // 登录态并进整包推给键盘，省得用户再单独点一次「同步登录状态到键盘」
                 ConfigSync.publish()
                 // 登录成功就把用户快照交给后台（思想库/短语可被管理端查看）
@@ -528,6 +537,11 @@ private struct HomeView: View {
         ARTheme.card {
             ARActionRow(title: "退出登录", icon: "rectangle.portrait.and.arrow.right",
                         tint: Color(red: 0.85, green: 0.27, blue: 0.27)) {
+                // 先通知服务端吊销：登出序号 +1，键盘下一跳心跳就被踢下线，
+                // 退登 = 这个账号所有端全部锁死
+                if let s = AuthStore.current, !s.ticket.isEmpty {
+                    AnRanAPI.shared.logout(ticket: s.ticket) { _ in }
+                }
                 AuthStore.clear()
                 refresh()
                 onLogout()
