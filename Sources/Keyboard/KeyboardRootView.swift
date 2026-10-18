@@ -128,6 +128,8 @@ struct KeyboardRootView: View {
             composing = ""
             candidates = []
             panel = .none
+            // 面板是被系统踢下去的不是用户主动关的：记忆保留 只收面板
+            UserDefaults.standard.set(false, forKey: "anran_thought_panel_on")
             updateGateExtra()
         }
         // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
@@ -165,7 +167,7 @@ struct KeyboardRootView: View {
                              composing: thoughtComposing,
                              preview: thoughtPreview,
                              previewHit: thoughtPreviewHit,
-                             onClose: closePanel)
+                             onClose: closeThoughtPanel)
             }
 
             ForEach(rows.indices, id: \.self) { i in
@@ -210,7 +212,7 @@ struct KeyboardRootView: View {
 
     private func toggleThought() {
         if panel == .thought {
-            setPanel(.none)
+            closeThoughtPanel()
         } else {
             // 点图标算用户手势，这时候读一次主程序下发的最新配置（思想库/短语），
             // 免得刚在设置里加完关键词、切回键盘还调不出内容。
@@ -218,13 +220,27 @@ struct KeyboardRootView: View {
             thoughtQuery = ""
             thoughtComposing = ""
             thoughtCands = []
-            // 关键词进度不清：面板关了再开，每个关键词接着上次那句走
+            UserDefaults.standard.set(true, forKey: "anran_thought_panel_on")
             setPanel(.thought)
         }
     }
 
     private func closePanel() {
         setPanel(.none)
+    }
+
+    /// 主动关掉思想库面板：这一轮的关键词记忆清空 下次打开从头开始。
+    /// 键盘收起再弹出 / 扩展进程被杀重开都不算关 —— 面板和进度都还原 接着上次那句走。
+    private func closeThoughtPanel() {
+        UserDefaults.standard.set(false, forKey: "anran_thought_panel_on")
+        clearThoughtMemory()
+        setPanel(.none)
+    }
+
+    private func clearThoughtMemory() {
+        UserDefaults.standard.removeObject(forKey: "anran_thought_progress")
+        UserDefaults.standard.removeObject(forKey: "anran_thought_active")
+        thoughtProgress = [:]
     }
 
     /// 面板输入框里当前显示的原文：已落定的内容 + 还没落定的拼音串。
@@ -759,6 +775,12 @@ struct KeyboardRootView: View {
             RimeService.shared.prepare()
             engineDiag = RimeService.shared.diagnostics
             controller.refreshAuth()
+            // 思想库面板没被主动关过就还原（键盘收起再弹出 / 扩展进程被杀重开）：
+            // 面板和关键词进度都接回去 接着上次那句走 只有主动关了才从头开始
+            if panel == .none,
+               UserDefaults.standard.bool(forKey: "anran_thought_panel_on") {
+                setPanel(.thought)
+            }
         } else {
             composing = ""
             candidates = []

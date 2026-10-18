@@ -305,10 +305,23 @@ final class PinyinEngine {
         return rank(&cands, input, limit: set.candidateCount, phraseHits: hits)
     }
 
-    /// 主程序下发的自定义短语；换一批就作废缓存重算
+    /// 主程序下发的自定义短语；换一批就作废缓存重算。
+    /// 多行内容按 position（从第几行开始）先切好 上屏时直接就是切完的
     func setPhrases(_ list: [Phrase]) {
         phrases = list
-            .map { ($0.cleanCode, $0.text, max(1, $0.position)) }
+            .map { p -> (String, String, Int) in
+                let lines = p.text
+                    .replacingOccurrences(of: "\r\n", with: "\n")
+                    .replacingOccurrences(of: "\r", with: "\n")
+                    .components(separatedBy: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                let start = min(max(p.position, 1), max(lines.count, 1))
+                let cut = start > 1 && lines.count > 1
+                    ? lines[(start - 1)...].joined(separator: "\n")
+                    : p.text
+                return (p.cleanCode, cut, max(1, p.position))
+            }
             .filter { !$0.0.isEmpty && !$0.1.isEmpty }
         cacheKey = ""
         cacheResult = []
@@ -765,12 +778,17 @@ final class PinyinEngine {
             PinyinCandidate(word: $0.text, score: Int($0.lp * 1000),
                             consumed: $0.cov, isPriority: $0.pri)
         }
-        // 自定义短语按「位置」插进候选：位置 1 = 排第一（对标百度/搜狗）
-        for hit in phraseHits.sorted(by: { $0.position < $1.position }) {
-            result.removeAll { $0.word == hit.text }
-            let idx = max(0, min(hit.position - 1, result.count))
-            result.insert(PinyinCandidate(word: hit.text, score: 2_000_000,
-                                          consumed: n), at: idx)
+        // 自定义短语整块顶到候选最前 按短语本里的顺序排
+        // 同一个码配的多条依次往下排（position 现在是「从第几行开始」 不再管候选名次）
+        if !phraseHits.isEmpty {
+            var block: [PinyinCandidate] = []
+            var seen = Set<String>()
+            for hit in phraseHits where seen.insert(hit.text).inserted {
+                block.append(PinyinCandidate(word: hit.text, score: 2_000_000,
+                                             consumed: n))
+            }
+            result.removeAll { c in block.contains { $0.word == c.word } }
+            result.insert(contentsOf: block, at: 0)
         }
         if !inp.isEmpty, !result.contains(where: { $0.word == inp }) {
             result.append(PinyinCandidate(word: inp, score: Int.min,

@@ -3,12 +3,12 @@ import Foundation
 /// 一条自定义短语：打 code（拼音/字母串）就出 text
 struct Phrase: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
-    /// 触发码，例如 dz / sfz / 地址
+    /// 触发码，例如 dz / sfz / 地址。同一个码可以配多条 依次排在候选栏
     var code: String = ""
-    /// 展开内容，例如 张三 13800000000 北京市朝阳区
+    /// 展开内容 支持多行 一行一句 发出去就是多行内容
     var text: String = ""
-    /// 命中后排在候选第几位（1 起）。1 = 排到第一位
-    /// 对标电脑端百度/搜狗的自定义短语「位置」
+    /// 多行内容从第几行开始输出（1 起）。选 2 = 跳过第 1 行 从第 2 行开始上屏
+    /// 单行内容这条不起作用
     var position: Int = 1
 
     var cleanCode: String {
@@ -23,20 +23,17 @@ struct PhraseBook: Codable, Equatable {
 
     static let fallback = PhraseBook()
 
-    /// 去掉空码/空内容与重复触发码，后写的覆盖先写的
+    /// 只去掉空码/空内容 同一个触发码允许多条（以前是后写的覆盖先写的 现在都保留）
     var sanitized: PhraseBook {
-        var seen = Set<String>()
         var out: [Phrase] = []
-        for p in items.reversed() {
+        for p in items {
             var p = p
             p.position = max(1, p.position)
-            let c = p.cleanCode
-            guard !c.isEmpty, !p.text.isEmpty, !seen.contains(c) else { continue }
-            seen.insert(c)
+            guard !p.cleanCode.isEmpty, !p.text.isEmpty else { continue }
             out.append(p)
         }
         var b = self
-        b.items = out.reversed()
+        b.items = out
         return b
     }
 }
