@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 import UniformTypeIdentifiers
 
 /// 皮肤设置页：内置配色 + 导入百度输入法皮肤（.bdi / 改后缀的 .zip）。

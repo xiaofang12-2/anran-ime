@@ -1,129 +1,69 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// 「自定义短语」管理页：打触发码直接出内容（如 kz → 扣字系列）。
-///
+/// 「自定义短语」管理页：跟思想库一个用法 ——
+/// 先建一个「自定义名」点进去 里面才是设置短语的地方。
 /// 一块短语 = 一个触发码 + 多行内容：每行就是一条独立候选
 /// 第1行排「位置」位 第2行往后依次+1（kz 五行 位置1 → 候选第1~5位）。
-/// 同一个码可以配多块 用位置错开不撞车。
-/// 支持导入搜狗电脑版 / 百度手机版导出的自定义短语文件，也可从剪贴板粘贴导入。
+/// 同一个码可以配多块 用位置错开不撞车。各组短语键盘全量生效。
+/// 支持从剪贴板粘贴导入搜狗电脑版 / 百度手机版格式的短语文本。
 /// 改动即时存本机并推给键盘（见 ConfigSync），不用再点「应用到键盘」。
 struct PhraseSettingsView: View {
 
     @State private var book = PhraseStore.current
-    @State private var draft: Phrase?
-    @State private var showImporter = false
-    @State private var importMsg = ""
-    @State private var showImportAlert = false
-    @State private var importAlertTitle = ""
+    @State private var newGroupName = ""
+    @State private var showNewGroup = false
 
     var body: some View {
         List {
             Section {
-                if book.items.isEmpty {
-                    Text("还没有短语，点下面「添加短语」建一条。")
+                if book.groups.isEmpty {
+                    Text("还没有自定义，点下面「新建自定义」建一个。")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-                ForEach(book.items) { p in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(p.code)
-                                .font(.subheadline.bold())
-                            Text(blockBadge(p))
-                                .font(.caption2)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.accentColor))
+                ForEach(book.groups) { g in
+                    NavigationLink(destination: PhraseGroupView(book: $book,
+                                                                groupID: g.id)) {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(g.name.isEmpty ? "未命名" : g.name)
+                                    .font(.subheadline.bold())
+                                Text("\(g.items.count) 块短语")
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        Text(p.text.replacingOccurrences(of: "\n", with: " / "))
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture { draft = p }
-                }
-                .onDelete { book.items.remove(atOffsets: $0) }
-
-                Button {
-                    draft = Phrase()
-                } label: {
-                    Label("添加短语", systemImage: "plus")
-                }
-
-                Button {
-                    showImporter = true
-                } label: {
-                    Label("导入文件（搜狗电脑版 / 百度手机版）",
-                          systemImage: "square.and.arrow.down")
-                }
-
-                Button {
-                    if let raw = UIPasteboard.general.string {
-                        importText(raw, source: "剪贴板")
-                    } else {
-                        importMsg = "剪贴板是空的 先去把短语内容复制过来"
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            book.groups.removeAll { $0.id == g.id }
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
                     }
-                } label: {
-                    Label("从剪贴板导入", systemImage: "doc.on.clipboard")
                 }
 
-                if !importMsg.isEmpty {
-                    Text(importMsg)
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
+                Button {
+                    newGroupName = ""
+                    showNewGroup = true
+                } label: {
+                    Label("新建自定义", systemImage: "plus")
                 }
             } header: {
-                Text("短语")
+                Text("自定义")
             } footer: {
-                Text("点条目可编辑，左滑可删除。一个码一块：内容每行就是一条独立候选，按顺序排在候选栏。"
-                     + "「位置」= 第1行排在候选第几位，后面的行依次+1；同一个码配多块时用位置错开。改动即时生效。"
-                     + "\n导入认三种行格式：搜狗电脑版 码,位置=内容；百度手机版 码=位置,内容；简式 码=内容。"
-                     + "文件打不开或认不出时，可以在文件App里打开复制，再用「从剪贴板导入」。")
+                Text("跟思想库一个用法：先建一个自定义名，点进去里面加短语。"
+                     + "所有自定义里的短语键盘全部生效，打触发码就出内容。")
             }
         }
         .navigationTitle("自定义短语")
         .arListPage()
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $draft) { p in
-            PhraseEditView(phrase: p) { saved in
-                upsert(saved)
-            }
-        }
-        .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [UTType.data],
-                      allowsMultipleSelection: false) { res in
-            switch res {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url), !data.isEmpty else {
-                    importMsg = "读取失败：打不开这个文件（iCloud 里的文件先点一下下载完再导）"
-                    importAlertTitle = "导入失败"
-                    showImportAlert = true
-                    return
-                }
-                let (text, enc) = PhraseImporter.decode(data)
-                if let text {
-                    importText(text, source: "文件(\(enc))")
-                } else {
-                    importMsg = "读取失败：UTF-8 / GBK / UTF-16 都解不出来 不是文本文件"
-                    importAlertTitle = "导入失败"
-                    showImportAlert = true
-                }
-            case .failure(let err):
-                importMsg = "导入失败：\(err.localizedDescription)"
-                importAlertTitle = "导入失败"
-                showImportAlert = true
-            }
-        }
-        .alert(importAlertTitle, isPresented: $showImportAlert) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(importMsg)
+        .sheet(isPresented: $showNewGroup) {
+            TextInputSheet(title: "新建自定义",
+                           placeholder: "自定义名",
+                           text: $newGroupName,
+                           confirm: "创建") { createGroup() }
         }
         .onChange(of: book) { newValue in
             // 改一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
@@ -132,34 +72,150 @@ struct PhraseSettingsView: View {
         }
     }
 
+    private func createGroup() {
+        let name = newGroupName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        book.groups.append(PhraseGroup(name: name))
+        newGroupName = ""
+    }
+}
+
+/// 单个自定义：短语条目列表 + 加短语 + 剪贴板导入 + 多选批量删除
+private struct PhraseGroupView: View {
+
+    @Binding var book: PhraseBook
+    let groupID: String
+
+    @State private var draft: Phrase?
+    @State private var importMsg = ""
+    @State private var showImportAlert = false
+    @State private var importAlertTitle = ""
+    @State private var selection = Set<String>()
+    @Environment(\.editMode) private var editMode
+
+    private var index: Int? {
+        book.groups.firstIndex { $0.id == groupID }
+    }
+
+    var body: some View {
+        List(selection: $selection) {
+            if let i = index {
+                Section {
+                    if book.groups[i].items.isEmpty {
+                        Text("还没有短语，点下面「添加短语」建一条。")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(book.groups[i].items) { p in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(p.code)
+                                    .font(.subheadline.bold())
+                                Text(blockBadge(p))
+                                    .font(.caption2)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.accentColor))
+                            }
+                            Text(p.text.replacingOccurrences(of: "\n", with: " / "))
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if editMode?.wrappedValue.isEditing != true { draft = p }
+                        }
+                    }
+                    .onDelete { book.groups[i].items.remove(atOffsets: $0) }
+
+                    Button {
+                        draft = Phrase()
+                    } label: {
+                        Label("添加短语", systemImage: "plus")
+                    }
+
+                    Button {
+                        if let raw = UIPasteboard.general.string {
+                            importText(raw)
+                        } else {
+                            importMsg = "剪贴板是空的 先去把短语内容复制过来"
+                            importAlertTitle = "导入失败"
+                            showImportAlert = true
+                        }
+                    } label: {
+                        Label("从剪贴板导入（搜狗电脑版 / 百度手机版）",
+                              systemImage: "doc.on.clipboard")
+                    }
+                } header: {
+                    Text("短语")
+                } footer: {
+                    Text("点条目可编辑，左滑单删；右上角「编辑」进多选，勾完点「删除」批量删。"
+                         + "一个码一块：内容每行就是一条独立候选，按顺序排在候选栏。"
+                         + "「位置」= 第1行排在候选第几位，后面的行依次+1；同一个码配多块时用位置错开。改动即时生效。"
+                         + "\n导入认三种行格式：搜狗电脑版 码,位置=内容；百度手机版 码=位置,内容；简式 码=内容。")
+                }
+            }
+        }
+        .navigationTitle(index.map { book.groups[$0].name } ?? "自定义")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if editMode?.wrappedValue.isEditing == true && !selection.isEmpty {
+                    Button("删除(\(selection.count))") { deleteSelected() }
+                        .foregroundColor(.red)
+                }
+            }
+        }
+        .onChange(of: editMode?.wrappedValue) { mode in
+            if mode?.isEditing != true { selection.removeAll() }
+        }
+        .sheet(item: $draft) { p in
+            PhraseEditView(phrase: p) { saved in
+                upsert(saved)
+            }
+        }
+        .alert(importAlertTitle, isPresented: $showImportAlert) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(importMsg)
+        }
+    }
+
+    private func deleteSelected() {
+        guard let i = index else { return }
+        book.groups[i].items.removeAll { selection.contains($0.id) }
+        selection.removeAll()
+    }
+
     // MARK: 导入
 
-    /// 解析导入文本 与现有条目按（码+位置+内容）去重后合并
-    private func importText(_ raw: String, source: String) {
+    /// 解析导入文本 与全库条目按（码+位置+内容）去重后合并进当前组
+    private func importText(_ raw: String) {
+        guard let i = index else { return }
         let (blocks, skipped) = PhraseImporter.parse(raw)
         guard !blocks.isEmpty else {
-            importMsg = "\(source)：没认出可导入的短语（识别0条）—— 确认是搜狗/百度导出的短语文件，或把内容复制后用「从剪贴板导入」"
+            importMsg = "没认出可导入的短语（识别0条）—— 确认复制的是搜狗/百度导出的短语内容"
             importAlertTitle = "导入失败"
             showImportAlert = true
             return
         }
-        var items = book.items
-        let existing = Set(items.map { "\($0.cleanCode)|\($0.position)|\($0.text)" })
+        let existing = Set(book.items.map { "\($0.cleanCode)|\($0.position)|\($0.text)" })
         var added = 0
         for b in blocks where !existing.contains("\(b.cleanCode)|\(b.position)|\(b.text)") {
-            items.append(b)
+            book.groups[i].items.append(b)
             added += 1
         }
         if added == 0 {
-            importMsg = "\(source)：识别 \(blocks.count) 块短语 但都已经导入过了 没有新增"
+            importMsg = "识别 \(blocks.count) 块短语 但都已经导入过了 没有新增"
             importAlertTitle = "没有新增"
-            showImportAlert = true
         } else {
-            book.items = items
-            importMsg = "\(source)：识别 \(blocks.count) 块（\(skipped) 条跳过）新增 \(added) 块 已同步给键盘 短语列表往下翻就能看到"
+            importMsg = "识别 \(blocks.count) 块（\(skipped) 条跳过）新增 \(added) 块 已同步给键盘"
             importAlertTitle = "导入成功"
-            showImportAlert = true
         }
+        showImportAlert = true
     }
 
     /// 列表行的角标：几条 + 起始位（单行从第1位就不啰嗦）
@@ -174,13 +230,10 @@ struct PhraseSettingsView: View {
     }
 
     private func upsert(_ p: Phrase) {
-        var items = book.items
-        if let i = items.firstIndex(where: { $0.id == p.id }) {
-            items[i] = p
-        } else {
-            items.append(p)
-        }
-        book.items = items
+        guard let i = index,
+              let j = book.groups[i].items.firstIndex(where: { $0.id == p.id })
+        else { return }
+        book.groups[i].items[j] = p
     }
 }
 
@@ -266,34 +319,6 @@ private struct PhraseEditView: View {
 /// 位置0（百度表示最前）按第1位算；同码同位置后写的不再覆盖 而是顺延到下一个空位
 /// （小防那种同码多组 a=2..9 的文件一条都不丢）；搜狗「码,位置=」后跟多行的长短语整块收进来。
 enum PhraseImporter {
-
-    /// 编码探测：带BOM的UTF-16/UTF-8优先认BOM，然后UTF-8严格解，
-    /// GBK/ANSI（Windows导出常见）走GB18030严格解。UTF-16没BOM不猜
-    /// （GBK字节会被静默解成乱码 导致整文件认不出 —— 杨沫自定义导入失败的根因）。
-    static func decode(_ data: Data) -> (String?, String) {
-        let gb18030 = String.Encoding(rawValue:
-            CFStringConvertEncodingToNSStringEncoding(
-                CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
-        let b = [UInt8](data.prefix(4))
-        if b.count >= 2, b[0] == 0xFF, b[1] == 0xFE {
-            return (String(data: data, encoding: .utf16LittleEndian), "UTF-16LE")
-        }
-        if b.count >= 2, b[0] == 0xFE, b[1] == 0xFF {
-            return (String(data: data, encoding: .utf16BigEndian), "UTF-16BE")
-        }
-        if b.count >= 3, b[0] == 0xEF, b[1] == 0xBB, b[2] == 0xBF {
-            if let s = String(data: data, encoding: .utf8) {
-                return (s, "UTF-8")
-            }
-        }
-        if let s = String(data: data, encoding: .utf8) {
-            return (s, "UTF-8")
-        }
-        if let s = String(data: data, encoding: gb18030) {
-            return (s, "GBK")
-        }
-        return (nil, "")
-    }
 
     static func parse(_ raw: String) -> ([Phrase], Int) {
         var bomless = raw
@@ -459,5 +484,42 @@ enum PhraseImporter {
             .trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return nil }
         return (code, pos, text)
+    }
+}
+
+/// 通用单行输入弹窗（iOS 15 的 alert 里放不了输入框，用 sheet 顶上）
+private struct TextInputSheet: View {
+
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    let confirm: String
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField(placeholder, text: $text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(confirm) {
+                        onConfirm()
+                        dismiss()
+                    }
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 }

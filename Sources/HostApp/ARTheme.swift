@@ -142,33 +142,61 @@ struct ARStepperRow: View {
     }
 }
 
-/// 滑杆行：标题 + 当前值 + 底部细滑轨
-struct ARSliderRow: View {
+/// 数字输入行：标题 + 说明 + 右侧数字输入框（失焦时夹回范围）
+struct ARNumberFieldRow: View {
     let title: String
     let note: String
-    let valueText: String
-    let range: ClosedRange<Double>
-    let step: Double
-    @Binding var value: Double
+    var suffix: String = ""
+    let range: ClosedRange<Int>
+    @Binding var value: Int
+
+    @State private var raw = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 15))
                     .foregroundColor(.black.opacity(0.85))
-                Spacer()
-                Text(valueText)
-                    .font(.system(.footnote, design: .monospaced))
+                Text(note)
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-            Slider(value: $value, in: range, step: step)
-                .tint(ARTheme.blue)
-            Text(note)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+            Spacer(minLength: 8)
+            HStack(spacing: 3) {
+                TextField("", text: $raw)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .font(.system(.footnote, design: .monospaced))
+                    .frame(width: 52)
+                    .focused($focused)
+                if !suffix.isEmpty {
+                    Text(suffix)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 9)
+                .fill(Color.black.opacity(0.055)))
+            .onAppear { raw = String(value) }
+            .onChange(of: raw) { _ in commit() }
+            .onChange(of: focused) { f in
+                if !f { raw = String(value) }
+            }
+            .onChange(of: value) { v in
+                if !focused { raw = String(v) }
+            }
         }
         .padding(.vertical, 9)
+    }
+
+    private func commit() {
+        guard let n = Int(raw.trimmingCharacters(in: .whitespaces)) else { return }
+        let clamped = min(max(n, range.lowerBound), range.upperBound)
+        if clamped != value { value = clamped }
     }
 }
 

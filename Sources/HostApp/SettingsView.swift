@@ -44,14 +44,11 @@ struct SettingsView: View {
                                      range: IMESettings.candidateRange,
                                      value: $s.candidateCount)
                         arDivider()
-                        ARSliderRow(title: "思想库上屏间隔",
-                                    note: "思想库内容一个字一个字上屏的快慢，0 = 瞬间连上",
-                                    valueText: "\(s.outputSpeed)ms",
-                                    range: Double(IMESettings.outputSpeedRange.lowerBound)...Double(IMESettings.outputSpeedRange.upperBound),
-                                    step: 10,
-                                    value: Binding(
-                                        get: { Double(s.outputSpeed) },
-                                        set: { s.outputSpeed = Int($0.rounded()) }))
+                        ARNumberFieldRow(title: "思想库上屏间隔",
+                                    note: "一个字一个字上屏的快慢，0 = 瞬间连上（最快）",
+                                    suffix: "ms",
+                                    range: IMESettings.outputSpeedRange,
+                                    value: $s.outputSpeed)
                     }
 
                     ARTheme.sectionTitle("个性化")
