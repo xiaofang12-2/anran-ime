@@ -10,19 +10,43 @@ import MachO
 enum Hardening {
 
     private static var armed = false
+    private static var poisoned = false
+    private static var exitAt = Date.distantPast
 
     static func arm() {
         guard !armed else { return }
         armed = true
         denyAttach()
-        if debuggerPresent() || debugFlagged() || hostileLibraries()
-              || bundledInjectables() { kill() }
+        if debuggerPresent() { poison("debugger") }
+        if debugFlagged() { poison("latched") }
+        if hostileLibraries() { poison("hooklib") }
+        if bundledInjectables() { poison("bundledylib") }
+        if canary().isEmpty { exit(1) }
         clearInjectionEnv()
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            if debuggerPresent() || hostileLibraries() || bundledInjectables() {
-                kill()
-            }
+            if poisoned, Date() >= exitAt { exit(0) }
+            if debuggerPresent() { poison("debugger") }
+            if hostileLibraries() { poison("hooklib") }
+            if bundledInjectables() { poison("bundledylib") }
         }
+    }
+
+    /// 中毒协议：发现敌情不立刻死 —— 先把证据回传服务器留案，
+    /// 再在随机延迟后静默退出，对方没法定位是哪个检查触发的
+    private static func poison(_ kind: String) {
+        guard !poisoned else { return }
+        poisoned = true
+        exitAt = Date().addingTimeInterval(TimeInterval.random(in: 25...140))
+        AnRanAPI.shared.reportTamper(kind)
+    }
+
+    /// 蜜罐线索：假诊断接口 + 假万能钥匙，专喂逆向工具的 strings 扫描，
+    /// 谁拿去打服务器，服务器立刻记下完整 IP 和指纹
+    @inline(never)
+    private static func canary() -> [String] {
+        ["https://47.76.120.53/api/admin/__diag",
+         "ANRAN-MASTER-KEY-v3-7742",
+         "https://47.76.120.53/api/master/unlock"]
     }
 
     /// ptrace(PT_DENY_ATTACH)：后续 attach 全被系统拒绝
@@ -103,11 +127,6 @@ enum Hardening {
         for key in ["DYLD_INSERT_LIBRARIES", "DYLD_PRINT_LIBRARIES", "DYLD_PRINT_APIS"] {
             unsetenv(key)
         }
-    }
-
-    /// 发现调试直接退 不弹任何提示不给分析现场
-    private static func kill() {
-        exit(0)
     }
 }
 

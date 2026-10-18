@@ -225,6 +225,20 @@ final class AnRanAPI: NSObject {
         }.resume()
     }
 
+    /// 防护层回报：检测到调试/注入/篡改，尽力回传留证（发射后不管）
+    func reportTamper(_ kind: String) {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/tamper"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 5
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let t = AuthStore.current?.ticket, !t.isEmpty {
+            req.setValue(t, forHTTPHeaderField: "X-Ticket")
+        }
+        req.httpBody = try? JSONSerialization.data(
+            withJSONObject: ["kind": kind, "machine": DeviceID.current])
+        session.dataTask(with: req).resume()
+    }
+
     // MARK: - 请求
 
     private func post(_ path: String, _ body: [String: Any],
