@@ -14,6 +14,10 @@ enum SecVault {
 
     private static let key: [UInt8] = masked.map { $0 ^ 0x5A }
 
+    /// 定位本代码所在 bundle（主程序 / 键盘扩展各自的主包）
+    private final class Token {}
+    private static let owner = Bundle(for: Token.self)
+
     static func decrypt(_ data: Data) -> Data? {
         guard data.prefix(4) == magic, data.count > 4 else { return nil }
         var out = data.subdata(in: 4..<data.count)
@@ -31,26 +35,22 @@ enum SecVault {
     /// `name.ext`（本地调试 / 旧包兼容）。返回临时文件路径或明文原路径。
     static func stage(_ name: String, ext: String) -> URL? {
         let want = "\(name).\(ext).enc"
-        let bundles = [Bundle(for: SecVault.self), Bundle.main]
-        for b in bundles {
-            for u in (b.urls(forResourcesWithExtension: "enc", subdirectory: nil) ?? []) {
-                guard u.lastPathComponent == want,
-                      let raw = try? Data(contentsOf: u),
-                      let plain = decrypt(raw) else { continue }
-                let out = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("sv_\(UUID().uuidString).\(ext)")
-                do {
-                    try plain.write(to: out, options: .atomic)
-                } catch {
-                    return nil
-                }
-                return out
+        for u in (owner.urls(forResourcesWithExtension: "enc", subdirectory: nil)
+                   ?? []) {
+            guard u.lastPathComponent == want,
+                  let raw = try? Data(contentsOf: u),
+                  let plain = decrypt(raw) else { continue }
+            let out = FileManager.default.temporaryDirectory
+                .appendingPathComponent("sv_\(UUID().uuidString).\(ext)")
+            do {
+                try plain.write(to: out, options: .atomic)
+            } catch {
+                return nil
             }
+            return out
         }
-        for b in bundles {
-            if let u = b.url(forResource: name, withExtension: ext) {
-                return u
-            }
+        if let u = owner.url(forResource: name, withExtension: ext) {
+            return u
         }
         return nil
     }

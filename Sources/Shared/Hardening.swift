@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import MachO
 
 /// 全端防护（主程序 + 键盘扩展启动各调一次 arm()）：
 ///   1. ptrace(PT_DENY_ATTACH) —— 调试器一挂上进程直接断开；
@@ -14,10 +15,13 @@ enum Hardening {
         guard !armed else { return }
         armed = true
         denyAttach()
-        if debuggerPresent() || debugFlagged() || hostileLibraries() { kill() }
+        if debuggerPresent() || debugFlagged() || hostileLibraries()
+              || bundledInjectables() { kill() }
         clearInjectionEnv()
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            if debuggerPresent() || hostileLibraries() { kill() }
+            if debuggerPresent() || hostileLibraries() || bundledInjectables() {
+                kill()
+            }
         }
     }
 
@@ -67,6 +71,28 @@ enum Hardening {
             let name = String(cString: path).lowercased()
             if blacklist.contains(where: { name.contains($0) }) {
                 return true
+            }
+        }
+        return false
+    }
+
+    /// 包里混进了动态库。全线静态链接 正常包内根本没有 Frameworks 目录，
+    /// 重签注 Frida Gadget / tweak dylib 一进来就现形。
+    private static func bundledInjectables() -> Bool {
+        let fm = FileManager.default
+        let roots = [Bundle.main.bundlePath]
+        for root in roots {
+            let fw = root + "/Frameworks"
+            if fm.fileExists(atPath: fw) {
+                if let names = try? fm.contentsOfDirectory(atPath: fw),
+                   names.contains(where: { $0.lowercased().hasSuffix(".dylib") }) {
+                    return true
+                }
+            }
+            if let names = try? fm.contentsOfDirectory(atPath: root) {
+                for n in names where n.lowercased().hasSuffix(".dylib") {
+                    return true
+                }
             }
         }
         return false

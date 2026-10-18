@@ -163,7 +163,6 @@ enum ConfigSync {
             UserDefaults.standard.set(json, forKey: appliedKey)
             done?(true)
         }
-        return true
     }
 
     /// 整包落盘：配置各归各库，登录态只收本机设备的票据
