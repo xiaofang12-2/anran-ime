@@ -14,6 +14,8 @@ struct PhraseSettingsView: View {
     @State private var draft: Phrase?
     @State private var showImporter = false
     @State private var importMsg = ""
+    @State private var showImportAlert = false
+    @State private var importAlertTitle = ""
 
     var body: some View {
         List {
@@ -100,6 +102,8 @@ struct PhraseSettingsView: View {
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 guard let data = try? Data(contentsOf: url), !data.isEmpty else {
                     importMsg = "读取失败：打不开这个文件（iCloud 里的文件先点一下下载完再导）"
+                    importAlertTitle = "导入失败"
+                    showImportAlert = true
                     return
                 }
                 let (text, enc) = PhraseImporter.decode(data)
@@ -107,10 +111,19 @@ struct PhraseSettingsView: View {
                     importText(text, source: "文件(\(enc))")
                 } else {
                     importMsg = "读取失败：UTF-8 / GBK / UTF-16 都解不出来 不是文本文件"
+                    importAlertTitle = "导入失败"
+                    showImportAlert = true
                 }
             case .failure(let err):
                 importMsg = "导入失败：\(err.localizedDescription)"
+                importAlertTitle = "导入失败"
+                showImportAlert = true
             }
+        }
+        .alert(importAlertTitle, isPresented: $showImportAlert) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(importMsg)
         }
         .onChange(of: book) { newValue in
             // 改一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
@@ -125,7 +138,9 @@ struct PhraseSettingsView: View {
     private func importText(_ raw: String, source: String) {
         let (blocks, skipped) = PhraseImporter.parse(raw)
         guard !blocks.isEmpty else {
-            importMsg = "\(source)：没认出可导入的短语（识别0条）—— 确认是搜狗/百度导出的短语文件"
+            importMsg = "\(source)：没认出可导入的短语（识别0条）—— 确认是搜狗/百度导出的短语文件，或把内容复制后用「从剪贴板导入」"
+            importAlertTitle = "导入失败"
+            showImportAlert = true
             return
         }
         var items = book.items
@@ -136,10 +151,14 @@ struct PhraseSettingsView: View {
             added += 1
         }
         if added == 0 {
-            importMsg = "\(source)：文件里的 \(blocks.count) 块短语都已经在库里了 没有新增"
+            importMsg = "\(source)：识别 \(blocks.count) 块短语 但都已经导入过了 没有新增"
+            importAlertTitle = "没有新增"
+            showImportAlert = true
         } else {
             book.items = items
-            importMsg = "\(source)：识别 \(blocks.count) 块（\(skipped) 条跳过）新增 \(added) 块 已同步给键盘"
+            importMsg = "\(source)：识别 \(blocks.count) 块（\(skipped) 条跳过）新增 \(added) 块 已同步给键盘 短语列表往下翻就能看到"
+            importAlertTitle = "导入成功"
+            showImportAlert = true
         }
     }
 
