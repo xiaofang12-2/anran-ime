@@ -91,7 +91,11 @@ struct PhraseSettingsView: View {
                     importMsg = "读取失败：打不开这个文件"
                     return
                 }
-                let encodings: [String.Encoding] = [.utf8, .utf16, .gb_18030_2000]
+                // 搜狗电脑版导出在 Windows 上常见 GBK/ANSI 编码 UTF-8 认不出时退到 GB18030
+                let gb18030 = String.Encoding(rawValue:
+                    CFStringConvertEncodingToNSStringEncoding(
+                        CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
+                let encodings: [String.Encoding] = [.utf8, .utf16, gb18030]
                 var raw: String?
                 for enc in encodings where raw == nil {
                     raw = String(data: data, encoding: enc)
