@@ -20,9 +20,10 @@ struct KeyboardRootView: View {
     @State private var capsLock = false
     @State private var lastShiftTap = Date.distantPast
     @State private var lastSpaceTap = Date.distantPast
-    /// 最近一次上屏（词 + 吃掉的拼音段）：退格上滑「回退」用 —— 把词从文本框删掉
-    /// 撤掉这次词频学习 拼音串还原回去重新选候选
-    @State private var lastCommit: (text: String, pinyin: String)?
+    /// 最近一次上屏的内容（词或思想库整句 + 是否思想库发的）：
+    /// 退格上滑「回退」用 —— 直接从文本框删掉，不还原拼音；
+    /// 思想库模式下连面板输入框一起清
+    @State private var lastOutput: (text: String, thought: Bool)?
     /// 配置/短语从主程序接过来后 +1，逼界面按新尺寸重画
     @State private var cfgRev = 0
     /// 回车键文案：跟宿主 App 的 returnKeyType 走（聊天软件显示「发送」）
@@ -447,6 +448,7 @@ struct KeyboardRootView: View {
     private func startThoughtLine(_ line: String) {
         let speed = IMESettingsStore.current.outputSpeed
         thoughtBusy = true
+        lastOutput = (line, true)
         // KeyboardRootView 是 struct，@State 本身引用存储，闭包直捕即可
         controller.sendTypewriter(line, speedMs: speed) {
             thoughtBusy = false
@@ -635,8 +637,9 @@ struct KeyboardRootView: View {
         if panel == .thought { pickThought(c) } else { pick(c) }
     }
 
-    /// 退格上滑：正在拼 → 清掉整串拼音（重打）；
-    /// 没在拼且有刚上屏的词 → 回退：词从文本框删掉、词频学习撤销、拼音串还原回去重新选。
+    /// 退格上滑：正在拼 → 清掉整串拼音（重打）。
+    /// 没在拼 → 回退：把最近一次上屏的内容直接从文本框删掉（不还原拼音），
+    /// 思想库模式下连面板输入框一起清。逐字上屏进行中不回退（跟发送打架）。
     private func clearComposing() {
         if !composing.isEmpty {
             composing = ""
@@ -644,12 +647,14 @@ struct KeyboardRootView: View {
             controller.setComposing("")
             return
         }
-        guard let last = lastCommit else { return }
-        lastCommit = nil
-        for _ in 0..<last.text.count { controller.backspace() }
-        InputEngine.shared.forget(last.text)
-        composing = last.pinyin
-        refresh()
+        if thoughtBusy { return }
+        let last = lastOutput
+        lastOutput = nil
+        if let last, !last.text.isEmpty {
+            for _ in 0..<last.text.count { controller.backspace() }
+            if !last.thought { InputEngine.shared.forget(last.text) }
+        }
+        if panel == .thought { clearThoughtInput() }
     }
 
     private func tapShift() {
@@ -707,7 +712,7 @@ struct KeyboardRootView: View {
     private func applyCommit(_ c: PinyinCandidate, pinyin: String) {
         controller.commit(c.word)
         let used = InputEngine.shared.commit(c, pinyin: pinyin)
-        lastCommit = (c.word, String(pinyin.prefix(used)))
+        lastOutput = (c.word, false)
 
         let rest = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
         composing = rest
