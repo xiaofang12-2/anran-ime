@@ -1,7 +1,7 @@
 import Foundation
 
 /// 一条候选词
-struct PinyinCandidate {
+struct PinyinCandidate: Equatable {
     let word: String
     let score: Int
     /// 这条候选吃掉了输入串里多少个字符（用来做「部分上屏」：
