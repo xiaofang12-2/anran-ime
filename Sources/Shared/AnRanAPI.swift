@@ -10,8 +10,10 @@ final class AnRanAPI: NSObject {
 
     static let shared = AnRanAPI()
 
-    /// 跟电脑端后台管理器同一个地址
-    let baseURL = URL(string: "https://47.76.120.53")!
+    /// 跟电脑端后台管理器同一个地址（混淆存放 二进制里不是明文）
+    let baseURL = URL(string: SecStr.dec(0x5A, [0x32, 0x2E, 0x2E, 0x2A, 0x29, 0x60, 0x75,
+                                                0x75, 0x6E, 0x6D, 0x74, 0x6D, 0x6C, 0x74,
+                                                0x6B, 0x68, 0x6A, 0x74, 0x6F, 0x69]))!
 
     struct LoginResult {
         var ok: Bool

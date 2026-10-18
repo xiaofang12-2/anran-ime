@@ -14,6 +14,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        Hardening.arm()
 
         let root = KeyboardRootView(controller: self)
         let host = UIHostingController(rootView: root)

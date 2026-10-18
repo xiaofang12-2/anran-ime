@@ -13,9 +13,10 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.13"
-    CURRENT_PROJECT_VERSION: "48"
+    MARKETING_VERSION: "0.9.14"
+    CURRENT_PROJECT_VERSION: "49"
     SWIFT_VERSION: "5.0"
+    SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
     CODE_SIGN_STYLE: Manual
     CODE_SIGNING_REQUIRED: "NO"
@@ -23,6 +24,12 @@ settings:
     CODE_SIGN_IDENTITY: ""
     ENABLE_BITCODE: "NO"
     ALWAYS_SEARCH_USER_PATHS: "NO"
+    # 防逆向：Release 包内符号全剥 二进制里不留函数名与调试信息
+    DEPLOYMENT_POSTPROCESSING: "YES"
+    STRIP_INSTALLED_PRODUCT: "YES"
+    STRIP_STYLE: "all"
+    COPY_PHASE_STRIP: "YES"
+    GCC_SYMBOLS_PRIVATE_EXTERN: "YES"
 
 targets:
   # ---------------- 主 app：设置 / 思想库 / 剪贴板 / 短语 ----------------

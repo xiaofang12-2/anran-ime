@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct AnRanApp: App {
     init() {
+        Hardening.arm()
         ARTheme.install()
     }
 
