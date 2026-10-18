@@ -35,6 +35,8 @@ struct SetupView: View {
             // 键盘一开就是最新配置。
             if phase != .active {
                 _ = ConfigSync.publishIfChanged()
+                // 节流窗口里暂存的改动立刻冲出去，别等异步定时器被挂起咽掉
+                ConfigSync.flushPending()
                 SnapshotReport.uploadIfNeeded()
             } else {
                 // 回前台立刻验一次票：后台禁用/解绑的账号一回到主程序就被踢回登录墙

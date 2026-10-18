@@ -14,10 +14,10 @@ enum Hardening {
         guard !armed else { return }
         armed = true
         denyAttach()
-        if debuggerPresent() || debugFlagged() { kill() }
+        if debuggerPresent() || debugFlagged() || hostileLibraries() { kill() }
         clearInjectionEnv()
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            if debuggerPresent() { kill() }
+            if debuggerPresent() || hostileLibraries() { kill() }
         }
     }
 
@@ -53,6 +53,21 @@ enum Hardening {
         for key in ["DYLD_INSERT_LIBRARIES", "DYLD_PRINT_LIBRARIES",
                     "DYLD_PRINT_APIS", "XCTestSessionIdentifier"] {
             if getenv(key) != nil { return true }
+        }
+        return false
+    }
+
+    /// 已加载动态库里混进了注入器/脱壳器（Frida Substrate cycript 之类）
+    private static func hostileLibraries() -> Bool {
+        let blacklist = ["frida", "cycript", "substrate", "ssl-kill-switch",
+                         "liberty", "shadow", "xcon", "tsprotector", "fishhook"]
+        let n = _dyld_image_count()
+        for i in 0..<n {
+            guard let path = _dyld_get_image_name(i) else { continue }
+            let name = String(cString: path).lowercased()
+            if blacklist.contains(where: { name.contains($0) }) {
+                return true
+            }
         }
         return false
     }

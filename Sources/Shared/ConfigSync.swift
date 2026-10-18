@@ -28,7 +28,6 @@ enum ConfigSync {
     private static let publishedKey = "anran_sync_published"
     /// 推送节流：1.5 秒内的连续改动合并成一次请求
     private static var lastPushAt = Date.distantPast
-    private static var pendingPush = false
     private static var stagedPush: Data?
 
     /// 组装当前全量配置（rev 置 0，纯粹拿来比对内容）
@@ -63,8 +62,7 @@ enum ConfigSync {
         var bundle = snapshot(auth: auth)
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
         guard let marker = encoded(snapshot(auth: auth)) else { return false }
-        UserDefaults.standard.set(marker, forKey: publishedKey)
-        push(bundle)
+        push(bundle, marker: marker)
         return true
     }
 
@@ -74,52 +72,85 @@ enum ConfigSync {
         let snap = snapshot()
         guard let marker = encoded(snap) else { return false }
         if marker == UserDefaults.standard.string(forKey: publishedKey) { return false }
-        UserDefaults.standard.set(marker, forKey: publishedKey)
         var bundle = snap
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
-        push(bundle)
+        push(bundle, marker: marker)
         return true
     }
 
     /// 推到服务器（带主程序票据）。1.5 秒内的连续改动合并成一次请求。
-    private static func push(_ bundle: SyncBundle) {
+    /// 「已发布」标记只有推成功才落 —— 失败了重试，保证 publishIfChanged
+    /// 在下一个前台时机还能把丢掉的改动补推出去。
+    private static func push(_ bundle: SyncBundle, marker: String? = nil) {
         guard let auth = AuthStore.current, !auth.ticket.isEmpty,
               let data = try? JSONEncoder().encode(bundle) else { return }
         stagedPush = data
         let now = Date()
         guard now.timeIntervalSince(lastPushAt) >= 1.5 else {
-            scheduleFlush()
+            scheduleFlush(after: 1.5, marker: marker)
             return
         }
         lastPushAt = now
-        if let staged = stagedPush {
-            AnRanAPI.shared.pushSync(ticket: auth.ticket, data: staged)
+        AnRanAPI.shared.pushSync(ticket: auth.ticket, data: data) { ok in
+            if ok {
+                if let marker {
+                    UserDefaults.standard.set(marker, forKey: publishedKey)
+                }
+            } else {
+                scheduleFlush(after: 3, marker: marker)
+            }
         }
     }
 
-    private static func scheduleFlush() {
-        guard !pendingPush else { return }
-        pendingPush = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            pendingPush = false
+    private static func scheduleFlush(after: TimeInterval, marker: String?) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + after) {
             guard let auth = AuthStore.current, !auth.ticket.isEmpty,
                   let staged = stagedPush else { return }
             lastPushAt = Date()
-            AnRanAPI.shared.pushSync(ticket: auth.ticket, data: staged)
+            AnRanAPI.shared.pushSync(ticket: auth.ticket, data: staged) { ok in
+                if ok {
+                    if let marker {
+                        UserDefaults.standard.set(marker, forKey: publishedKey)
+                    }
+                } else {
+                    scheduleFlush(after: 3, marker: marker)
+                }
+            }
         }
+    }
+
+    /// 主程序切后台前调：把暂存的改动立刻推出去，别被节流窗口咽掉。
+    static func flushPending() {
+        guard let auth = AuthStore.current, !auth.ticket.isEmpty,
+              let staged = stagedPush else { return }
+        lastPushAt = Date()
+        AnRanAPI.shared.pushSync(ticket: auth.ticket, data: staged)
     }
 
     /// 键盘用：从服务器拉最新整包（异步，不卡首帧）。
     /// 拉到跟上次不一样的新包就落盘（配置 + 登录态一起），回调 true。
+    /// 网络失败自动补拉一次（键盘扩展偶发没网/半断网，不补就滞后到下次弹出）。
     @discardableResult
     static func pullFromServer(_ done: ((Bool) -> Void)? = nil) -> Bool {
         guard let auth = AuthStore.current, !auth.ticket.isEmpty else {
             done?(false)
             return false
         }
-        AnRanAPI.shared.pullSync(ticket: auth.ticket) { data in
+        attemptPull(ticket: auth.ticket, allowRetry: true, done)
+        return true
+    }
+
+    private static func attemptPull(ticket: String, allowRetry: Bool,
+                                    _ done: ((Bool) -> Void)?) {
+        AnRanAPI.shared.pullSync(ticket: ticket) { data in
             guard let data,
                   let bundle = try? JSONDecoder().decode(SyncBundle.self, from: data) else {
+                if data == nil, allowRetry {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        attemptPull(ticket: ticket, allowRetry: false, done)
+                    }
+                    return
+                }
                 done?(false)
                 return
             }

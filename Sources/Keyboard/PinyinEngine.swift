@@ -133,10 +133,9 @@ final class PinyinEngine {
     private func ensureLoaded() {
         if ready { return }
 
-        let bundle = Bundle(for: PinyinEngine.self)
-        let binURL = bundle.url(forResource: "pinyin", withExtension: "bin")
-            ?? Bundle.main.url(forResource: "pinyin", withExtension: "bin")
-        if let url = binURL,
+        // 词库在包里是密文（SecVault）：解到临时文件 -> 内存映射 -> 立刻删盘
+        let staged = SecVault.stage("pinyin", ext: "bin")
+        if let url = staged,
            let d = try? Data(contentsOf: url, options: .mappedIfSafe),
            d.count > 44, d.prefix(4) == Data("ANPY".utf8) {
             data = d
@@ -147,16 +146,17 @@ final class PinyinEngine {
         } else {
             // 词库没读到就别把 ready 立起来 —— 否则整块键盘永远只剩英文字母。
             // 下次敲键会再试一遍（例如扩展刚起来时 bundle 还没就绪）。
+            SecVault.dispose(staged)
             return
         }
         ready = true
         cacheKey = ""
 
-        let assocURL = bundle.url(forResource: "assoc", withExtension: "bin")
-            ?? Bundle.main.url(forResource: "assoc", withExtension: "bin")
-        if let url = assocURL {
+        let assocStaged = SecVault.stage("assoc", ext: "bin")
+        if let url = assocStaged {
             loadAssoc(url)
         }
+        SecVault.dispose(assocStaged)
     }
 
     private func loadSyllables() {
