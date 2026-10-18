@@ -163,6 +163,12 @@ private struct PhraseGroupView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
             ToolbarItem(placement: .navigationBarTrailing) {
+                if editMode?.wrappedValue.isEditing == true,
+                   let i = index, !book.groups[i].items.isEmpty {
+                    Button(allSelected ? "取消全选" : "全选") { toggleSelectAll() }
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
                 if editMode?.wrappedValue.isEditing == true && !selection.isEmpty {
                     Button("删除(\(selection.count))") { deleteSelected() }
                         .foregroundColor(.red)
@@ -188,6 +194,21 @@ private struct PhraseGroupView: View {
         guard let i = index else { return }
         book.groups[i].items.removeAll { selection.contains($0.id) }
         selection.removeAll()
+    }
+
+    private var allSelected: Bool {
+        guard let i = index else { return false }
+        let items = book.groups[i].items
+        return !items.isEmpty && selection.count >= items.count
+    }
+
+    private func toggleSelectAll() {
+        guard let i = index else { return }
+        if allSelected {
+            selection.removeAll()
+        } else {
+            selection = Set(book.groups[i].items.map(\.id))
+        }
     }
 
     // MARK: 导入
