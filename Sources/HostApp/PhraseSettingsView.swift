@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 「自定义短语」管理页：打触发码直接出内容（如 dz → 地址、sfz → 身份证号）。
+/// 「自定义短语」管理页：打触发码直接出内容（如 kz → 扣字系列）。
 ///
-/// 同一个触发码可以配多条 打码时依次排在候选栏随你挑。
-/// 内容支持多行 一行一句 发出去就是多行；「位置」= 多行内容从第几行开始输出。
+/// 一块短语 = 一个触发码 + 多行内容：每行就是一条独立候选
+/// 第1行排「位置」位 第2行往后依次+1（kz 五行 位置1 → 候选第1~5位）。
+/// 同一个码可以配多块 用位置错开不撞车。
 /// 改动即时存本机并推给键盘（见 ConfigSync），不用再点「应用到键盘」。
 struct PhraseSettingsView: View {
 
@@ -23,14 +24,12 @@ struct PhraseSettingsView: View {
                         HStack(spacing: 6) {
                             Text(p.code)
                                 .font(.subheadline.bold())
-                            if p.position > 1 {
-                                Text("从第\(p.position)行开始")
-                                    .font(.caption2)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(Color.accentColor))
-                            }
+                            Text(blockBadge(p))
+                                .font(.caption2)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor))
                         }
                         Text(p.text.replacingOccurrences(of: "\n", with: " / "))
                             .font(.footnote)
@@ -50,8 +49,8 @@ struct PhraseSettingsView: View {
             } header: {
                 Text("短语")
             } footer: {
-                Text("点条目可编辑，左滑可删除。触发码建议用字母，别用中文；同一个码可以配多条，打码时依次排在候选栏。\n"
-                     + "内容支持多行，一行一句；「位置」= 多行内容从第几行开始输出，比如选 2 就跳过第 1 行。改动即时生效。")
+                Text("点条目可编辑，左滑可删除。一个码一块：第一行填字母触发码，内容每行就是一条独立候选，按顺序排在候选栏。"
+                     + "「位置」= 第1行排在候选第几位，后面的行依次+1；同一个码配多块时用位置错开。改动即时生效。")
             }
         }
         .navigationTitle("自定义短语")
@@ -69,6 +68,17 @@ struct PhraseSettingsView: View {
         }
     }
 
+    /// 列表行的角标：几条 + 起始位（单行从第1位就不啰嗦）
+    private func blockBadge(_ p: Phrase) -> String {
+        var n = 0
+        p.text.enumerateLines { line, _ in
+            if !line.trimmingCharacters(in: .whitespaces).isEmpty { n += 1 }
+        }
+        let count = max(n, 1)
+        if count == 1 && p.position <= 1 { return "1条" }
+        return "\(count)条 从第\(max(1, p.position))位起"
+    }
+
     private func upsert(_ p: Phrase) {
         var items = book.items
         if let i = items.firstIndex(where: { $0.id == p.id }) {
@@ -80,7 +90,7 @@ struct PhraseSettingsView: View {
     }
 }
 
-/// 单条短语的编辑弹窗：码 + 多行内容 + 起始行
+/// 单块短语的编辑弹窗：码 + 多行内容（每行一条）+ 起始候选位
 private struct PhraseEditView: View {
 
     @State var phrase: Phrase
@@ -88,7 +98,7 @@ private struct PhraseEditView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    /// 内容按行拆（空行不算一行）
+    /// 内容行数（空行不算）
     private var lineCount: Int {
         var n = 0
         phrase.text.enumerateLines { line, _ in
@@ -97,48 +107,39 @@ private struct PhraseEditView: View {
         return n
     }
 
-    /// 起始行跟随内容行数：删了行就自动收回来，不让它悬在超出的位置
-    private var posBinding: Binding<Int> {
-        Binding {
-            min(phrase.position, max(lineCount, 1))
-        } set: { phrase.position = $0 }
-    }
-
     var body: some View {
         NavigationView {
             Form {
                 Section("触发码（输入字母）") {
-                    TextField("如 dz / sfz", text: $phrase.code)
+                    TextField("如 kz", text: $phrase.code)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                Section("短语内容（支持多行 一行一句）") {
+                Section("短语内容（每行一条）") {
                     TextEditor(text: $phrase.text)
-                        .frame(minHeight: 130)
+                        .frame(minHeight: 150)
                         .autocorrectionDisabled()
                     Text(lineCount > 1
-                         ? "共 \(lineCount) 行  发出去就是多行内容"
-                         : "可以粘贴多行内容  一行就是一句")
+                         ? "共 \(lineCount) 行 = \(lineCount) 条候选  依次排在候选栏"
+                         : "一行就是一条  粘贴多行就是多条")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
                 Section {
-                    Stepper(value: posBinding, in: 1...max(lineCount, 1)) {
+                    Stepper(value: $phrase.position, in: 1...99) {
                         HStack {
                             Text("位置")
                             Spacer()
-                            Text("从第\(posBinding.wrappedValue)行开始")
+                            Text("从第\(phrase.position)位开始")
                                 .font(.footnote.monospacedDigit())
                                 .foregroundColor(.secondary)
                         }
                     }
-                    .disabled(lineCount < 2)
                 } header: {
                     Text("位置")
                 } footer: {
-                    Text(lineCount < 2
-                         ? "内容至少两行才有起始行可选  多行内容时选 2 就从第 2 行开始输出"
-                         : "多行内容从第几行开始输出  比如选 2 就跳过第 1 行  从第 2 行开始上屏")
+                    Text("第1行排在候选第\(phrase.position)位  第2行排第\(phrase.position + 1)位  依次往下  "
+                         + "同一个码配多块时用位置错开不撞车")
                 }
             }
             .navigationTitle(phrase.code.isEmpty ? "添加短语" : "编辑短语")
@@ -149,9 +150,7 @@ private struct PhraseEditView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        var p = phrase
-                        p.position = posBinding.wrappedValue
-                        onSave(p)
+                        onSave(phrase)
                         dismiss()
                     }
                     .disabled(phrase.cleanCode.isEmpty || phrase.text.isEmpty)

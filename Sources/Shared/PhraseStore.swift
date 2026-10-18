@@ -7,8 +7,8 @@ struct Phrase: Codable, Identifiable, Equatable {
     var code: String = ""
     /// 展开内容 支持多行 一行一句 发出去就是多行内容
     var text: String = ""
-    /// 多行内容从第几行开始输出（1 起）。选 2 = 跳过第 1 行 从第 2 行开始上屏
-    /// 单行内容这条不起作用
+    /// 多行内容的起始候选位（1 起）：第1行排这个位 第2行往后依次+1
+    /// （kz 五行 位置1 → 候选第1~5位）同一个码配多块时用位置错开
     var position: Int = 1
 
     var cleanCode: String {
