@@ -93,22 +93,16 @@ extension View {
     }
 }
 
-/// 开关行：标题 + 说明 + 右侧 Toggle
+/// 开关行：标题 + 右侧 Toggle
 struct ARToggleRow: View {
     let title: String
-    let note: String
     @Binding var isOn: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15))
-                    .foregroundColor(.black.opacity(0.85))
-                Text(note)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundColor(.black.opacity(0.85))
             Spacer(minLength: 8)
             Toggle("", isOn: $isOn)
                 .labelsHidden()
@@ -142,10 +136,9 @@ struct ARStepperRow: View {
     }
 }
 
-/// 数字输入行：标题 + 说明 + 右侧数字输入框（失焦时夹回范围）
+/// 数字输入行：标题 + 数字输入框（失焦时夹回范围）
 struct ARNumberFieldRow: View {
     let title: String
-    let note: String
     var suffix: String = ""
     let range: ClosedRange<Int>
     @Binding var value: Int
@@ -155,14 +148,9 @@ struct ARNumberFieldRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15))
-                    .foregroundColor(.black.opacity(0.85))
-                Text(note)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundColor(.black.opacity(0.85))
             Spacer(minLength: 8)
             HStack(spacing: 3) {
                 TextField("", text: $raw)

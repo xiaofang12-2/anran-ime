@@ -12,11 +12,6 @@ struct ThoughtSettingsView: View {
     var body: some View {
         List {
             Section {
-                if book.libraries.isEmpty {
-                    Text("还没有思想库，点下面「新建思想库」建一个。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
                 ForEach(book.libraries) { lib in
                     NavigationLink(destination: ThoughtLibraryView(book: $book,
                                                                    libraryID: lib.id)) {
@@ -63,9 +58,6 @@ struct ThoughtSettingsView: View {
                 }
             } header: {
                 Text("思想库")
-            } footer: {
-                Text("左滑一本库有「使用 / 删除」。点「使用」后键盘只认这一本；"
-                     + "进去加关键词和内容，键盘上点思想库图标输入关键词即可上屏。")
             }
         }
         .navigationTitle("思想库")
@@ -111,11 +103,6 @@ private struct ThoughtLibraryView: View {
     var body: some View {
         List {
             if let i = index {
-                if book.libraries[i].items.isEmpty {
-                    Text("还没有关键词，点下面「添加关键词」。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
                 ForEach(book.libraries[i].items) { item in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.keyword)

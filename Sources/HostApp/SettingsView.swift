@@ -15,28 +15,24 @@ struct SettingsView: View {
                     ARTheme.sectionTitle("输入")
                     ARTheme.card {
                         ARToggleRow(title: "模糊音",
-                                    note: "zh/z、ch/c、sh/s、前后鼻音、n/l 互相容错",
                                     isOn: $s.fuzzyPinyin)
                         arDivider()
                         ARToggleRow(title: "简拼 / 混拼",
-                                    note: "nh → 你好，zme → 怎么，bjdx → 北京大学",
                                     isOn: $s.abbrevInput)
                         arDivider()
                         ARToggleRow(title: "智能纠错",
-                                    note: "按错相邻键也能出词，nihap → 你好",
                                     isOn: $s.smartCorrect)
                         arDivider()
                         ARToggleRow(title: "句首自动大写",
-                                    note: "英文句首字母自动大写",
                                     isOn: $s.autoCapitalize)
                     }
 
                     ARTheme.sectionTitle("键盘")
                     ARTheme.card {
-                        ARToggleRow(title: "按键音效", note: "扣字按键音",
+                        ARToggleRow(title: "按键音效",
                                     isOn: $s.keySound)
                         arDivider()
-                        ARToggleRow(title: "按键震动", note: "默认关闭，用按键音效替代",
+                        ARToggleRow(title: "按键震动",
                                     isOn: $s.vibration)
                         arDivider()
                         ARStepperRow(title: "候选数量",
@@ -45,7 +41,6 @@ struct SettingsView: View {
                                      value: $s.candidateCount)
                         arDivider()
                         ARNumberFieldRow(title: "思想库上屏间隔",
-                                    note: "一个字一个字上屏的快慢，0 = 瞬间连上（最快）",
                                     suffix: "ms",
                                     range: IMESettings.outputSpeedRange,
                                     value: $s.outputSpeed)
@@ -57,11 +52,6 @@ struct SettingsView: View {
                         arDivider()
                         ARNavRow(title: "尾巴") { TailSettingsView() }
                     }
-                    Text("自定义短语和思想库都从主页入口进。")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 6)
 
                     ARTheme.sectionTitle("词库")
                     ARTheme.card {
@@ -71,11 +61,6 @@ struct SettingsView: View {
                             clearLearn()
                         }
                     }
-                    Text("清掉键盘记住的「越用越靠前」词频，词库本身不动。")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 6)
 
                     ARTheme.sectionTitle("关于")
                     ARTheme.card {

@@ -45,9 +45,7 @@ struct LayoutSettingsView: View {
                 .listRowInsets(EdgeInsets(top: 8, leading: 10,
                                           bottom: 8, trailing: 10))
             } header: {
-                Text("点按键选中")
-            } footer: {
-                Text("选中的键带蓝框  下面直接改它的属性")
+                Text("画布")
             }
 
             if let spec = selectedSpec, let loc = selectedLocation {
@@ -62,8 +60,6 @@ struct LayoutSettingsView: View {
                     cfg.customKeys = nil
                     selectedID = nil
                 }
-            } footer: {
-                Text("改动即时生效 去键盘重新调出一次即可看到")
             }
         }
         .navigationTitle("键盘布局")

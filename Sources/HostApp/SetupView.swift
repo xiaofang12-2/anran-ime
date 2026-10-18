@@ -348,11 +348,6 @@ private struct PhoneStepCard: View {
             .padding(.horizontal, 30)
 
             Spacer(minLength: 24)
-
-            Text("手机号仅作为账号归属标识 作者可在后台查看")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.55))
-                .padding(.bottom, 18)
         }
     }
 
@@ -667,10 +662,6 @@ private struct PairSheet: View {
             Text("连接键盘")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundColor(.white)
-            Text("在「黯然输入法」键盘的登录墙上输入这个配对码")
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.75))
-                .multilineTextAlignment(.center)
 
             // 6位配对码
             HStack(spacing: 8) {
@@ -686,11 +677,6 @@ private struct PairSheet: View {
                 }
             }
             .padding(.vertical, 8)
-
-            Text("配对码10分钟内有效  一次配对 永久自动同步\n以后改关键词 短语 布局 设置 键盘自动接住 无需再点")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.7))
-                .multilineTextAlignment(.center)
 
             ARPrimaryButton(title: "完成") { dismiss() }
                 .padding(.top, 10)
@@ -737,8 +723,6 @@ private struct PhoneBindSheet: View {
                 Section {
                     Button("确认保存") { save() }
                         .disabled(!PhoneStore.isValid(phone))
-                } footer: {
-                    Text("手机号仅作为账号归属标识 作者可在后台查看 不发送任何短信")
                 }
             }
             .navigationTitle("手机号")

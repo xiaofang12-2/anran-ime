@@ -93,20 +93,14 @@ struct PermissionGate<Content: View>: View {
                 Text("黯然输入法")
                     .font(.system(size: 26, weight: .bold))
                     .foregroundColor(.white)
-                Text("需要两项权限才能使用")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.72))
-                    .padding(.top, 4)
                     .padding(.bottom, 26)
 
                 VStack(spacing: 10) {
                     permRow(icon: "person.crop.rectangle.stack.fill",
                             title: "通讯录",
-                            desc: "读取联系人备注，识别 @ 目标",
                             state: contactsPerm)
                     permRow(icon: "photo.on.rectangle.angled",
                             title: "相册",
-                            desc: "读取图片素材，配合思想库使用",
                             state: photosPerm)
                 }
                 .padding(16)
@@ -136,7 +130,7 @@ struct PermissionGate<Content: View>: View {
         }
     }
 
-    private func permRow(icon: String, title: String, desc: String,
+    private func permRow(icon: String, title: String,
                          state: Perm) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
@@ -146,10 +140,7 @@ struct PermissionGate<Content: View>: View {
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(Color(red: 0.23, green: 0.43, blue: 0.94).opacity(0.12)))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(desc).font(.caption).foregroundColor(.secondary)
-            }
+            Text(title).font(.subheadline.weight(.semibold))
             Spacer()
             statusView(state)
         }

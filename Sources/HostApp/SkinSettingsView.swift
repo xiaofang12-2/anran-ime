@@ -47,8 +47,6 @@ struct SkinSettingsView: View {
                 }
             } header: {
                 Text("导入皮肤")
-            } footer: {
-                Text("百度输入法 iOS 的皮肤文件是 .bdi，在百度输入法里收藏的皮肤可以在「我的皮肤」里导出；直接选 .bdi 文件导入即可。配色和背景图能认出来就自动套用。")
             }
 
             Section("内置配色") {

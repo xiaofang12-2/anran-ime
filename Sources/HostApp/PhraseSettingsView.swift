@@ -16,11 +16,6 @@ struct PhraseSettingsView: View {
     var body: some View {
         List {
             Section {
-                if book.groups.isEmpty {
-                    Text("还没有自定义，点下面「新建自定义」建一个。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
                 ForEach(book.groups) { g in
                     NavigationLink(destination: PhraseGroupView(book: $book,
                                                                 groupID: g.id)) {
@@ -51,9 +46,6 @@ struct PhraseSettingsView: View {
                 }
             } header: {
                 Text("自定义")
-            } footer: {
-                Text("跟思想库一个用法：先建一个自定义名，点进去里面加短语。"
-                     + "所有自定义里的短语键盘全部生效，打触发码就出内容。")
             }
         }
         .navigationTitle("自定义短语")
@@ -101,11 +93,6 @@ private struct PhraseGroupView: View {
         List(selection: $selection) {
             if let i = index {
                 Section {
-                    if book.groups[i].items.isEmpty {
-                        Text("还没有短语，点下面「添加短语」建一条。")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
                     ForEach(book.groups[i].items) { p in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
@@ -150,11 +137,6 @@ private struct PhraseGroupView: View {
                     }
                 } header: {
                     Text("短语")
-                } footer: {
-                    Text("点条目可编辑，左滑单删；右上角「编辑」进多选，勾完点「删除」批量删。"
-                         + "一个码一块：内容每行就是一条独立候选，按顺序排在候选栏。"
-                         + "「位置」= 第1行排在候选第几位，后面的行依次+1；同一个码配多块时用位置错开。改动即时生效。"
-                         + "\n导入认三种行格式：搜狗电脑版 码,位置=内容；百度手机版 码=位置,内容；简式 码=内容。")
                 }
             }
         }
@@ -266,15 +248,6 @@ private struct PhraseEditView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    /// 内容行数（空行不算）
-    private var lineCount: Int {
-        var n = 0
-        phrase.text.enumerateLines { line, _ in
-            if !line.trimmingCharacters(in: .whitespaces).isEmpty { n += 1 }
-        }
-        return n
-    }
-
     var body: some View {
         NavigationView {
             Form {
@@ -287,11 +260,6 @@ private struct PhraseEditView: View {
                     TextEditor(text: $phrase.text)
                         .frame(minHeight: 150)
                         .autocorrectionDisabled()
-                    Text(lineCount > 1
-                         ? "共 \(lineCount) 行 = \(lineCount) 条候选  依次排在候选栏"
-                         : "一行就是一条  粘贴多行就是多条")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
                 }
                 Section {
                     Stepper(value: $phrase.position, in: 1...99) {
@@ -305,9 +273,6 @@ private struct PhraseEditView: View {
                     }
                 } header: {
                     Text("位置")
-                } footer: {
-                    Text("第1行排在候选第\(phrase.position)位  第2行排第\(phrase.position + 1)位  依次往下  "
-                         + "同一个码配多块时用位置错开不撞车")
                 }
             }
             .navigationTitle(phrase.code.isEmpty ? "添加短语" : "编辑短语")
