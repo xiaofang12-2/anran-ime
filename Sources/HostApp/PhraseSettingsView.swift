@@ -68,7 +68,7 @@ struct PhraseSettingsView: View {
             } footer: {
                 Text("点条目可编辑，左滑可删除。一个码一块：内容每行就是一条独立候选，按顺序排在候选栏。"
                      + "「位置」= 第1行排在候选第几位，后面的行依次+1；同一个码配多块时用位置错开。改动即时生效。"
-                     + "\n导入支持搜狗电脑版 / 百度手机版导出的短语文件（码,位置=内容 或 码=内容），已导入过的不会重复。")
+                     + "\n导入支持搜狗电脑版（码,位置=内容）/ 百度手机版（码=位置,内容）导出的短语文件 已导入过的不会重复。")
             }
         }
         .navigationTitle("自定义短语")
@@ -235,9 +235,10 @@ private struct PhraseEditView: View {
 
 /// 导入解析器：适配搜狗电脑版 / 百度手机版导出的自定义短语文本。
 ///
-/// 兼容两种行格式（分号/井号注释、[分节] 行直接跳过 自动去BOM）：
-///     kz,1=扣字          ← 编码,位置=内容（搜狗电脑版 / 百度手机版导出格式）
-///     kz=扣字            ← 编码=内容 位置按同码出现顺序自动+1
+/// 兼容三种行格式（分号/井号注释、[分节] 行直接跳过 自动去BOM）：
+///     af,1=安抚            ← 搜狗电脑版：码,位置=内容
+///     shq=3,必须宣布你妈属于我 ← 百度手机版：码=位置,内容（位置在等号后逗号前）
+///     kz=扣字              ← 简式：码=内容 位置按同码出现顺序自动+1
 /// 同码同位置后写的覆盖先写的（对齐搜狗行为）；
 /// 同码且位置连续的行合并成一块 位置断档就分块（块行为与手输完全一致）。
 enum PhraseImporter {
@@ -257,17 +258,32 @@ enum PhraseImporter {
             }
             guard let eq = line.firstIndex(of: "=") else { continue }
             let head = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            let text = String(line[line.index(after: eq)...])
+            var text = String(line[line.index(after: eq)...])
                 .trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { continue }
 
             var code = head
             var pos = 0
+
             if let comma = head.firstIndex(of: ",") {
+                // 搜狗电脑版：码,位置=内容
                 code = String(head[..<comma]).trimmingCharacters(in: .whitespaces)
                 pos = Int(head[head.index(after: comma)...]
                     .trimmingCharacters(in: .whitespaces)) ?? 0
+            } else if let comma = text.firstIndex(of: ",") {
+                // 百度手机版：码=位置,内容 —— 等号后以1~2位纯数字+逗号开头 数字就是位置
+                let numPart = String(text[..<comma]).trimmingCharacters(in: .whitespaces)
+                if numPart.count <= 2, let n = Int(numPart), n >= 1 {
+                    let rest = String(text[text.index(after: comma)...])
+                        .trimmingCharacters(in: .whitespaces)
+                    if !rest.isEmpty {
+                        pos = n
+                        text = rest
+                    }
+                }
             }
+            guard !text.isEmpty else { continue }
+
             let clean = code.lowercased().filter {
                 ($0 >= "a" && $0 <= "z") || ($0 >= "0" && $0 <= "9")
             }
