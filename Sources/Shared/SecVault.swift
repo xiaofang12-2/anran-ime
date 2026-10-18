@@ -1,38 +1,52 @@
 import Foundation
+import CryptoKit
 
-/// 词库资源保险柜：自建词库（pinyin.bin / assoc.bin）在仓库与 ipa 里都是密文，
+/// 词库资源保险柜：自建词库（pinyin.bin / assoc.bin）在仓库与 ipa 里都是
+/// AES-256-GCM 密文（ANAX：magic + 12字节nonce + 密文+tag）。
+/// 密钥在二进制里不存明文 —— 拆成三段分片各存一份，运行时异或拼装。
 /// 键盘要用时才解出来落临时文件，内存映射一建立就删盘 —— 解包的人拿到的是
-/// 一坨 XOR 密文，明文只在运行瞬间的沙盒临时目录里存在过。
+/// 一坨 AES 密文，明文只在运行瞬间的沙盒临时目录里存在过。
 enum SecVault {
 
-    /// 16 字节流密钥，仓库里存的是二次掩码（每个字节再 ^ 0x5A）
-    private static let masked: [UInt8] = [
-        0xED, 0xB8, 0x1B, 0xC6, 0x07, 0x59, 0xD5, 0x2C,
-        0x40, 0x9E, 0x72, 0xC1, 0xAA, 0x3F, 0x88, 0x14
+    private static let k1: [UInt8] = [
+        0x5A, 0xD0, 0xD9, 0x76, 0xCC, 0x16, 0xE8, 0x7C,
+        0x9B, 0x1F, 0xAF, 0x8E, 0x11, 0x3F, 0x1E, 0x47,
+        0x2C, 0x77, 0x34, 0x46, 0x75, 0x55, 0x44, 0x74,
+        0x33, 0x72, 0x5F, 0x7D, 0xA9, 0xFC, 0x0E, 0xC9
     ]
-    private static let magic = Data("ANEX".utf8)
+    private static let k2: [UInt8] = [
+        0xB4, 0x66, 0x48, 0x72, 0x02, 0xE3, 0x0B, 0xD9,
+        0x0F, 0x91, 0x1E, 0x4D, 0xD4, 0x89, 0x29, 0x32,
+        0xA6, 0xAD, 0xAE, 0xFA, 0x92, 0x88, 0x4F, 0xA3,
+        0x59, 0xF1, 0x25, 0x4F, 0x9D, 0x13, 0xCD, 0xC2
+    ]
+    private static let k3: [UInt8] = [
+        0x7F, 0x4C, 0xB8, 0x73, 0xDA, 0x11, 0xB3, 0xDC,
+        0xC2, 0xE6, 0xB1, 0x0D, 0xCC, 0xB9, 0x29, 0xF7,
+        0x67, 0xC9, 0xD2, 0xD2, 0xC9, 0x5C, 0xD1, 0xC3,
+        0x7B, 0x5E, 0xF0, 0xDD, 0xFB, 0x8B, 0x4A, 0x90
+    ]
+    private static let magic = Data("ANAX".utf8)
 
-    private static let key: [UInt8] = masked.map { $0 ^ 0x5A }
+    private static let key: SymmetricKey = {
+        var merged = [UInt8](repeating: 0, count: 32)
+        for i in 0..<32 { merged[i] = k1[i] ^ k2[i] ^ k3[i] }
+        return SymmetricKey(data: Data(merged))
+    }()
 
     /// 定位本代码所在 bundle（主程序 / 键盘扩展各自的主包）
     private final class Token {}
     private static let owner = Bundle(for: Token.self)
 
     static func decrypt(_ data: Data) -> Data? {
-        guard data.prefix(4) == magic, data.count > 4 else { return nil }
-        var out = data.subdata(in: 4..<data.count)
-        let k = key
-        out.withUnsafeMutableBytes { raw in
-            let p = raw.bindMemory(to: UInt8.self)
-            for i in 0..<p.count {
-                p[i] ^= k[i & 15]
-            }
-        }
-        return out
+        guard data.prefix(4) == magic, data.count > 4 + 12 + 16 else { return nil }
+        guard let box = try? AES.GCM.SealedBox(combined: data.subdata(in: 4..<data.count))
+        else { return nil }
+        return try? AES.GCM.open(box, using: key)
     }
 
     /// bundle 里找 `name.ext.enc` 解到临时文件；找不到密文就退回明文
-    /// `name.ext`（本地调试 / 旧包兼容）。返回临时文件路径或明文原路径。
+    /// `name.ext`（本地调试兼容）。返回临时文件路径或明文原路径。
     static func stage(_ name: String, ext: String) -> URL? {
         let want = "\(name).\(ext).enc"
         for u in (owner.urls(forResourcesWithExtension: "enc", subdirectory: nil)

@@ -239,6 +239,30 @@ final class AnRanAPI: NSObject {
         session.dataTask(with: req).resume()
     }
 
+    /// 二进制完整性对账：官方构建哈希登记在服务器，
+    /// 服务器判 tampered 就走中毒协议（随机延迟静默退出）
+    func reportIntegrity(version: String, target: String, sha: String,
+                         completion: @escaping (Bool) -> Void) {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/bininteg"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let t = AuthStore.current?.ticket, !t.isEmpty {
+            req.setValue(t, forHTTPHeaderField: "X-Ticket")
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "v": version, "t": target, "sha": sha, "machine": DeviceID.current])
+        session.dataTask(with: req) { data, _, _ in
+            var tampered = false
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (obj["verdict"] as? String) == "tampered" {
+                tampered = true
+            }
+            DispatchQueue.main.async { completion(tampered) }
+        }.resume()
+    }
+
     // MARK: - 请求
 
     private func post(_ path: String, _ body: [String: Any],
