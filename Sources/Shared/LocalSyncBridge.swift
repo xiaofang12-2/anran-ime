@@ -19,10 +19,12 @@ enum LocalSyncBridge {
 
     /// 门铃名。Darwin 通知中心跨进程投递、不经过沙盒，iOS 上键盘扩展
     /// 与宿主 app 通信的标准旁路。
-    static let ringName = "com.anran.ime.config.ring" as CFString
+    /// （Xcode 16 SDK 起 CFNotificationName 是独立结构体，要用 rawValue 构造）
+    static let ringName = CFNotificationName(
+        rawValue: "com.anran.ime.config.ring" as CFString)
 
     /// 数据总线名。命名剪贴板同设备跨进程可读写。
-    static let boardName = UIPasteboard.Name("com.anran.ime.syncboard")
+    static let boardName = UIPasteboard.Name(rawValue: "com.anran.ime.syncboard")
 
     private static var board: UIPasteboard? {
         UIPasteboard(name: boardName, create: true)
@@ -58,9 +60,10 @@ enum LocalSyncBridge {
 }
 
 /// 门铃监听句柄：持有期间监听 Darwin 通知，deinit 自动摘除。
+/// 文件级类型（不是 LocalSyncBridge 成员），引用时直接写 RingHandle。
 final class RingHandle {
 
-    private let ptr: UnsafeRawPointer
+    private let ptr: UnsafeMutableRawPointer
 
     init(_ handler: @escaping () -> Void) {
         let box = RingBox(handler)
@@ -76,7 +79,7 @@ final class RingHandle {
     deinit {
         CFNotificationCenterRemoveObserver(
             CFNotificationCenterGetDarwinNotifyCenter(), ptr, nil, nil)
-        Unmanaged<RingBox>.fromOpaque(ptr).release()
+        Unmanaged<RingBox>.fromOpaque(UnsafeRawPointer(ptr)).release()
     }
 }
 
@@ -87,13 +90,16 @@ private final class RingBox {
     init(_ handler: @escaping () -> Void) { self.handler = handler }
 }
 
-/// 文件级 C 回调。Darwin 通知可能从任意线程投递，
-/// 由 handler 内部自己负责 hop 主线程。
+/// 文件级 C 回调。签名按 Xcode 16 SDK 的 CFNotificationCallback：
+/// observer 是 UnsafeMutableRawPointer?。
+/// Darwin 通知可能从任意线程投递，由 handler 内部自己负责 hop 主线程。
 private func anranRingCallback(_ center: CFNotificationCenter?,
-                               _ observer: UnsafeRawPointer,
+                               _ observer: UnsafeMutableRawPointer?,
                                _ name: CFNotificationName?,
                                _ object: UnsafeRawPointer?,
                                _ userInfo: CFDictionary?) {
-    let box = Unmanaged<RingBox>.fromOpaque(observer).takeUnretainedValue()
+    guard let observer else { return }
+    let box = Unmanaged<RingBox>.fromOpaque(
+        UnsafeRawPointer(observer)).takeUnretainedValue()
     box.handler()
 }

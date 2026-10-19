@@ -157,7 +157,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private var hbTimer: Timer?
     /// 秒同步门铃句柄：nil = 没在听
-    private var ringHandle: LocalSyncBridge.RingHandle?
+    private var ringHandle: RingHandle?
 
     // MARK: - 授权
 
