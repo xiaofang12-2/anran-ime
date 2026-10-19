@@ -5,7 +5,7 @@ import Foundation
 /// 两边通过 App Group 共享容器读写同一份数据（词库 / 思想库 / 剪贴板 / 自定义短语）。
 /// 但 App Groups 是付费开发者能力，免费 Apple ID 用不了，声明了反而会让自签失败，
 /// 所以正式分发不带这个 entitlement —— 这里永远拿不到共享容器，退回本机沙盒。
-/// 主 app 与键盘之间的登录态交接改走剪贴板（见 AuthStore）。
+/// 主 app 与键盘之间的配置/登录态交接走服务器 + 回环 TCP 秒同步（见 ConfigSync / LocalSyncLink）。
 /// 将来若改用付费账号或巨魔商店专属包，把 entitlement 加回来即可自动生效。
 enum SharedStore {
 

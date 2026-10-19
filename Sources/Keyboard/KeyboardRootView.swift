@@ -29,7 +29,7 @@ struct KeyboardRootView: View {
     @State private var cfgRev = 0
     /// 回车键文案：跟宿主 App 的 returnKeyType 走（聊天软件显示「发送」）
     @State private var returnLabel = "换行"
-    /// 上一次从剪贴板重拉配置的时间（起词时节流重拉用）
+    /// 上一次从本地链路重拉配置的时间（起词时节流重拉用）
     @State private var lastSyncAt = Date.distantPast
     /// 引擎诊断串（方案 id + 真实候选条数）。没有 App Groups，键盘沙箱里
     /// 的东西主程序读不到，候选栏空闲时露这一串是确认 librime 干没干活的唯一途径。
@@ -128,11 +128,11 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranKeyboardWillAppear)) { _ in
             check()
         }
-        // 秒同步门铃：主 app 改完设置/短语/思想库，整包经本地总线几十毫秒
-        // 内推过来（Darwin 通知 + 命名剪贴板）。键盘正开着也立刻落盘刷新，
-        // 不用等收起重弹、不用等服务器往返。
+        // 秒同步门铃：主 app 改完设置/短语/思想库按铃，键盘直连它的回环
+        // server 拉整包（LocalSyncLink，不碰剪贴板）。键盘正开着也立刻
+        // 落盘刷新，不用等收起重弹、不用等服务器往返。
         .onReceive(NotificationCenter.default.publisher(for: .anranLocalBusRing)) { _ in
-            _ = applyLocalBusIfNew()
+            pullLocalIfNew()
         }
         // 后台把账号禁用/解绑后，心跳回调广播踢人 —— 立刻收掉键盘切回登录墙
         .onReceive(NotificationCenter.default.publisher(for: .anranAuthKicked)) { _ in
@@ -977,10 +977,10 @@ struct KeyboardRootView: View {
 
     private func pullSettings() {
         refreshLocalStores()
-        // 本地总线先读：主 app 秒推的那份可能已经在板上（门铃响过没理/没响），
-        // 比服务器拉取快几个数量级。真落盘了下面的服务器拉取会因 appliedKey
-        // 去重自动跳过，不会重复刷一遍。
-        _ = applyLocalBusIfNew()
+        // 本地链路先拉：主 app 秒推的那份走回环 TCP（几十毫秒），比服务器
+        // 拉取快几个数量级。真落盘了下面的服务器拉取会因 appliedKey 去重
+        // 自动跳过，不会重复刷一遍；主 app 没在跑则 1.5 秒超时后走服务器。
+        pullLocalIfNew()
         ConfigSync.pullFromServer { changed in
             guard changed else { return }
             refreshLocalStores()
@@ -990,17 +990,17 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// 秒同步落盘 + 界面刷新：本地总线内容比上次新才动。返回是否有更新。
-    /// 与服务器拉取共用 appliedKey 去重（ConfigSync.applyLocalBus 内部），
+    /// 秒同步落盘 + 界面刷新：本地拉回的整包比上次新才动。
+    /// 与服务器拉取共用 appliedKey 去重（ConfigSync.pullLocal 内部），
     /// 两条路谁先到都不会把同一份包落两遍。
-    @discardableResult
-    private func applyLocalBusIfNew() -> Bool {
-        guard ConfigSync.applyLocalBus() else { return false }
-        refreshLocalStores()
-        controller.setRows(KBMetrics.rows)
-        cfgRev += 1
-        if !composing.isEmpty { refresh() }
-        return true
+    private func pullLocalIfNew() {
+        ConfigSync.pullLocal { changed in
+            guard changed else { return }
+            refreshLocalStores()
+            controller.setRows(KBMetrics.rows)
+            cfgRev += 1
+            if !composing.isEmpty { refresh() }
+        }
     }
 
     /// 主程序点了「清空打字学习记录」：见到比本地新的令牌就清一次

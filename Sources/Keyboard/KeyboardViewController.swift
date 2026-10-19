@@ -128,9 +128,9 @@ final class KeyboardViewController: UIInputViewController {
                 self?.refreshAuth()
             }
         }
-        // 秒同步门铃：主 app 改设置/短语/思想库后几十毫秒内推着整包过来，
-        // 键盘哪怕正开着也立刻落盘刷新（App Group 用不了，总线走
-        // Darwin 通知 + 命名剪贴板，见 LocalSyncBridge）。
+        // 秒同步门铃：主 app 改设置/短语/思想库后按铃，键盘听到直连它的
+        // 回环 server 拉整包（LocalSyncLink，不碰剪贴板），几十毫秒内
+        // 落盘刷新 —— 键盘哪怕正开着也生效。
         // 扩展进程存活期间只注册一次；viewWillDisappear 摘掉。
         if ringHandle == nil {
             ringHandle = LocalSyncBridge.addRing {

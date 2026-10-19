@@ -22,8 +22,8 @@ struct SetupView: View {
             }
         }
         .navigationViewStyle(.stack)
-        // 建库/加关键词/加短语等任何 Store 落盘 → 本地总线秒推（命名剪贴板 +
-        // Darwin 门铃，毫秒级到键盘）+ 服务器推送（多设备兜底）。
+        // 建库/加关键词/加短语等任何 Store 落盘 → 本地链路秒推（Darwin 门铃 +
+        // 回环 TCP 拉整包，毫秒级到键盘）+ 服务器推送（多设备兜底）。
         // 用户改完不用重新调出键盘，开着键盘也立刻生效（对标百度个性短语加完就有）
         .onReceive(NotificationCenter.default.publisher(for: ConfigSync.localStoreChanged)) { _ in
             _ = ConfigSync.publishIfChanged()
@@ -32,7 +32,7 @@ struct SetupView: View {
         }
         .onChange(of: scenePhase) { phase in
             // 切后台时把最新配置推服务器（配置没变就不动）。
-            // 秒同步在 localStoreChanged 那里已经走了本地总线；这一步是
+            // 秒同步在 localStoreChanged 那里已经按了门铃；这一步是
             // 多设备/重装键盘的兜底，保证「改完设置 → 去别的 app 打字」
             // 键盘一开就是最新配置。
             if phase != .active {

@@ -3,9 +3,10 @@ import Foundation
 /// 主程序 → 键盘的整包交接：布局 + 短语 + 输入设置 + 思想库 + 登录态，一次带过去。
 ///
 /// 双通道：
-/// - 本地总线（秒同步）：命名剪贴板 + Darwin 门铃，同设备毫秒级，键盘开着也生效；
+/// - 本地链路（秒同步）：主 app 按 Darwin 门铃，键盘直连回环 TCP 拉整包
+///   （LocalSyncLink），同设备毫秒级、不碰剪贴板、不要票据、离线可用；
 /// - 服务器中转（兜底）：主程序改动全量快照推服务端，键盘凭票据拉，管多设备。
-/// 两条路共用 appliedKey 去重，谁先到都不重复落盘（见 LocalSyncBridge）。
+/// 两条路共用 appliedKey 去重，谁先到都不重复落盘。
 /// 第一次连接用「配对码」：主程序点「同步数据」出一个6位码，键盘登录墙输一次，之后永久自动同步。
 struct SyncBundle: Codable, Equatable {
     var layout: KBConfig?
@@ -64,8 +65,8 @@ enum ConfigSync {
         var bundle = snapshot(auth: auth)
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
         guard let marker = encoded(snapshot(auth: auth)) else { return false }
-        // 秒同步先行：本地总线不节流、不等服务器，键盘几十毫秒内就收到
-        postLocal(bundle)
+        // 秒同步先行：本地门铃不节流、不等服务器，键盘几十毫秒内来拉
+        postLocal()
         push(bundle, marker: marker)
         return true
     }
@@ -78,8 +79,8 @@ enum ConfigSync {
         if marker == UserDefaults.standard.string(forKey: publishedKey) { return false }
         var bundle = snap
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
-        // 同上：本地总线先行，服务器推送随后（节流/失败都不挡秒同步）
-        postLocal(bundle)
+        // 同上：本地门铃先行，服务器推送随后（节流/失败都不挡秒同步）
+        postLocal()
         push(bundle, marker: marker)
         return true
     }
@@ -125,13 +126,12 @@ enum ConfigSync {
         }
     }
 
-    /// 同设备秒同步总线：整包写进命名剪贴板 + 按 Darwin 门铃。
-    /// 与服务器推送并存 —— 总线管本机毫秒级（键盘哪怕正开着也能立刻收到），
-    /// 服务器管多设备/账号维度。没登录（没票据）也发：本地同步不依赖票据。
-    private static func postLocal(_ bundle: SyncBundle) {
-        if let json = encoded(bundle) {
-            LocalSyncBridge.post(json)
-        }
+    /// 同设备秒同步：按下 Darwin 门铃（不带数据）。键盘听到会自己去
+    /// 回环 TCP（LocalSyncLink）拉最新整包。与服务器推送并存 ——
+    /// 门铃管本机毫秒级（键盘哪怕正开着也能立刻收到），服务器管多设备。
+    /// 没登录（没票据）也按：本地同步不依赖票据。
+    private static func postLocal() {
+        LocalSyncBridge.ring()
     }
 
     /// 主程序切后台前调：把暂存的改动立刻推出去，别被节流窗口咽掉。
@@ -191,19 +191,27 @@ enum ConfigSync {
         }
     }
 
-    /// 键盘侧秒同步入口：读本地总线，内容比上次新就整包落盘。
+    /// 键盘侧秒同步入口：连主 app 的回环 server 拉整包，内容比上次新就落盘。
     /// 与服务器拉取共用 appliedKey 去重标记 —— 两条路谁先到都不重复落盘。
-    /// 总线空的（没写过/被系统清）返回 false，调用方照旧走服务器。
-    @discardableResult
-    static func applyLocalBus() -> Bool {
-        guard let json = LocalSyncBridge.read() else { return false }
-        if json == UserDefaults.standard.string(forKey: appliedKey) { return false }
-        guard let data = json.data(using: .utf8),
-              let bundle = try? JSONDecoder().decode(SyncBundle.self, from: data) else {
-            return false
+    /// 主 app 没在跑（连不上/超时）→ false，调用方照旧走服务器。
+    static func pullLocal(_ done: @escaping (Bool) -> Void) {
+        LocalSyncLink.fetchBundle { bundle in
+            guard let bundle else { done(false); return }
+            guard let json = encoded(bundle) else { done(false); return }
+            if json == UserDefaults.standard.string(forKey: appliedKey) {
+                done(false)
+                return
+            }
+            apply(bundle)
+            UserDefaults.standard.set(json, forKey: appliedKey)
+            done(true)
         }
-        apply(bundle)
-        UserDefaults.standard.set(json, forKey: appliedKey)
-        return true
+    }
+
+    /// 主 app 侧：当前全量整包（回环 server 的应答数据，每次连接现组）
+    static func currentBundle() -> SyncBundle? {
+        var b = snapshot()
+        b.rev = Int(Date().timeIntervalSince1970 * 1000)
+        return b
     }
 }
