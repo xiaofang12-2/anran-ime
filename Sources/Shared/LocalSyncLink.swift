@@ -20,7 +20,7 @@ import Network
 enum LocalSyncLink {
 
     /// 固定高位端口（未注册段 49152-65535），只绑 127.0.0.1。
-    static let port = NWEndpoint.Port(integer: 49317)
+    static let port: NWEndpoint.Port = 49317
 
     private static let linkQueue = DispatchQueue(
         label: "com.anran.ime.localsync", qos: .utility)
@@ -65,7 +65,8 @@ enum LocalSyncLink {
                 payload = s
             }
             conn.send(content: Data((payload + "\n").utf8),
-                      completion: .contentProcessed { _ in conn.cancel() })
+                      completion: NWConnection.SendCompletion
+                          .contentProcessed({ _ in conn.cancel() }))
         }
     }
 
@@ -77,7 +78,7 @@ enum LocalSyncLink {
         let conn = NWConnection(
             to: .hostPort(host: "127.0.0.1", port: port), using: .tcp)
         let once = OnceGuard()
-        conn.stateUpdateHandler = { state in
+        conn.stateUpdateHandler = { (state: NWConnection.State) in
             switch state {
             case .ready:
                 var hello = "{}"
@@ -87,7 +88,8 @@ enum LocalSyncLink {
                     hello = s
                 }
                 conn.send(content: Data((hello + "\n").utf8),
-                          completion: .contentProcessed { _ in
+                          completion: NWConnection.SendCompletion
+                              .contentProcessed({ _ in
                     readLine(conn) { line in
                         guard let line,
                               let data = line.data(using: .utf8),
@@ -100,7 +102,7 @@ enum LocalSyncLink {
                         conn.cancel()
                         once.run { completion(bundle) }
                     }
-                })
+                }))
             case .failed, .cancelled:
                 once.run { completion(nil) }
             default:
