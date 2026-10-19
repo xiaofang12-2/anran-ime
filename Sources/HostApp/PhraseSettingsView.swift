@@ -233,10 +233,13 @@ private struct PhraseGroupView: View {
     }
 
     private func upsert(_ p: Phrase) {
-        guard let i = index,
-              let j = book.groups[i].items.firstIndex(where: { $0.id == p.id })
-        else { return }
-        book.groups[i].items[j] = p
+        guard let i = index else { return }
+        // 编辑已有的按 id 替换；「添加短语」是新 UUID 列表里没有，追加进去
+        if let j = book.groups[i].items.firstIndex(where: { $0.id == p.id }) {
+            book.groups[i].items[j] = p
+        } else {
+            book.groups[i].items.append(p)
+        }
     }
 }
 
