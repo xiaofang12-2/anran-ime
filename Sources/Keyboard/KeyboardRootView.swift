@@ -140,8 +140,16 @@ struct KeyboardRootView: View {
         // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
         .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in
-            engineDiag = RimeService.shared.diagnostics
+            engineDiag = Self.diag
         }
+    }
+
+    /// 诊断串 = 引擎状态 + 内存足迹。内存那截是闪退排查的抓手：
+    /// 键盘扩展被 jetsam 杀掉不留现场，只有这条串能看出是不是顶着红线跑。
+    private static var diag: String {
+        var s = RimeService.shared.diagnostics + " " + CrashReporter.memoryDiag()
+        if !CrashReporter.lastCrash().isEmpty { s += " CRASH" }
+        return s
     }
 
     // MARK: - 已授权：正常键盘
@@ -864,7 +872,7 @@ struct KeyboardRootView: View {
             // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
             // 没就绪前候选走自研引擎，就绪后自动切过去。
             RimeService.shared.prepare()
-            engineDiag = RimeService.shared.diagnostics
+            engineDiag = Self.diag
             controller.refreshAuth()
             // 思想库面板没被主动关过就还原（键盘收起再弹出 / 扩展进程被杀重开）：
             // 面板和关键词进度都接回去 接着上次那句走 只有主动关了才从头开始

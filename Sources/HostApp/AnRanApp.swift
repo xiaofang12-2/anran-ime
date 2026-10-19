@@ -4,6 +4,7 @@ import SwiftUI
 struct AnRanApp: App {
     init() {
         Hardening.arm()
+        CrashReporter.install()
         ARTheme.install()
     }
 

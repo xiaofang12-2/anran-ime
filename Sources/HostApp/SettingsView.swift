@@ -69,6 +69,12 @@ struct SettingsView: View {
                                 .font(.system(size: 14))
                                 .foregroundColor(.secondary)
                         }
+                        arDivider()
+                        ARActionRow(title: "运行诊断", icon: "waveform.path.ecg") {
+                            message = CrashReporter.lastCrash().isEmpty
+                                ? "无崩溃记录 \(CrashReporter.memoryDiag())"
+                                : CrashReporter.lastCrash()
+                        }
                     }
 
                     if !message.isEmpty {
