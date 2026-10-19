@@ -234,18 +234,24 @@ private struct EditorCanvas: View {
             let totalH = rowHs.reduce(0, +) + gap * CGFloat(max(appliedRows.count - 1, 0))
             let scale = min(1, (geo.size.height - 6) / max(totalH, 1))
             VStack(spacing: gap) {
-                ForEach(appliedRows.indices, id: \.self) { r in
-                    let row = appliedRows[r]
+                // 预览的行数会随滑杆实时变；按下标取行有越界风险（见 KeyboardRootView.keyRows）
+                let allRows = appliedRows
+                let heights = rowHs
+                ForEach(Array(allRows.enumerated()), id: \.offset) { rp in
+                    let r = rp.offset
+                    let row = rp.element
+                    // 行高数组与行数不一定同步到位（预览重算时），缺的就按 1 倍走
+                    let rh = heights.indices.contains(r) ? heights[r] : 1.0
                     let unit = (geo.size.width - gap * CGFloat(max(row.count - 1, 0)))
                         / CGFloat(max(row.reduce(0) { $0 + $1.weight }, 0.1))
                     HStack(spacing: gap) {
                         ForEach(row) { k in
                             canvasKey(k, scale: scale,
-                                      h: (k.height.map { CGFloat($0) } ?? rowHs[r]) * scale,
+                                      h: (k.height.map { CGFloat($0) } ?? rh) * scale,
                                       w: unit * k.weight)
                         }
                     }
-                    .frame(height: rowHs[r] * scale, alignment: .center)
+                    .frame(height: rh * scale, alignment: .center)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

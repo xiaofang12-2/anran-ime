@@ -385,21 +385,29 @@ struct TopBar: View {
                                 .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
                                 .padding(.horizontal, 9)
                             divider
-                            ForEach(shown.indices, id: \.self) { i in
-                                Text(shown[i].word)
+                            // 遍历 indices 再按下标取元素是经典崩溃源：候选数在
+                            // 渲染途中变少（点字母/上屏/引擎异步回调），旧 indices
+                            // 快照去取 shown[i] 就越界 → 扩展被打死 → iOS 立刻切回
+                            // 上一个输入法，表现就是「点一下就跳走」。改成值捕获：
+                            // 一次性快照 [(序号, 候选)]，闭包只用捕获到的候选本身。
+                            let items = Array(shown.enumerated())
+                            ForEach(items, id: \.offset) { pair in
+                                let i = pair.offset
+                                let c = pair.element
+                                Text(c.word)
                                     .font(.system(size: (i == 0 ? 21 : 18) * scale,
                                                   weight: i == 0 ? .semibold : .regular))
-                                    .foregroundColor(shown[i].literal
+                                    .foregroundColor(c.literal
                                                      ? KBMetrics.themeAccentColor.opacity(0.6)
                                                      : KBMetrics.themeCandidateTextColor)
                                     .padding(.horizontal, 9)
                                     .frame(height: KBMetrics.barHeight)
                                     .contentShape(Rectangle())
-                                    .onTapGesture { onPick(shown[i]) }
+                                    .onTapGesture { onPick(c) }
                                     .onLongPressGesture(minimumDuration: 0.45) {
-                                        onForget(shown[i].word)
+                                        onForget(c.word)
                                     }
-                                if i < shown.count - 1 { divider }
+                                if i < items.count - 1 { divider }
                             }
                         }
                     }
@@ -632,11 +640,17 @@ struct CandidateGridPanel: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
-            ForEach(gridRows.indices, id: \.self) { r in
+        // 同 CandidateBar：gridRows 是计算属性，行数会随候选刷新变化。
+        // 按下标取行/取元素会越界崩，改成一次性快照 + 值捕获。
+        let allRows = gridRows
+        return VStack(spacing: 6) {
+            ForEach(Array(allRows.enumerated()), id: \.offset) { rp in
+                let r = rp.offset
+                let row = rp.element
                 HStack(spacing: 0) {
-                    ForEach(gridRows[r].indices, id: \.self) { i in
-                        let c = gridRows[r][i]
+                    ForEach(Array(row.enumerated()), id: \.offset) { cp in
+                        let i = cp.offset
+                        let c = cp.element
                         Text(c.word)
                             .font(.system(size: 16,
                                           weight: (r == 0 && i == 0) ? .semibold : .regular))

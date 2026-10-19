@@ -230,9 +230,15 @@ struct KeyboardRootView: View {
     }
 
     /// 字母/数字/符号各行按键
+    ///
+    /// rows 是计算属性，切层（ABC/123/符号）或主程序改布局下发 cfgRev
+    /// 都会让它变行数。遍历 indices 再 rows[i] 取行，渲染途中一变就
+    /// 越界崩 —— 扩展被打死的直接表现就是「点一下键输入法就跳走了」。
+    /// 改成一行一行的值快照，闭包只用捕获到的那一行。
     private var keyRows: some View {
-        ForEach(rows.indices, id: \.self) { i in
-            KeyRow(keys: rows[i],
+        let all = Array(rows.enumerated())
+        return ForEach(all, id: \.offset) { pair in
+            KeyRow(keys: pair.element,
                    onKey: handle,
                    onSwipe: swipe,
                    onDeleteClear: clearComposing,

@@ -218,9 +218,12 @@ struct SkinPreview: View {
                     .foregroundColor(Color(hex: theme.candidateText))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
-                ForEach(rows.indices, id: \.self) { r in
+                // 同上：行数是算出来的，按下标取行有越界风险，改值捕获
+                let allRows = rows
+                ForEach(Array(allRows.enumerated()), id: \.offset) { rp in
+                    let row = rp.element
                     HStack(spacing: 3) {
-                        ForEach(rows[r], id: \.self) { k in
+                        ForEach(row, id: \.self) { k in
                             Text(k.uppercased())
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(hex: theme.text))
