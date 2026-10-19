@@ -72,7 +72,9 @@ final class RingHandle {
             CFNotificationCenterGetDarwinNotifyCenter(),
             ptr,
             anranRingCallback,
-            LocalSyncBridge.ringName, nil,
+            // 注意：AddObserver 的 name 形参在这个 SDK 里收 CFString?
+            // （PostNotification 才收 CFNotificationName），取 rawValue 过
+            LocalSyncBridge.ringName.rawValue, nil,
             CFNotificationSuspensionBehavior.deliverImmediately)
     }
 
