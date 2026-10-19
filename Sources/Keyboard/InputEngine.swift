@@ -79,6 +79,28 @@ final class InputEngine {
         PinyinEngine.shared.associate(committed)
     }
 
+    /// 句子结束（标点/回车）：上下文断层，清掉上一个词，
+    /// 别让新句子的候选还跟着上一个句子的尾巴排
+    func clearContext() {
+        lastCommitted = ""
+    }
+
+    /// 上下文加权分：上一个上屏词 → 当前候选词。
+    /// 用户自己的搭配重奖（打完「今天」你常打「天气」，直接改变组内顺序），
+    /// 通用字级接续轻推（尾字接头字接得上的浮一浮）。两者都没有就返回 0，
+    /// 组内保持引擎原序 —— 不破坏无用户数据时的默认排序。
+    private func contextBoost(_ word: String) -> Double {
+        guard !lastCommitted.isEmpty, let fol = word.first else { return 0 }
+        var b = 0.0
+        if let c = PinyinEngine.shared.userContext(after: lastCommitted)?[word] {
+            b += min(Double(c), 6.0) * 3.0
+        }
+        if let ctx = lastCommitted.last {
+            b += PinyinEngine.shared.contextAffinity(ctx, fol) * 0.8
+        }
+        return b
+    }
+
     func forget(_ word: String) { PinyinEngine.shared.forget(word) }
     func setPhrases(_ list: [Phrase]) { PinyinEngine.shared.setPhrases(list) }
     func clearLearning() {
@@ -104,14 +126,34 @@ final class InputEngine {
         // 1) 策展强优先（缩写表命中）：小逼崽子 / 我是你爸 这类必须压过 librime
         for c in fallback where c.isPriority { push(c) }
 
-        // 2) librime 候选，带上 rime 下标，选中时回灌给它学词
-        for (i, c) in rime.enumerated() {
-            push(PinyinCandidate(word: c.text, score: 0,
-                                 consumed: raw.count, literal: false, rimeIndex: i))
+        // 2) librime 候选，带上 rime 下标，选中时回灌给它学词。
+        //    组内按「上下文加权」重排：用户自己的搭配 > 通用接续 > librime 原序
+        //    （rimeIndex 保持 librime 里的原始下标，回灌/部分上屏都靠它）。
+        //    这就是百度「越用越懂你」的核心：打完「今天」打 tianqi，「天气」顶前排。
+        let rimeRanked = rime.enumerated()
+            .map { (idx: $0.offset, cand: $0.element, boost: contextBoost($0.element.text)) }
+            .sorted { a, b in
+                if a.boost != b.boost { return a.boost > b.boost }
+                return a.idx < b.idx        // 同分保持 librime 原顺序
+            }
+        for e in rimeRanked {
+            push(PinyinCandidate(word: e.cand.text, score: 0,
+                                 consumed: raw.count, literal: false, rimeIndex: e.idx))
         }
 
-        // 3) 自研其余候选（含兜底保证，绝不让面板只剩英文）
-        for c in fallback where !c.isPriority { push(c) }
+        // 3) 自研其余候选（含兜底保证，绝不让面板只剩英文）。
+        //    这组的概率序是词图 beam 精算出来的，上下文加分只当组内裁决，
+        //    不整组重排 —— 罕见串/ librime 没起来时的正确率不能被上下文带偏。
+        //    Swift 的 sort 不保证稳定，相等加权时用原始下标决胜，保住 rank() 原序。
+        let fallbackRanked = fallback
+            .filter { !$0.isPriority }
+            .enumerated()
+            .map { (idx: $0.offset, cand: $0.element, boost: contextBoost($0.element.word)) }
+            .sorted { a, b in
+                if a.boost != b.boost { return a.boost > b.boost }
+                return a.idx < b.idx
+            }
+        for e in fallbackRanked { push(e.cand) }
 
         // 4) 自定义短语按「位置」插回它该在的名次（位置 1 = 排第一）
         let hits = PinyinEngine.shared.phraseHits(for: raw)

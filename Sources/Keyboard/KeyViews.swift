@@ -357,7 +357,10 @@ struct TopBar: View {
     let onThoughtLongPress: () -> Void
     let onCollapse: () -> Void
 
-    private var shown: [PinyinCandidate] { Array(candidates.prefix(40)) }
+    /// 单行候选栏只摆 9 条（对标百度：6~9 条的干净横排，第一条加粗放大）。
+    /// 早年摆 40 条，长词/整句候选混在一起一锅粥，正确候选反被冲淡。
+    /// 更多的候选在展开网格（4x8）里一次看全，上滑选候选也按 1~9 对齐。
+    private var shown: [PinyinCandidate] { Array(candidates.prefix(9)) }
 
     private var scale: CGFloat { KBMetrics.fontScale }
 

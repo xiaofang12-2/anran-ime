@@ -605,6 +605,7 @@ struct KeyboardRootView: View {
             candidates = []
             if layer != .letters { layer = .letters }
             autoCap(after: t)
+            InputEngine.shared.clearContext()
 
         case .shift:
             tapShift()
@@ -627,6 +628,7 @@ struct KeyboardRootView: View {
                     controller.backspace()
                     controller.insert("。")
                     autoCap(after: "。")
+                    InputEngine.shared.clearContext()
                 } else {
                     lastSpaceTap = now
                     controller.insert(" ")
@@ -641,6 +643,7 @@ struct KeyboardRootView: View {
             controller.newline()
             candidates = []
             autoCap(after: "\n")
+            InputEngine.shared.clearContext()
 
         case .globe:
             commitComposing()

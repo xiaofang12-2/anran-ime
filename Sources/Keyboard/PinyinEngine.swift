@@ -295,10 +295,8 @@ final class PinyinEngine {
         if set.abbrevInput && !splitsIntoSyllables(input) {
             for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true) }
         }
-        // 用户记忆词：同样的拼音直接顶到最前
-        if let uw = userWords[input] {
-            for (i, w) in uw.enumerated() { put(w, n, 900_000 - Double(i), pri: true) }
-        }
+        // 用户记忆词：完整命中顶最前；打在半路上（niha）也召回学过的整词（nihao→你好）
+        for (w, lp) in userWordHits(input) { put(w, n, lp, pri: true) }
 
         var hits: [(text: String, position: Int)] = []
         for p in phrases where p.code == input { hits.append((p.text, p.position)) }
@@ -356,6 +354,45 @@ final class PinyinEngine {
             }
         }
         return out
+    }
+
+    /// 用户记忆词召回：完整命中顶最前；输入是已学过拼音的前缀时
+    /// （打 niha 就想起你常选的 nihao → 你好）也捞出来，罚分压完整命中一头。
+    /// 百度「越用越顺手」的手感主要来自这一条 —— 同拼音常选哪个词，
+    /// 打在半路上就该往前提，不用等打完整个拼音。
+    /// 返回 [(词, 排序分)]，分已按「完整 > 前缀、补得越少越靠前」排好。
+    func userWordHits(_ input: String) -> [(String, Double)] {
+        var out: [(String, Double)] = []
+        if let uw = userWords[input] {
+            for (i, w) in uw.enumerated() { out.append((w, 900_000 - Double(i))) }
+        }
+        // 前缀召回只在 3 字母以上启用：n/ni 这种短输入前缀命中太杂
+        guard input.count >= 3 else { return out }
+        var added = 0
+        for (py, ws) in userWords where py != input && py.hasPrefix(input) {
+            for (i, w) in ws.enumerated() {
+                guard added < 4 else { break }
+                // 学过的拼音离输入越远（还要多打几个字母）排越后
+                out.append((w, 600_000 - Double(i) * 100
+                            - Double(py.count - input.count) * 5_000))
+                added += 1
+            }
+            if added >= 4 { break }
+        }
+        return out.sorted { $0.1 > $1.1 }
+    }
+
+    /// 上一个词之后用户自己常打的词及次数（候选上下文重排用，只读）
+    func userContext(after word: String) -> [String: Int]? {
+        userBigram[word]
+    }
+
+    /// 字级上下文亲和度（0 或 1）：ctx 之后接 fol 在通用语料里算不算常见接续。
+    /// 只对常见接续返回 1 —— 给候选排序当轻推用：不改变无用户数据时的默认序，
+    /// 但「今天」之后打 tianqi，「天气」这类接得上的会浮上来。
+    func contextAffinity(_ ctx: Character, _ fol: Character) -> Double {
+        let lp = lm[String(ctx)]?[String(fol)] ?? PinyinEngine.lmFloor
+        return lp >= PinyinEngine.lmRef ? 1.0 : 0.0
     }
 
     /// 记一笔用户选择，下次同拼音时往前提；同时把「拼音 -> 词」记下来，
@@ -542,13 +579,12 @@ final class PinyinEngine {
             for c in fallback(input) { put(c.word, n, c.logp) }
         }
 
-        // 9) 用户自己记下的词：同样的拼音直接顶到最前。
+        // 9) 用户自己记下的词：同样的拼音直接顶到最前；拼音前缀命中也召回
+        //    （打 niha 就想起你常选的 nihao→你好，不用等打完整个拼音）。
         //    pri=true 让它进「强优先」那一档 —— 合并时排在 librime 候选前面，
         //    否则用户的选择永远被压在通用词库后面，「越用越顺手」就是句空话。
-        if let uw = userWords[input] {
-            for (i, w) in uw.enumerated() {
-                put(w, n, 900_000 - Double(i), pri: true)
-            }
+        for (w, lp) in userWordHits(input) {
+            put(w, n, lp, pri: true)
         }
 
         return rank(&cands, input, limit: set.candidateCount, phraseHits: phraseHits)

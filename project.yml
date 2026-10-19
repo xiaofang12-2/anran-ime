@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.20"
-    CURRENT_PROJECT_VERSION: "55"
+    MARKETING_VERSION: "0.9.21"
+    CURRENT_PROJECT_VERSION: "56"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -223,18 +223,18 @@ targets:
               collocation_min_length: 2
             translator/contextual_suggestions: true
             translator/initial_quality: 1.2
-            # 模糊音（对标百度默认开启）：雾凇默认整段注释，这里补回来，
+            # 模糊音（对标百度默认档）：雾凇默认整段注释，这里补回来，
             # 让 librime 主力引擎也吃容错，而不是只有自研兜底层吃。
+            # 取舍：只留百度默认档的规则（平翘舌、n/l、前后鼻音），
+            # 删掉 f/h、l/r 双向全开——过于激进，打 "fa" 会混入 "ha"
+            # 系候选、打 "li" 混入 "ri" 系，叠加超级简拼和 page_size
+            # 30 会把正确候选冲下去，单行候选栏变成一锅粥。
             speller/algebra/+:
               # 声母
               - derive/^([zcs])h/$1/
               - derive/^([zcs])([^h])/$1h$2/
               - derive/^l/n/
               - derive/^n/l/
-              - derive/^f/h/
-              - derive/^h/f/
-              - derive/^l/r/
-              - derive/^r/l/
               # 韵母
               - derive/ang$/an/
               - derive/an$/ang/
