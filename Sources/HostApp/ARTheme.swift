@@ -119,18 +119,27 @@ struct ARStepperRow: View {
     let valueText: String
     let range: ClosedRange<Int>
     @Binding var value: Int
+    /// 标题下方的小字说明（可选）
+    var note: String? = nil
 
     var body: some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 15))
-                .foregroundColor(.black.opacity(0.85))
-            Spacer()
-            Text(valueText)
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundColor(.secondary)
-            Stepper("", value: $value, in: range)
-                .labelsHidden()
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 15))
+                    .foregroundColor(.black.opacity(0.85))
+                Spacer()
+                Text(valueText)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Stepper("", value: $value, in: range)
+                    .labelsHidden()
+            }
+            if let note {
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.vertical, 9)
     }

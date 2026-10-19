@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS devices (
     UNIQUE(account_id, machine)
 );
 
+CREATE TABLE IF NOT EXISTS kb_sessions (
+    account_id   INTEGER NOT NULL,
+    machine      TEXT    NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    UNIQUE(account_id, machine)
+);
+
 CREATE TABLE IF NOT EXISTS snapshots (
     account_id INTEGER PRIMARY KEY,
     size       INTEGER NOT NULL,

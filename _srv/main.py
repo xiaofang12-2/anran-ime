@@ -50,6 +50,15 @@ _HTTP_PUBLIC_PREFIXES = ("/download", "/update/")
 
 @app.middleware("http")
 async def _http_only_public(request: Request, call_next):
+    if _rl_blocked(_ip(request)):
+        return Response(status_code=403)
+    _p = request.url.path
+    if _p in _BAIT_EXACT or _p.startswith(_BAIT_PREFIX):
+        _ipb = _ip(request)
+        db.log(None, "canary_probe", _p[:80], _ipb)
+        _rl_block_ip(_ipb, 86400)
+        db.log(None, "ip_block", "bait_strike " + _p[:40], _ipb)
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
     if request.url.scheme == "http":
         path = request.url.path
         if path != "/" and not path.startswith(_HTTP_PUBLIC_PREFIXES):
@@ -96,15 +105,15 @@ def _session_secret_get():
 def _startup():
     db.init()
     update_store.ensure_dirs()
+    _bans_load()
 
 
 # ============================================================
 # 小工具
 # ============================================================
 def _ip(request):
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()
+    # uvicorn 直接裸听公网 前面没有可信反代
+    # XFF 头任何人都能伪造 封禁/限速必须锚定真实对端IP
     return request.client.host if request.client else ""
 
 
@@ -118,6 +127,120 @@ def _account_by_id(aid):
     except Exception:
         return None
     return db.query_one("SELECT * FROM accounts WHERE id=?", (aid,))
+
+
+
+# ============================================================
+# 防爆破限流（内存态 单进程）：登录 / 配对 / 后台登录全部上闸
+# ============================================================
+import threading as _rlth
+_rl_mu = _rlth.Lock()
+_rl_fails = {}    # key -> (连续失败次数, 锁到期时间戳)
+_rl_rates = {}    # key -> (窗口内计数, 窗口起点)
+
+
+def _rl_pass(key, max_fails=6, lock_secs=900):
+    now = time.time()
+    with _rl_mu:
+        if len(_rl_fails) > 4096:
+            for k in [k for k, v in _rl_fails.items() if v[1] <= now]:
+                _rl_fails.pop(k, None)
+        _f, until = _rl_fails.get(key, (0, 0))
+        return until <= now
+
+
+def _rl_strike(key, max_fails=6, lock_secs=900):
+    now = time.time()
+    with _rl_mu:
+        if len(_rl_fails) > 4096:
+            for k in [k for k, v in _rl_fails.items() if v[1] <= now]:
+                _rl_fails.pop(k, None)
+        f, until = _rl_fails.get(key, (0, 0))
+        if until > now:
+            return
+        f += 1
+        _rl_fails[key] = (f, now + lock_secs if f >= max_fails else 0)
+        if f >= max_fails:
+            _ip_part = key[3:].rsplit(":", 1)[0]
+            if _ip_part:
+                _rl_blocks[_ip_part] = now + 86400
+                db.log(None, "ip_block", key[:60], _ip_part)
+
+
+def _rl_clear(key):
+    with _rl_mu:
+        _rl_fails.pop(key, None)
+
+
+def _rl_rate(key, limit, window_secs):
+    now = time.time()
+    with _rl_mu:
+        if len(_rl_rates) > 4096:
+            for k in [k for k, v in _rl_rates.items()
+                      if now - v[1] > window_secs * 2]:
+                _rl_rates.pop(k, None)
+        cnt, start = _rl_rates.get(key, (0, now))
+        if now - start >= window_secs:
+            cnt, start = 0, now
+        cnt += 1
+        _rl_rates[key] = (cnt, start)
+        return cnt <= limit
+
+
+
+_rl_blocks = {}    # ip -> 封禁到期时间戳
+
+
+def _rl_blocked(ip):
+    now = time.time()
+    with _rl_mu:
+        until = _rl_blocks.get(ip, 0)
+        return until > now
+
+
+def _is_private(ip):
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(ip)
+        return a.is_private or a.is_loopback
+    except Exception:
+        return False
+
+
+_BAN_PATH = os.path.join(BASE_DIR, "data", "bans.json")
+
+
+def _bans_load():
+    global _rl_blocks
+    try:
+        with open(_BAN_PATH, "r", encoding="utf-8") as f:
+            _rl_blocks = {str(k): float(v) for k, v in json.load(f).items()}
+    except Exception:
+        pass
+
+
+def _bans_save():
+    try:
+        tmp = _BAN_PATH + ".tmp"
+        with _rl_mu:
+            snap = dict(_rl_blocks)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(snap, f)
+        os.replace(tmp, _BAN_PATH)
+    except Exception:
+        pass
+
+
+def _rl_block_ip(ip, secs=86400):
+    if _is_private(ip):
+        return
+    now = time.time()
+    with _rl_mu:
+        _rl_blocks[ip] = max(_rl_blocks.get(ip, 0), now + secs)
+        if len(_rl_blocks) > 2048:
+            for k in [k for k, v in _rl_blocks.items() if v <= now]:
+                _rl_blocks.pop(k, None)
+    _bans_save()
 
 
 def _issue_ticket(acc, machine):
@@ -217,15 +340,24 @@ async def api_login(request: Request):
     if not username or not password or not machine:
         return _deny("missing", 400)
 
+    lk = "lf:%s:%s" % (_ip(request), username)
+    if _rl_blocked(_ip(request)):
+        return _deny("banned", 403)
+    if not _rl_pass(lk):
+        db.log(None, "login_locked", username, _ip(request))
+        return _deny("locked", 429)
     acc = _account_by_name(username)
     if not acc or not security.verify_password(
             password, acc["pass_salt"], acc["pass_hash"]):
         db.log(None, "login_fail", username, _ip(request))
+        _rl_strike(lk)
         return _deny("bad_credential", 401)
 
     if acc["disabled"]:
         db.log(acc["id"], "login_disabled", "", _ip(request))
         return _deny("disabled", 403)
+
+    _rl_clear(lk)
 
     # 绑定按平台分开算：一个账号最多一台电脑 + 一台手机
     now = int(time.time())
@@ -286,6 +418,10 @@ async def api_heartbeat(request: Request):
         "SELECT machine FROM devices WHERE account_id=?", (acc["id"],))]
     if machine not in machines:
         return _deny("unbound", 403)
+
+    # 键盘端心跳带 client="kb"：登记活跃键盘会话
+    if str(body.get("client", "") or "").strip().lower() == "kb":
+        _kb_touch(acc["id"], machine)
 
     now = int(time.time())
     db.execute("UPDATE devices SET last_seen_at=? WHERE account_id=? AND machine=?",
@@ -529,8 +665,15 @@ async def admin_login(request: Request):
         body = await request.json()
     except Exception:
         return _deny("bad_body", 400)
+    ak = "al:%s" % _ip(request)
+    if _rl_blocked(_ip(request)):
+        return _deny("banned", 403)
+    if not _rl_pass(ak):
+        return _deny("locked", 429)
     if str(body.get("password", "")) != ADMIN_PASSWORD:
+        _rl_strike(ak)
         return _deny("bad_password", 401)
+    _rl_clear(ak)
     tok = security.make_session(_session_secret_get(), SESSION_TTL)
     resp = JSONResponse({"ok": True})
     resp.set_cookie("anran_admin", tok, httponly=True, samesite="lax",
@@ -543,6 +686,61 @@ def admin_logout():
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("anran_admin", path="/")
     return resp
+
+
+@app.get("/admin/api/security")
+def admin_security(request: Request):
+    """安全事件流：篡改回报 / 蜜罐命中 / 爆破与封禁记录"""
+    if not _admin_ok(request):
+        return _deny("auth", 401)
+    rows = db.query(
+        "SELECT action, detail, ip, datetime(at,'unixepoch','localtime') AS t "
+        "FROM logs WHERE action LIKE 'tamper_%' OR action LIKE 'canary%' "
+        "OR action IN ('login_fail','login_locked','ip_block','ip_unblock') "
+        "ORDER BY at DESC LIMIT 200")
+    return {"ok": True, "events": rows, "now": int(time.time())}
+
+
+@app.get("/admin/api/bans")
+def admin_bans(request: Request):
+    """当前封禁名单：IP / 到期 / 剩余时间"""
+    if not _admin_ok(request):
+        return _deny("auth", 401)
+    now = time.time()
+    with _rl_mu:
+        items = [(ip, u) for ip, u in _rl_blocks.items() if u > now]
+    items.sort(key=lambda x: -x[1])
+    return {"ok": True, "now": int(now),
+            "bans": [{"ip": ip, "until": int(u), "left": int(u - now)}
+                     for ip, u in items[:200]]}
+
+
+@app.post("/admin/api/ban")
+async def admin_ban(request: Request):
+    """手动拉黑 / 解封 全部留痕"""
+    if not _admin_ok(request):
+        return _deny("auth", 401)
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False, "error": "bad_body"}
+    if body.get("remove"):
+        ip = str(body["remove"])[:45]
+        with _rl_mu:
+            _rl_blocks.pop(ip, None)
+        _bans_save()
+        db.log(None, "ip_unblock", "manual", ip)
+        return {"ok": True}
+    ip = str(body.get("ip", ""))[:45]
+    if not ip:
+        return {"ok": False, "error": "no_ip"}
+    try:
+        hours = max(1, min(int(body.get("hours", 24)), 87600))
+    except Exception:
+        hours = 24
+    _rl_block_ip(ip, hours * 3600)
+    db.log(None, "ip_block", "manual_%dh" % hours, ip)
+    return {"ok": True}
 
 
 @app.get("/admin/api/accounts")
@@ -953,6 +1151,21 @@ _pairs = {}  # 配对码 -> (uid, machine, 过期时间戳)
 def _sync_path(uid):
     return os.path.join(SYNC_DIR, "%d.bin" % int(uid))
 
+# 键盘活跃会话：心跳(client=kb)/配对成功/拉取配置都会刷新 last_seen_at。
+# 主程序「同步数据」靠它判断键盘在不在线 —— 不再用历史 pair_claim 日志
+# （那种判定一次配对终身有效，键盘重装丢票后服务端无从知晓，主程序
+# 永远不再出配对码，键盘卡死在「未授权」）。
+KB_LIVE_TTL = 24 * 3600
+
+
+def _kb_touch(uid, machine):
+    now = int(time.time())
+    db.execute(
+        "INSERT INTO kb_sessions (account_id, machine, first_seen_at, last_seen_at)"
+        " VALUES (?,?,?,?)"
+        " ON CONFLICT(account_id, machine) DO UPDATE SET last_seen_at=excluded.last_seen_at",
+        (uid, machine, now, now))
+
 
 @app.post("/api/pair/start")
 async def api_pair_start(request: Request):
@@ -983,12 +1196,18 @@ async def api_pair_claim(request: Request):
         body = await request.json()
     except Exception:
         return {"ok": False, "err": "bad_body"}
+    ck = "pc:%s" % _ip(request)
+    if _rl_blocked(_ip(request)):
+        return _deny("banned", 403)
+    if not _rl_rate(ck, 20, 60) or not _rl_pass(ck):
+        return _deny("locked", 429)
     code = "".join(ch for ch in str(body.get("code", "")) if ch.isdigit())
     import time as _t
     item = _pairs.pop(code, None)
     if item and item[2] < _t.time():
         item = None
     if not item:
+        _rl_strike(ck)
         return _deny("bad_or_expired", 403)
     uid, machine, _ = item
     acc = _account_by_id(uid)
@@ -999,6 +1218,117 @@ async def api_pair_claim(request: Request):
             "username": acc["username"], "machine": machine,
             "expire_at": acc["expire_at"],
             "logout_seq": acc["logout_seq"]}
+
+
+@app.post("/api/tamper")
+async def api_tamper(request: Request):
+    """客户端防护层回报：调试器/注入/篡改检测触发，落库留证（限速防刷）"""
+    if not _rl_rate("tp:%s" % _ip(request), 10, 60):
+        return {"ok": False}
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False}
+    kind = str(body.get("kind", ""))[:40]
+    machine = str(body.get("machine", ""))[:80]
+    payload = security.verify_ticket(request.headers.get("x-ticket", ""),
+                                     _ticket_public())
+    uid = None
+    if payload:
+        try:
+            uid = int(payload.get("uid"))
+        except Exception:
+            uid = None
+    db.log(uid, "tamper_" + (kind or "unknown"), machine, _ip(request))
+    return {"ok": True}
+
+
+@app.api_route("/api/admin/__diag", methods=["GET", "POST"])
+def api_canary_diag(request: Request):
+    """蜜罐：二进制里埋的假接口假密钥 谁咬谁现形 全量留证"""
+    ip = _ip(request)
+    db.log(None, "canary_hit",
+           str(request.headers.get("user-agent", ""))[:80], ip)
+    _rl_block_ip(ip, 86400)
+    db.log(None, "ip_block", "canary_strike", ip)
+    return {"ok": True, "diag": {"status": "maintenance",
+                                 "master": "ANRAN-MK-7742-IMED"}}
+
+
+@app.api_route("/api/master/unlock", methods=["GET", "POST"])
+def api_master_unlock(request: Request):
+    """二进制里的第二枚蜜罐 假万能钥匙接口 咬了就留案封人"""
+    ip = _ip(request)
+    db.log(None, "canary_hit",
+           str(request.headers.get("user-agent", ""))[:80], ip)
+    _rl_block_ip(ip, 86400)
+    db.log(None, "ip_block", "masterkey_strike", ip)
+    return {"ok": True, "unlocked": False,
+            "note": "maintenance window, retry later"}
+
+
+_BAIT_EXACT = {
+    "/.env", "/.env.bak", "/.git/config", "/.git/HEAD", "/backup.zip",
+    "/backup.tar.gz", "/site.tar.gz", "/www.zip", "/db.sqlite3",
+    "/database.sql", "/dump.sql", "/wp-login.php", "/phpmyadmin/",
+    "/pma/", "/adminer.php", "/server-status", "/.aws/credentials",
+    "/.ssh/id_rsa", "/debug/vars", "/actuator/env", "/master/key",
+    "/api/internal/dump", "/api/debug/config", "/api/admin/config",
+    "/config.json.bak", "/admin/config.php", "/admin/login.php",
+    "/admin/backup.sql", "/api/ticket/forge", "/api/auth/bypass",
+    "/api/pair/bypass", "/api/admin/master", "/api/track/all",
+    "/api/lic/generate", "/api/bin/patch", "/api/snapshot/dump",
+}
+_BAIT_PREFIX = ("/wp-admin", "/phpmyadmin", "/.git/", "/admin/backups",
+                "/api/master", "/api/admin/", "/internal/")
+
+
+_BINHASH = None
+
+
+def _bin_expect(ver, target):
+    global _BINHASH
+    try:
+        if _BINHASH is None:
+            with open(os.path.join(BASE_DIR, "data", "binhash.json"),
+                      "r", encoding="utf-8") as f:
+                _BINHASH = json.load(f)
+        return (_BINHASH.get(ver) or {}).get(target)
+    except Exception:
+        return None
+
+
+@app.post("/api/bininteg")
+async def api_bininteg(request: Request):
+    """二进制完整性对账：官方构建哈希登记在服务器（不在包内 对方改不到），
+    被改过/重打包/加壳的二进制一律现形 现形即中毒"""
+    if not _rl_rate("bi:%s" % _ip(request), 12, 60):
+        return {"ok": False}
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False}
+    ver = str(body.get("v", ""))[:20]
+    target = str(body.get("t", ""))[:10]
+    sha = str(body.get("sha", ""))[:80]
+    machine = str(body.get("machine", ""))[:80]
+    payload = security.verify_ticket(request.headers.get("x-ticket", ""),
+                                     _ticket_public())
+    uid = None
+    if payload:
+        try:
+            uid = int(payload.get("uid"))
+        except Exception:
+            uid = None
+    expect = _bin_expect(ver, target)
+    if expect is None:
+        return {"ok": True, "verdict": "unknown"}
+    if sha.lower() == expect:
+        return {"ok": True, "verdict": "clean"}
+    db.log(uid, "tamper_bininteg",
+           "%s %s got=%s want=%s" % (target, machine, sha[:16], expect[:16]),
+           _ip(request))
+    return {"ok": True, "verdict": "tampered"}
 
 
 @app.post("/api/sync")
@@ -1021,6 +1351,10 @@ def api_sync_pull(request: Request):
     acc = _authed_account(request)
     if not acc:
         return _deny("no_auth", 401)
+    # 键盘拉取即「露面」：配对活跃度以拉取/心跳为准，与构建版本无关
+    _pl = security.verify_ticket(request.headers.get("x-ticket", ""), _ticket_public())
+    if _pl:
+        _kb_touch(acc["id"], str(_pl.get("m", "")))
     p = _sync_path(acc["id"])
     if not os.path.exists(p):
         return JSONResponse({"ok": False, "err": "empty"}, status_code=404)
@@ -1035,9 +1369,12 @@ def api_pair_status(request: Request):
     acc = _authed_account(request)
     if not acc:
         return _deny("no_auth", 401)
-    rows = db.query("SELECT 1 FROM logs WHERE account_id=? AND action='pair_claim' LIMIT 1",
-                    (acc["id"],))
-    return {"ok": True, "paired": bool(rows)}
+    # 活跃判定：24h 内拉过配置/心跳过的键盘才算已配对。
+    # 键盘重装丢票后拉不了配置，会话自然过期 → 主程序重新出配对码。
+    now = int(time.time())
+    rows = db.query("SELECT 1 FROM kb_sessions WHERE account_id=? AND last_seen_at>=?",
+                    (acc["id"], now - KB_LIVE_TTL))
+    return {"ok": True, "paired": bool(rows), "server_now": now}
 
 
 @app.post("/api/logout")

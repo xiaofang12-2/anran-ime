@@ -490,9 +490,29 @@ private struct HomeView: View {
             ARPrimaryButton(title: syncing ? "正在同步…" : "同步数据",
                             busy: syncing) { startSync() }
                 .padding(.vertical, 12)
-                // 长按 = 强制出配对码（换新键盘 / 解绑后重连用），平时用不到
+                // 长按 = 强制出配对码（换新键盘 / 解绑后重连用）
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 1.2).onEnded { _ in forcePair() })
+
+            // 可见的重配入口：键盘重装 / 换手机 / 显示「未授权」时点它直接出配对码。
+            // （早先只有隐藏长按，用户根本找不到——键盘卡死未授权就是这么来的）
+            Button {
+                forcePair()
+            } label: {
+                Text("重新配对键盘")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(ARTheme.blue)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+            }
+            .buttonStyle(.plain)
+            .disabled(syncing)
+
+            Text("换手机、重装键盘，或键盘显示「未授权」时使用")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 6)
         }
     }
 

@@ -774,7 +774,7 @@ struct KeyboardRootView: View {
             Text("未授权")
                 .font(.system(size: 16, weight: .semibold))
             Text(hint.isEmpty
-                 ? "主程序登录后点「同步数据」出一个6位配对码\n在下面输入配对码  一次配对 永久自动同步\n系统设置需给本键盘开「允许完全访问」"
+                 ? "主程序登录后点「同步数据」出一个6位配对码\n（重装 / 换机后点「重新配对键盘」）\n在下面输入配对码  一次配对 永久自动同步\n系统设置需给本键盘开「允许完全访问」"
                  : hint)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)

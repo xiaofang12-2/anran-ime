@@ -61,9 +61,14 @@ final class AnRanAPI: NSObject {
         }
     }
 
-    func heartbeat(ticket: String, machine: String,
+    /// 心跳续票据 + 带出最新到期/禁用状态。
+    /// client：键盘端传 "kb"、主程序传 "app"（默认）——服务端据此登记
+    /// 「活跃键盘会话」，主程序的「同步数据」靠它判断键盘在不在线，
+    /// 不再用历史配对记录（一次配对终身有效会把丢票的键盘永久卡死）。
+    func heartbeat(ticket: String, machine: String, client: String = "app",
                    completion: @escaping (HeartbeatResult) -> Void) {
-        post("/api/heartbeat", ["ticket": ticket, "machine": machine]) { obj in
+        post("/api/heartbeat", ["ticket": ticket, "machine": machine,
+                                "client": client]) { obj in
             completion(HeartbeatResult(
                 ok: (obj["ok"] as? Bool) ?? false,
                 error: (obj["error"] as? String) ?? "",

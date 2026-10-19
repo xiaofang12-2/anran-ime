@@ -150,7 +150,8 @@ final class KeyboardViewController: UIInputViewController {
     /// 对不上），才把登录态清掉 —— 键盘立刻锁死切回登录墙
     func refreshAuth() {
         guard let s = AuthStore.current, !s.ticket.isEmpty else { return }
-        AnRanAPI.shared.heartbeat(ticket: s.ticket, machine: s.machine) { res in
+        AnRanAPI.shared.heartbeat(ticket: s.ticket, machine: s.machine,
+                                  client: "kb") { res in
             if ["disabled", "unbound", "no_account",
                 "machine_mismatch"].contains(res.error) {
                 AuthStore.clear()

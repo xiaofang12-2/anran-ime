@@ -22,9 +22,6 @@ struct SettingsView: View {
                         arDivider()
                         ARToggleRow(title: "智能纠错",
                                     isOn: $s.smartCorrect)
-                        arDivider()
-                        ARToggleRow(title: "句首自动大写",
-                                    isOn: $s.autoCapitalize)
                     }
 
                     ARTheme.sectionTitle("键盘")
@@ -38,7 +35,8 @@ struct SettingsView: View {
                         ARStepperRow(title: "候选数量",
                                      valueText: "\(s.candidateCount)",
                                      range: IMESettings.candidateRange,
-                                     value: $s.candidateCount)
+                                     value: $s.candidateCount,
+                                     note: "候选栏横条显示前 9 条，更多在展开网格里")
                         arDivider()
                         ARNumberFieldRow(title: "思想库上屏间隔",
                                     suffix: "ms",

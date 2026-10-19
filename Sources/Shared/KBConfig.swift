@@ -250,5 +250,7 @@ enum KBConfigStore {
         if let d = try? JSONEncoder().encode(c.sanitized) {
             UserDefaults.standard.set(d, forKey: key)
         }
+        // 落盘即广播：布局/皮肤的任何改动立刻走 ConfigSync 推服务器
+        NotificationCenter.default.post(name: ConfigSync.localStoreChanged, object: nil)
     }
 }

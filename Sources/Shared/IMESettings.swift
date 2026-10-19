@@ -93,5 +93,8 @@ enum IMESettingsStore {
         if let d = try? JSONEncoder().encode(n) {
             UserDefaults.standard.set(d, forKey: key)
         }
+        // 跟短语/思想库一个规矩：落盘即广播，主程序收到就推服务器，
+        // 键盘下一轮拉取就是新设置（漏过这个通知的改动只能等下一次全量推）
+        NotificationCenter.default.post(name: ConfigSync.localStoreChanged, object: nil)
     }
 }
