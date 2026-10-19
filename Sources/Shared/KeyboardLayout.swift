@@ -86,10 +86,27 @@ enum KBMetrics {
     static var themeAccentColor: Color { Color(hex: theme.accent) }
 
     /// 皮肤背景图（主程序导入皮肤后随整包带过来）
+    ///
+    /// **必须缓存**：解码后的 UIImage 位图是「脏内存」，全额计入键盘扩展的
+    /// jetsam 红线。原来写法是计算属性，每次 body 重渲染（每敲一个字母、每次
+    /// 候选刷新）都重新 base64 解码 + 重解出一张几 MB 的位图 —— 打字时快速
+    /// 连发会让多张位图同时存在，内存瞬间顶爆 → iOS 静默杀扩展 → 表现就是
+    /// 「点一下字母输入法就跳走」。现在按 base64 串做 memoize：同皮肤只解一次，
+    /// 切皮肤时自动失效重解；内存告急时 `releaseBgImage()` 主动放手。
+    private static var _bgImageCache: (key: String, image: UIImage?)?
     static var themeBgImage: UIImage? {
-        guard let b64 = theme.bgImage, let d = Data(base64Encoded: b64) else { return nil }
-        return UIImage(data: d)
+        guard let b64 = theme.bgImage else {
+            _bgImageCache = nil
+            return nil
+        }
+        if let c = _bgImageCache, c.key == b64 { return c.image }
+        let img = Data(base64Encoded: b64).flatMap { UIImage(data: $0) }
+        _bgImageCache = (b64, img)
+        return img
     }
+
+    /// 内存告急（didReceiveMemoryWarning）时主动放手皮肤位图，避免被 jetsam
+    static func releaseBgImage() { _bgImageCache = nil }
 
     /// 顶栏：LOGO + 候选词 + 功能图标 一行搞定（学百度，功能栏不再单独占一条）
     static let barHeight: CGFloat = 45

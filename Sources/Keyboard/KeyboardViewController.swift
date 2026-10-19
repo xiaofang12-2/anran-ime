@@ -118,6 +118,16 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// 系统内存告急：键盘扩展 jetsam 红线约 60~70MB，librime 常驻逼近红线，
+    /// 再多一点脏内存就被静默杀（表现就是「打字打到一半输入法没了」）。
+    /// 这里主动放手最占地方的脏内存：皮肤背景位图（几 MB）+ 引擎解码缓存，
+    /// 给扩展续命。下次渲染会按需重解一次（偶有一下轻微卡顿，远好过被系统杀掉）。
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        PinyinEngine.shared.trimCache()
+        KBMetrics.releaseBgImage()
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refreshAuth()

@@ -486,6 +486,13 @@ final class PinyinEngine {
         }
     }
 
+    /// 内存告急时（系统 jetsam 红线附近）清掉解码缓存，给键盘扩展续一口命。
+    /// 缓存只是「上一次拼音 → 候选」的镜像，扔了下次敲键重算即可，零功能损失。
+    func trimCache() {
+        cacheKey = ""
+        cacheResult = []
+    }
+
     // MARK: - 26 键解码
 
     private func qwertyCandidates(_ raw: String) -> [PinyinCandidate] {
