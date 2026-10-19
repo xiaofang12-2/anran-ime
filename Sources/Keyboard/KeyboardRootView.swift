@@ -148,6 +148,9 @@ struct KeyboardRootView: View {
     /// 键盘扩展被 jetsam 杀掉不留现场，只有这条串能看出是不是顶着红线跑。
     private static var diag: String {
         var s = RimeService.shared.diagnostics + " " + CrashReporter.memoryDiag()
+        // 自研引擎上一次全量解码耗时：性能调度调优的唯一抓手
+        // （ms 数只在 librime 没起来/候选稀薄走全量路径时才有意义）
+        s += String(format: " dec%.1fms", PinyinEngine.shared.lastDecodeMs)
         if !CrashReporter.lastCrash().isEmpty { s += " CRASH" }
         return s
     }
@@ -614,6 +617,8 @@ struct KeyboardRootView: View {
             if composing.isEmpty {
                 controller.backspace()
                 candidates = []
+                // 删掉已上屏的字：造词链作废（删过的字不该再拼进新词）
+                InputEngine.shared.resetChain()
             } else {
                 composing.removeLast()
                 refresh()
@@ -632,6 +637,9 @@ struct KeyboardRootView: View {
                 } else {
                     lastSpaceTap = now
                     controller.insert(" ")
+                    // 空格是词边界：造词链作废（「我 世界」不该学成「我世界」），
+                    // 但上下文学习保留（空格后的候选仍可跟着前文排）
+                    InputEngine.shared.resetChain()
                 }
                 candidates = []
             } else {

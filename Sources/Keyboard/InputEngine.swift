@@ -24,6 +24,12 @@ final class InputEngine {
     /// 上一个上屏的词：用于「上一个词 → 当前词」的用户上下文学习
     private var lastCommitted = ""
 
+    /// 智能造词链：连续几次上屏的「词 + 吃掉的那段拼音」。
+    /// 一段拼音拼完（ composing 清空）时若拼出个 2~8 字的整词，
+    /// 就按整串拼音学进用户词典 —— 百度「选字选着选着就成词」靠的就是这个。
+    private var chainWords: [String] = []
+    private var chainPy = ""
+
     /// 取候选（热路径）
     func candidates(for raw: String) -> [PinyinCandidate] {
         // librime 没起来：整条链路退回纯自研引擎
@@ -31,6 +37,7 @@ final class InputEngine {
             return PinyinEngine.shared.candidates(for: raw)
         }
 
+        let set = IMESettingsStore.current
         let rime = RimeService.shared.candidates(raw, limit: 40)
         if rime.count >= 8 {
             // librime 候选够多：自研层只补「用户记忆 / 策展缩写 / 短语」，
@@ -39,10 +46,37 @@ final class InputEngine {
             return merge(rime: rime, fallback: light, raw: raw)
         }
 
+        // librime 候选稀薄（生僻串 / 手滑打错 / 模糊音）：先在合并层把
+        // 模糊音变体和纠错变体查一遍 librime，罚分后垫在正主候选后面。
+        // 这是「模糊音 / 智能纠错开关对主力引擎真生效」的关键 ——
+        // rime 的 speller/algebra 是编译期规则，运行时可改的只有我们这层。
+        var fuzzy: [PinyinCandidate] = []
+        if rime.count < 4 {
+            if set.fuzzyPinyin {
+                // 最多试 3 个变体、每个取 5 条：变体查询有代价，纠正是掺和不是主角
+                for (i, v) in PinyinEngine.shared.fuzzyVariants(raw).enumerated() {
+                    guard i > 0, i <= 3 else { continue }
+                    for c in RimeService.shared.candidates(v, limit: 5) {
+                        fuzzy.append(PinyinCandidate(word: c.text, score: -Int((1.5 + Double(i) * 0.8) * 1000),
+                                                     consumed: raw.count))
+                    }
+                }
+            }
+            // 模糊音没救回来再试手滑纠错（相邻键四类），更少更慢，罚更重
+            if set.smartCorrect, fuzzy.isEmpty {
+                for v in PinyinEngine.shared.correctedVariants(raw).prefix(3) {
+                    for c in RimeService.shared.candidates(v.variant, limit: 5) {
+                        fuzzy.append(PinyinCandidate(word: c.text, score: -Int((2.5 + v.pen) * 1000),
+                                                     consumed: raw.count))
+                    }
+                }
+            }
+        }
+
         // librime 候选稀薄（生僻串 / 刚部署完）：自研全量兜底，保证永远有字可出
         let fallback = PinyinEngine.shared.candidates(for: raw)
-        if rime.isEmpty { return fallback }
-        return merge(rime: rime, fallback: fallback, raw: raw)
+        if rime.isEmpty && fuzzy.isEmpty { return fallback }
+        return merge(rime: rime, fallback: fallback, raw: raw, fuzzy: fuzzy)
     }
 
     /// 上屏一个候选，返回「吃掉」了多少个拼音字符（支持部分上屏）。
@@ -56,10 +90,11 @@ final class InputEngine {
         lastCommitted = c.word
 
         let n = pinyin.count
+        var used = n
         if let idx = c.rimeIndex {
             RimeService.shared.select(index: idx)
             let rest = RimeService.shared.currentInput()
-            let used = n - rest.count
+            used = n - rest.count
             let u = (used > 0 && used <= n)
                 ? used
                 : (c.consumed > 0 && c.consumed <= n ? c.consumed : n)
@@ -67,11 +102,46 @@ final class InputEngine {
             // 靠这份「拼音 -> 词」映射才能在下次同拼音时把用户常选的词顶上来 ——
             // 走 librime 选中的词不记，用户的选择就永远上不了前排。
             PinyinEngine.shared.learn(c.word, pinyin: String(pinyin.prefix(u)))
-            return u
+            used = u
+        } else {
+            used = (c.consumed > 0 && c.consumed <= n) ? c.consumed : n
+            PinyinEngine.shared.learn(c.word, pinyin: String(pinyin.prefix(used)))
         }
-        let used = (c.consumed > 0 && c.consumed <= n) ? c.consumed : n
-        PinyinEngine.shared.learn(c.word, pinyin: String(pinyin.prefix(used)))
+
+        // 智能造词链：只有汉字片段能进链；英文/符号上屏立即断链
+        // （链里混进非汉字就拼不出词，留着只会污染下一次评估）
+        let pureCJK = !c.word.isEmpty && c.word.unicodeScalars.allSatisfy({
+            $0.value >= 0x4E00 && $0.value <= 0x9FFF
+        })
+        if !pureCJK {
+            resetChain()
+        } else {
+            chainWords.append(c.word)
+            chainPy += String(pinyin.prefix(used))
+            // 一段输入拼完了（composing 将清空）：评估要不要把链上的碎片拼成整词
+            if used >= n {
+                formWordIfWorthwhile()
+                resetChain()
+            }
+        }
         return used
+    }
+
+    /// 把连续上屏的碎片拼成一个整词学进去（对标百度「选字成词」）。
+    /// 只有「2~6 段、总共 2~8 个汉字、每段都是汉字」才学 ——
+    /// 单段（本来就是一个词）不用学，超长的多半是误连也不学。
+    private func formWordIfWorthwhile() {
+        guard chainWords.count >= 2, chainWords.count <= 6 else { return }
+        let joined = chainWords.joined()
+        guard joined.count >= 2, joined.count <= 8 else { return }
+        guard chainPy.count >= 2, chainPy.count <= 32 else { return }
+        // 每段都必须是汉字：混进英文/符号的链是误连（打 "OK 好的" 不该学出 "OK好的"）
+        for w in chainWords {
+            guard !w.isEmpty, w.unicodeScalars.allSatisfy({
+                $0.value >= 0x4E00 && $0.value <= 0x9FFF
+            }) else { return }
+        }
+        PinyinEngine.shared.learn(joined, pinyin: chainPy)
     }
 
     /// 上屏后联想：拿刚上屏的末字查后继字（自研 bigram，够快够小）
@@ -79,21 +149,31 @@ final class InputEngine {
         PinyinEngine.shared.associate(committed)
     }
 
-    /// 句子结束（标点/回车）：上下文断层，清掉上一个词，
-    /// 别让新句子的候选还跟着上一个句子的尾巴排
+    /// 句子结束（标点/回车/空格）：上下文断层，清掉上一个词，
+    /// 别让新句子的候选还跟着上一个句子的尾巴排；造词链一并作废
     func clearContext() {
         lastCommitted = ""
+        chainWords = []
+        chainPy = ""
+    }
+
+    /// 只作废造词链，不动上下文学习（空格、删字这类词中断点用）
+    func resetChain() {
+        chainWords = []
+        chainPy = ""
     }
 
     /// 上下文加权分：上一个上屏词 → 当前候选词。
     /// 用户自己的搭配重奖（打完「今天」你常打「天气」，直接改变组内顺序），
     /// 通用字级接续轻推（尾字接头字接得上的浮一浮）。两者都没有就返回 0，
     /// 组内保持引擎原序 —— 不破坏无用户数据时的默认排序。
+    /// 奖励随次数递减（log 刻度）：第 1 次搭配就够改命，第 8 次也只比第 4 次
+    /// 强一丝 —— 线性加分会让「偶然连打两次」的词永久霸榜。
     private func contextBoost(_ word: String) -> Double {
         guard !lastCommitted.isEmpty, let fol = word.first else { return 0 }
         var b = 0.0
         if let c = PinyinEngine.shared.userContext(after: lastCommitted)?[word] {
-            b += min(Double(c), 6.0) * 3.0
+            b += Self.boostForCount(c)
         }
         if let ctx = lastCommitted.last {
             b += PinyinEngine.shared.contextAffinity(ctx, fol) * 0.8
@@ -101,10 +181,19 @@ final class InputEngine {
         return b
     }
 
+    /// 用户搭配次数 → 加权分（递减曲线）
+    private static func boostForCount(_ c: Int) -> Double {
+        let k = min(c, 8)
+        let table: [Double] = [0, 3.0, 4.2, 5.0, 5.6, 6.0, 6.3, 6.5, 6.6]
+        return table[k]
+    }
+
     func forget(_ word: String) { PinyinEngine.shared.forget(word) }
     func setPhrases(_ list: [Phrase]) { PinyinEngine.shared.setPhrases(list) }
     func clearLearning() {
         lastCommitted = ""
+        chainWords = []
+        chainPy = ""
         PinyinEngine.shared.clearLearning()
         RimeService.shared.reset()
     }
@@ -113,7 +202,8 @@ final class InputEngine {
 
     private func merge(rime: [AnRanRimeCandidate],
                        fallback: [PinyinCandidate],
-                       raw: String) -> [PinyinCandidate] {
+                       raw: String,
+                       fuzzy: [PinyinCandidate] = []) -> [PinyinCandidate] {
         var out: [PinyinCandidate] = []
         var seen = Set<String>()
         func push(_ c: PinyinCandidate) {
@@ -140,6 +230,12 @@ final class InputEngine {
             push(PinyinCandidate(word: e.cand.text, score: 0,
                                  consumed: raw.count, literal: false, rimeIndex: e.idx))
         }
+
+        // 2.5) 模糊音 / 智能纠错变体查出来的 librime 候选：正主候选太薄时
+        //     才掺和（变体查询有代价），罚分已编进 score，名次固定在正主之后。
+        //     rimeIndex 置 nil —— 它们是变体输入查出来的，选中时不能拿变体
+        //     会话回灌；走自研学词路径，按用户真正打的原串拼音记。
+        for c in fuzzy { push(c) }
 
         // 3) 自研其余候选（含兜底保证，绝不让面板只剩英文）。
         //    这组的概率序是词图 beam 精算出来的，上下文加分只当组内裁决，

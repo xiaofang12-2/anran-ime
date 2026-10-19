@@ -64,6 +64,10 @@ final class PinyinEngine {
 
     private var ready = false
 
+    /// 上一次全量解码耗时（毫秒）。性能调度用：键盘扩展是 30~60MB 内存 +
+    /// 秒出候选的硬约束，超时的解码路径要在设置里能看见（诊断页显示）。
+    private(set) var lastDecodeMs = 0.0
+
     private var cacheKey = ""
     private var cacheResult: [PinyinCandidate] = []
 
@@ -265,7 +269,9 @@ final class PinyinEngine {
         ensureLoaded()
         let key = "q:" + raw
         if key == cacheKey { return cacheResult }
+        let t0 = CFAbsoluteTimeGetCurrent()
         let result = qwertyCandidates(raw)
+        lastDecodeMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
         cacheKey = key
         cacheResult = result
         return result
@@ -593,13 +599,14 @@ final class PinyinEngine {
     // MARK: - 词图
 
     /// 音节图 + 词图：从 start 出发，所有「整词匹配」的边 (终点, 词, logP)。
-    private func fullEdges(_ chars: [Character], _ start: Int)
+    /// cap：边长硬闸（长输入时收紧，见 beam）
+    private func fullEdges(_ chars: [Character], _ start: Int, cap: Int = 3000)
         -> [(j: Int, word: String, logp: Double)] {
         var out: [(Int, String, Double)] = []
         let n = chars.count
 
         func dfs(_ pos: Int, _ acc: String) {
-            if out.count > 3000 { return }
+            if out.count > cap { return }
             if !acc.isEmpty, let idx = exactIndex(acc) {
                 for c in candidatesAt(idx) { out.append((pos, c.word, c.logp)) }
             }
@@ -653,14 +660,17 @@ final class PinyinEngine {
     }
 
     /// 词图上的 Beam Search（对标 librime poet.cc 的自适应 beam）。
-    /// 宽度随输入长度伸缩：短串 12 够用，长串切分路径组合爆炸，放到 20 才不丢解。
+    /// 宽度随输入长度伸缩：短串 12 够用，长串切分路径组合爆炸，放到 20 才不丢解；
+    /// 但超过 12 字母的长串反而要收紧到 10 —— 那种输入多半是整句/乱敲，
+    /// 宽 beam 的边际收益没了，耗时却线性涨（键盘扩展耗不起）。
     /// 边的展开是「惰性」的：只有 states[i] 非空（即这个位置真的能到达）才去算
     /// fullEdges(chars, i)。乱按的串大部分位置根本走不到，这样能省掉大量无用 DFS。
     private func beam(_ chars: [Character])
         -> [[(Double, [String])]] {
         let n = chars.count
         if n == 0 { return [] }
-        let width = min(20, max(12, n * 2))
+        let width = n > 12 ? 10 : min(20, max(12, n * 2))
+        let edgeCap = n > 12 ? 1200 : 3000
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
         var states = [[(Double, [String])]](repeating: [], count: n + 1)
@@ -677,7 +687,7 @@ final class PinyinEngine {
             if let cached = edgeCache[i] {
                 edges = cached
             } else {
-                let e = fullEdges(chars, i)
+                let e = fullEdges(chars, i, cap: edgeCap)
                 edgeCache[i] = e
                 edges = e
             }
@@ -862,13 +872,14 @@ final class PinyinEngine {
         "n": "bhjm", "m": "njk",
     ]
 
-    /// 智能纠错：覆盖四类手滑，返回「变体 + 罚分」，按错误类型从最可能到最不可能排。
+    /// 智能纠错变体：覆盖四类手滑，返回「变体 + 罚分」，按错误类型从最可能到最不可能排。
     ///   1) 相邻键替换：nihap → nihao（p 挨着 o）—— 最常见
     ///   2) 相邻字母打反：niha o → nihao
     ///   3) 多打一个字母：nihao o → nihao
     ///   4) 漏打一个字母：按相邻键补一个进去
     /// 罚分递增，保证「真解」永远排在「猜出来的解」前面。
-    private func correctedVariants(_ s: String) -> [(variant: String, pen: Double)] {
+    /// 合并层（InputEngine）在 librime 候选太薄时也会调它 —— 不只是自研兜底用。
+    func correctedVariants(_ s: String) -> [(variant: String, pen: Double)] {
         let chars = Array(s)
         guard chars.count >= 3, chars.count <= 12 else { return [] }
         var out: [(String, Double)] = []
@@ -914,19 +925,27 @@ final class PinyinEngine {
         return out
     }
 
-    /// 生成容错变体：翘舌/平舌、前后鼻音、n/l、f/h。变体越靠后罚分越多。
-    private func fuzzyVariants(_ s: String) -> [String] {
+    /// 生成容错变体：翘舌/平舌、n/l、前后鼻音（百度默认档，双向）。
+    /// 跟 project.yml 里 rime_ice.custom.yaml 的 14 条 derive 保持同一套规则 ——
+    /// librime 那层是编译期写死的，运行时的模糊音靠这里生成变体再查一遍。
+    /// 变体越靠后罚分越多（调用方按序号罚）。
+    func fuzzyVariants(_ s: String) -> [String] {
         let rules: [(String, String)] = [
-            ("zh", "z"), ("ch", "c"), ("sh", "s"),
-            ("n", "l"), ("r", "l"), ("f", "h"),
-            ("ang", "an"), ("eng", "en"), ("ing", "in"),
-            ("iang", "ian"), ("uang", "uan"),
+            ("zh", "z"), ("z", "zh"),
+            ("ch", "c"), ("c", "ch"),
+            ("sh", "s"), ("s", "sh"),
+            ("ang", "an"), ("an", "ang"),
+            ("eng", "en"), ("en", "eng"),
+            ("in", "ing"), ("ing", "in"),
+            ("n", "l"), ("l", "n"),
+            ("ian", "iang"), ("iang", "ian"),
+            ("uan", "uang"), ("uang", "uan"),
         ]
         var out: [String] = [s]
         for (a, b) in rules {
             let snapshot = out
             for v in snapshot {
-                guard out.count < 10 else { return out }
+                guard out.count < 8 else { return out }
                 guard let r = v.range(of: a) else { continue }
                 var nv = v
                 nv.replaceSubrange(r, with: b)
