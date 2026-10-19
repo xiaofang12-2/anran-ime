@@ -46,6 +46,7 @@ from pypinyin.constants import PHRASES_DICT
 
 from colloquial import COLLOQUIAL, STRONG, STRONG_TOP
 from core_words import CORE, CORE_TOP
+from hot_words import TOP as HOT_TOP, COMBOS as HOT_COMBOS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DICT_DIR = os.path.join(HERE, "..", "Support", "dict")
@@ -86,6 +87,13 @@ JIEBA_BONUS = 400
 # 光靠语料排不出「打 nh 先出 你好 还是 女孩」。这里人工给入口词加权钉位。
 CORE_BONUS = 1200
 CORE_TOP_BONUS = 3000
+
+# 热词表加权（0.9.24，hot_words.py）：2024-2026 时代新词 / 网络梗 / 聊天口癖。
+# rime-ice 与 jieba 都是 2023 年前冻结的语料，这批词语料里根本没有或排几十名外。
+# 档位刻意压在 CORE / CORE_TOP 之下：热词只抢「同拼音下普通语料词」的位，
+# 不动 你好/谢谢/什么 这些真入口词的座次（那是 CORE_TOP 的地盘）。
+HOT_BONUS = 1500
+HOT_COMBO_BONUS = 800
 
 # 繁体/异体专用字：简体输入法不该把它们当候选
 TRAD_VARIANT = set("妳牠祂")
@@ -387,6 +395,24 @@ def build():
         FREQ[w] = FREQ.get(w, 0) + CORE_TOP_BONUS
     print("核心高频词: TOP=%d 常规=%d 其中语料外新建=%d"
           % (len(CORE_TOP), len(CORE), core_added))
+
+    # 热词表（0.9.24）：时代新词/网络梗/聊天口癖。语料里没有的就地建条，
+    # 已有的加一档加权把座次顶上来。去重后计数，看看这批词有多少是纯新增。
+    hot_new = 0
+    hot_seen = set()
+    for w in list(HOT_TOP) + list(HOT_COMBOS):
+        if w in hot_seen:
+            continue
+        hot_seen.add(w)
+        if w not in FREQ:
+            hot_new += 1
+    for w in hot_seen:
+        if w in HOT_COMBOS and w not in set(HOT_TOP):
+            FREQ[w] = FREQ.get(w, 0) + HOT_COMBO_BONUS
+        else:
+            FREQ[w] = FREQ.get(w, 0) + HOT_BONUS
+    print("热词表: TOP=%d 组合=%d 合计=%d 其中语料外新建=%d"
+          % (len(HOT_TOP), len(HOT_COMBOS), len(hot_seen), hot_new))
 
     # 简体常用字白名单：8105 规范字表 + jieba 出现过的字。挡繁体异体词/字
     known_chars = set(r8105.keys())

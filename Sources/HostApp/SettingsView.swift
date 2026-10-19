@@ -22,6 +22,17 @@ struct SettingsView: View {
                         arDivider()
                         ARToggleRow(title: "智能纠错",
                                     isOn: $s.smartCorrect)
+                        arDivider()
+                        ARRow(title: "拼音方案",
+                              subtitle: "双拼两键一音节；模糊音 / 纠错 / 简拼对双拼同样生效") {
+                            Picker("", selection: $s.doublePinyin) {
+                                ForEach(DoublePinyinScheme.allCases, id: \.rawValue) { sc in
+                                    Text(sc.displayName).tag(sc.rawValue)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 170)
+                        }
                     }
 
                     ARTheme.sectionTitle("键盘")

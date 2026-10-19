@@ -13,7 +13,8 @@ struct KeyboardRootView: View {
     @State private var hint = ""
 
     // 输入状态
-    @State private var composing = ""                    // 拼音串
+    @State private var composing = ""                    // 拼音串（双拼模式下是双拼键串）
+    @State private var enginePy = ""                     // 喂给引擎的全拼（双拼模式下是解码结果）
     @State private var candidates: [PinyinCandidate] = []
     @State private var layer: KBLayer = .letters
     @State private var shiftOn = false
@@ -131,6 +132,7 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranAuthKicked)) { _ in
             authorized = false
             composing = ""
+            enginePy = ""
             candidates = []
             panel = .none
             // 面板是被系统踢下去的不是用户主动关的：记忆保留 只收面板
@@ -166,6 +168,7 @@ struct KeyboardRootView: View {
                    clipboardOn: panel == .clipboard,
                    typing: typing,
                    composing: panel == .thought ? (thoughtQuery + thoughtComposing) : composing,
+                   schemeBadge: (panel != .thought && dpScheme != .off) ? dpScheme.displayName : "",
                    candidates: panel == .thought ? thoughtCands : candidates,
                    onPick: panel == .thought ? pickThought : pick,
                    onForget: panel == .thought ? { _ in } : forget,
@@ -372,9 +375,13 @@ struct KeyboardRootView: View {
     }
 
     private func refreshThoughtCands() {
-        thoughtCands = thoughtComposing.isEmpty
-            ? []
-            : InputEngine.shared.candidates(for: thoughtComposing)
+        if thoughtComposing.isEmpty {
+            thoughtCands = []
+            return
+        }
+        // 思想库面板里打拼音同样吃双拼解码（用户在哪儿都会用同一套方案）
+        let py = engineInput(thoughtComposing)
+        thoughtCands = py.isEmpty ? [] : InputEngine.shared.candidates(for: py)
     }
 
     /// 候选栏里点汉字：落进思想库输入框
@@ -690,6 +697,7 @@ struct KeyboardRootView: View {
     private func clearComposing() {
         if !composing.isEmpty {
             composing = ""
+            enginePy = ""
             candidates = []
             controller.setComposing("")
             return
@@ -729,13 +737,31 @@ struct KeyboardRootView: View {
 
     // MARK: - 输入态同步
 
+    /// 当前双拼方案（设置改了即时生效，不用重开键盘）
+    private var dpScheme: DoublePinyinScheme {
+        DoublePinyinScheme.safe(IMESettingsStore.current.doublePinyin)
+    }
+
+    /// 双拼模式下把键串解码成全拼喂给引擎；解不了就透传原键
+    /// （不成对的尾键 / 简拼 / 英文，走原有路径）。
+    /// 单键在双拼里不成音节，直接不出候选（商业双拼输入器的行为）。
+    private func engineInput(_ keys: String) -> String {
+        let scheme = dpScheme
+        guard scheme != .off else { return keys }
+        if keys.count == 1 { return "" }
+        if let d = DoublePinyin.decodePrefix(keys, scheme: scheme) { return d.full }
+        return keys
+    }
+
     /// 拼音串变了：重算候选
     private func refresh() {
         if composing.isEmpty {
+            enginePy = ""
             controller.setComposing("")
             return
         }
-        candidates = InputEngine.shared.candidates(for: composing)
+        enginePy = engineInput(composing)
+        candidates = enginePy.isEmpty ? [] : InputEngine.shared.candidates(for: enginePy)
         controller.setComposing(composing)
     }
 
@@ -746,29 +772,41 @@ struct KeyboardRootView: View {
         guard !composing.isEmpty else { return }
         if candidates.isEmpty { refresh() }
         guard let best = candidates.first(where: { !$0.literal }) else { return }
-        applyCommit(best, pinyin: composing)
+        applyCommit(best, pinyin: enginePy.isEmpty ? composing : enginePy)
     }
 
     /// 点了候选栏里的词（含联想）
     private func pick(_ c: PinyinCandidate) {
-        applyCommit(c, pinyin: composing)
+        applyCommit(c, pinyin: enginePy.isEmpty ? composing : enginePy)
     }
 
     /// 上屏一个词。若这条候选只吃掉了拼音串的一部分（比如打 jintianx 选了「今天」），
     /// 剩下的「x」继续留在串里接着拼 —— 百度就是这么干的。
+    /// 双拼模式下剩下的全拼要编回双拼键串，未成对的尾键原样保留。
     private func applyCommit(_ c: PinyinCandidate, pinyin: String) {
         controller.commit(c.word)
         let used = InputEngine.shared.commit(c, pinyin: pinyin)
         lastOutput = (c.word, false)
 
-        let rest = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
-        composing = rest
-        if rest.isEmpty {
+        let restPy = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
+        let pending = (dpScheme != .off && composing.count % 2 == 1)
+            ? String(composing.last!) : ""
+        if restPy.isEmpty {
+            composing = pending
+        } else if dpScheme != .off,
+                  let enc = DoublePinyin.encode(restPy, scheme: dpScheme) {
+            composing = enc + pending
+        } else {
+            // 编码失败（极端情况）：按全拼残留接着拼，功能不碎
+            composing = restPy + pending
+        }
+        if composing.isEmpty {
             // 上屏完就完 不做联想：候选拦只跟着拼音串走
             candidates = []
         } else {
-            controller.setComposing(rest)
-            candidates = InputEngine.shared.candidates(for: rest)
+            enginePy = engineInput(composing)
+            controller.setComposing(composing)
+            candidates = enginePy.isEmpty ? [] : InputEngine.shared.candidates(for: enginePy)
         }
     }
 
@@ -893,6 +931,7 @@ struct KeyboardRootView: View {
             }
         } else {
             composing = ""
+            enginePy = ""
             candidates = []
         }
     }

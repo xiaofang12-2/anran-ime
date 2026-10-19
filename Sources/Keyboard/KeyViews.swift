@@ -351,6 +351,8 @@ struct TopBar: View {
     let onForget: (String) -> Void
     /// 候选展开栏开着（按钮点亮 + 网格铺开）
     var expandOn: Bool = false
+    /// 双拼角标：方案开启时常显（如「小鹤」），空串不显示
+    var schemeBadge: String = ""
     let onToggleExpand: () -> Void
     let onClipboard: () -> Void
     let onThought: () -> Void
@@ -367,6 +369,7 @@ struct TopBar: View {
     var body: some View {
         HStack(spacing: 0) {
             logo
+            if !schemeBadge.isEmpty { badge }
             Group {
                 if shown.isEmpty {
                     Text(composing)
@@ -428,6 +431,20 @@ struct TopBar: View {
         Rectangle()
             .fill(KBMetrics.themeCandidateTextColor.opacity(0.10))
             .frame(width: 0.5, height: 20)
+    }
+
+    /// 双拼角标：让用户随时看得见自己在哪个方案里
+    /// （切了双拼又忘了，打出来的字母全是两键一音节，没个标识能急死人）
+    private var badge: some View {
+        Text(schemeBadge)
+            .font(.system(size: 10 * scale, weight: .medium))
+            .foregroundColor(KBMetrics.themeAccentColor)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(
+                Capsule().fill(KBMetrics.themeAccentColor.opacity(0.14)))
+            .padding(.leading, 6)
+            .fixedSize()
     }
 
     private var logo: some View {
