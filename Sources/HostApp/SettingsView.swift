@@ -12,28 +12,7 @@ struct SettingsView: View {
             ARTheme.background
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 12) {
-                    ARTheme.sectionTitle("输入")
-                    ARTheme.card {
-                        ARToggleRow(title: "模糊音",
-                                    isOn: $s.fuzzyPinyin)
-                        arDivider()
-                        ARToggleRow(title: "简拼 / 混拼",
-                                    isOn: $s.abbrevInput)
-                        arDivider()
-                        ARToggleRow(title: "智能纠错",
-                                    isOn: $s.smartCorrect)
-                        arDivider()
-                        ARRow(title: "拼音方案",
-                              subtitle: "双拼两键一音节；模糊音 / 纠错 / 简拼对双拼同样生效") {
-                            Picker("", selection: $s.doublePinyin) {
-                                ForEach(DoublePinyinScheme.allCases, id: \.rawValue) { sc in
-                                    Text(sc.displayName).tag(sc.rawValue)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 170)
-                        }
-                    }
+                    inputCard
 
                     ARTheme.sectionTitle("键盘")
                     ARTheme.card {
@@ -105,6 +84,35 @@ struct SettingsView: View {
             // 改一下立刻生效：存本机 + 推给键盘，不用再点「应用到键盘」
             IMESettingsStore.saveLocal(newValue)
             ConfigSync.publish(settings: newValue)
+        }
+    }
+
+    /// 「输入」卡片单独拆出来：body 里六七个 card 串成的大表达式，
+    /// 加一行 Picker 就可能把 Swift 类型检查器顶超时（KeyboardRootView 栽过）。
+    private var inputCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ARTheme.sectionTitle("输入")
+            ARTheme.card {
+                ARToggleRow(title: "模糊音",
+                            isOn: $s.fuzzyPinyin)
+                arDivider()
+                ARToggleRow(title: "简拼 / 混拼",
+                            isOn: $s.abbrevInput)
+                arDivider()
+                ARToggleRow(title: "智能纠错",
+                            isOn: $s.smartCorrect)
+                arDivider()
+                ARRow(title: "拼音方案",
+                      subtitle: "双拼两键一音节；模糊音 / 纠错 / 简拼对双拼同样生效") {
+                    Picker("", selection: $s.doublePinyin) {
+                        ForEach(DoublePinyinScheme.allCases, id: \.rawValue) { sc in
+                            Text(sc.displayName).tag(sc.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 170)
+                }
+            }
         }
     }
 

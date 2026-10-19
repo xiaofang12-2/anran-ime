@@ -161,24 +161,43 @@ struct KeyboardRootView: View {
 
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
-            // 顶栏一行装下 LOGO + 候选词 + 功能图标（学百度，不再分两栏）
-            // 正在打拼音时功能图标整组让位，候选词拉满整行
-            // （思想库面板里打关键词/拼音同样让位 —— 显示什么就发什么）
-            TopBar(thoughtOn: panel == .thought,
-                   clipboardOn: panel == .clipboard,
-                   typing: typing,
-                   composing: panel == .thought ? (thoughtQuery + thoughtComposing) : composing,
-                   schemeBadge: (panel != .thought && dpScheme != .off) ? dpScheme.displayName : "",
-                   candidates: panel == .thought ? thoughtCands : candidates,
-                   onPick: panel == .thought ? pickThought : pick,
-                   onForget: panel == .thought ? { _ in } : forget,
-                   expandOn: expandedCandidates,
-                   onToggleExpand: toggleExpandCandidates,
-                   onClipboard: toggleClipboard,
-                   onThought: toggleThought,
-                   onThoughtLongPress: { controller.openHost("thoughts") },
-                   onCollapse: { controller.dismissKeyboardNow() })
+            topBar
+            panels
+            expandedGrid
+            keyRows
+        }
+        // 候选空了（上完屏/删光）展开栏自动收起，不留一块空白
+        .onChange(of: candidates) { _ in syncExpandAuto() }
+        .onChange(of: thoughtCands) { _ in syncExpandAuto() }
+    }
 
+    /// 顶栏一行装下 LOGO + 候选词 + 功能图标（学百度，不再分两栏）
+    /// 正在打拼音时功能图标整组让位，候选词拉满整行
+    /// （思想库面板里打关键词/拼音同样让位 —— 显示什么就发什么）
+    /// 单独拆出来：整棵 TopBar 表达式太肥，塞在 keyboard 里类型检查器直接超时
+    /// （「unable to type-check this expression in reasonable time」）。
+    private var topBar: some View {
+        // 三元提到调用外：参数表达式越单纯，类型检查器越不容易超时
+        let badge = (panel != .thought && dpScheme != .off) ? dpScheme.displayName : ""
+        return TopBar(thoughtOn: panel == .thought,
+               clipboardOn: panel == .clipboard,
+               typing: typing,
+               composing: panel == .thought ? (thoughtQuery + thoughtComposing) : composing,
+               schemeBadge: badge,
+               candidates: panel == .thought ? thoughtCands : candidates,
+               onPick: panel == .thought ? pickThought : pick,
+               onForget: panel == .thought ? { _ in } : forget,
+               expandOn: expandedCandidates,
+               onToggleExpand: toggleExpandCandidates,
+               onClipboard: toggleClipboard,
+               onThought: toggleThought,
+               onThoughtLongPress: { controller.openHost("thoughts") },
+               onCollapse: { controller.dismissKeyboardNow() })
+    }
+
+    /// 剪贴板 / 思想库面板（互斥出现）
+    private var panels: some View {
+        Group {
             if panel == .clipboard {
                 ClipboardPanel(text: clipboardText,
                                onInsert: insertClipboard,
@@ -191,25 +210,29 @@ struct KeyboardRootView: View {
                              previewHit: thoughtPreviewHit,
                              onClose: closeThoughtPanel)
             }
+        }
+    }
 
-            // 展开候选栏：单行候选一键铺成网格（思想库模式下点词落进面板输入框）
+    /// 展开候选栏：单行候选一键铺成网格（思想库模式下点词落进面板输入框）
+    private var expandedGrid: some View {
+        Group {
             if expandedCandidates {
                 CandidateGridPanel(candidates: panel == .thought ? thoughtCands : candidates,
                                    onPick: panel == .thought ? pickThought : pick)
             }
-
-            ForEach(rows.indices, id: \.self) { i in
-                KeyRow(keys: rows[i],
-                       onKey: handle,
-                       onSwipe: swipe,
-                       onDeleteClear: clearComposing,
-                       onSpaceMove: { controller.moveCursor($0) },
-                       onLongPress: longPress)
-            }
         }
-        // 候选空了（上完屏/删光）展开栏自动收起，不留一块空白
-        .onChange(of: candidates) { _ in syncExpandAuto() }
-        .onChange(of: thoughtCands) { _ in syncExpandAuto() }
+    }
+
+    /// 字母/数字/符号各行按键
+    private var keyRows: some View {
+        ForEach(rows.indices, id: \.self) { i in
+            KeyRow(keys: rows[i],
+                   onKey: handle,
+                   onSwipe: swipe,
+                   onDeleteClear: clearComposing,
+                   onSpaceMove: { controller.moveCursor($0) },
+                   onLongPress: longPress)
+        }
     }
 
     /// 功能栏（顶栏右侧图标组）隐藏规则：正在输入就让位 ——
