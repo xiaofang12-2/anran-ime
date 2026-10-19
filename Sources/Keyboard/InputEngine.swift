@@ -24,12 +24,8 @@ final class InputEngine {
     /// 上一个上屏的词：用于「上一个词 → 当前词」的用户上下文学习
     private var lastCommitted = ""
 
-    /// 取候选（热路径）。出口统一过一遍内置屏蔽词。
+    /// 取候选（热路径）
     func candidates(for raw: String) -> [PinyinCandidate] {
-        mergedCandidates(for: raw).filter { !BlockedWords.isBlocked($0.word) }
-    }
-
-    private func mergedCandidates(for raw: String) -> [PinyinCandidate] {
         // librime 没起来：整条链路退回纯自研引擎
         guard RimeService.shared.isReady else {
             return PinyinEngine.shared.candidates(for: raw)
@@ -127,24 +123,5 @@ final class InputEngine {
         }
 
         return Array(out.prefix(60))
-    }
-}
-
-/// 内置屏蔽词
-///
-/// 这些词条内置在词库里（策展词表 tools/colloquial.py + 雾凇拼音 cn_dicts/base.dict.yaml），
-/// 用户在「自定义短语」里删多少次都碰不到它们。雾凇还开了「超级简拼」
-/// （abbrev/^([a-z]).+$/$1/）：按一个首字母 c 就命中所有 c 开头的词，
-/// 所以光删自定义短语根本挡不住 —— 必须在出口这一层把候选整条滤掉。
-///
-/// 按「包含」匹配：屏蔽 操你妈 时，操你妈逼 / 操你妈的 / 操你妈了个逼 / 我操你妈 一并滤掉。
-enum BlockedWords {
-
-    /// 屏蔽片段。要屏蔽新词，往这里加一条即可。
-    static let fragments: [String] = ["操你妈"]
-
-    static func isBlocked(_ word: String) -> Bool {
-        for f in fragments where word.contains(f) { return true }
-        return false
     }
 }
