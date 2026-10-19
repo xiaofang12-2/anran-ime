@@ -22,16 +22,18 @@ struct SetupView: View {
             }
         }
         .navigationViewStyle(.stack)
-        // 建库/加关键词/加短语等任何 Store 落盘 → 立刻推剪贴板（不用等切后台），
-        // 用户切出去打字键盘第一帧接到的就是新配置（对标百度个性短语加完就有）
+        // 建库/加关键词/加短语等任何 Store 落盘 → 本地总线秒推（命名剪贴板 +
+        // Darwin 门铃，毫秒级到键盘）+ 服务器推送（多设备兜底）。
+        // 用户改完不用重新调出键盘，开着键盘也立刻生效（对标百度个性短语加完就有）
         .onReceive(NotificationCenter.default.publisher(for: ConfigSync.localStoreChanged)) { _ in
             _ = ConfigSync.publishIfChanged()
             // 用户改了思想库/短语 → 顺手把新快照上报后台（管理端可查）
             SnapshotReport.uploadIfNeeded()
         }
         .onChange(of: scenePhase) { phase in
-            // 切后台时把最新配置推给键盘（配置没变就不动剪贴板）。
-            // 免费签名只能走剪贴板交接，这一步保证「改完设置 → 去别的 app 打字」
+            // 切后台时把最新配置推服务器（配置没变就不动）。
+            // 秒同步在 localStoreChanged 那里已经走了本地总线；这一步是
+            // 多设备/重装键盘的兜底，保证「改完设置 → 去别的 app 打字」
             // 键盘一开就是最新配置。
             if phase != .active {
                 _ = ConfigSync.publishIfChanged()
@@ -584,7 +586,7 @@ private struct HomeView: View {
                 // 已配对：只更新输入法的改动 自定义 短语 布局 设置 思想库全量推
                 _ = ConfigSync.publish()
                 SnapshotReport.uploadIfNeeded()
-                tip("已同步  改动已推给键盘 重新调出键盘即生效", ok: true)
+                tip("已同步 · 改动已秒推到键盘 开着键盘也生效", ok: true)
             } else {
                 runPairFlow()
             }

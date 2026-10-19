@@ -128,6 +128,12 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranKeyboardWillAppear)) { _ in
             check()
         }
+        // 秒同步门铃：主 app 改完设置/短语/思想库，整包经本地总线几十毫秒
+        // 内推过来（Darwin 通知 + 命名剪贴板）。键盘正开着也立刻落盘刷新，
+        // 不用等收起重弹、不用等服务器往返。
+        .onReceive(NotificationCenter.default.publisher(for: .anranLocalBusRing)) { _ in
+            _ = applyLocalBusIfNew()
+        }
         // 后台把账号禁用/解绑后，心跳回调广播踢人 —— 立刻收掉键盘切回登录墙
         .onReceive(NotificationCenter.default.publisher(for: .anranAuthKicked)) { _ in
             authorized = false
@@ -971,6 +977,10 @@ struct KeyboardRootView: View {
 
     private func pullSettings() {
         refreshLocalStores()
+        // 本地总线先读：主 app 秒推的那份可能已经在板上（门铃响过没理/没响），
+        // 比服务器拉取快几个数量级。真落盘了下面的服务器拉取会因 appliedKey
+        // 去重自动跳过，不会重复刷一遍。
+        _ = applyLocalBusIfNew()
         ConfigSync.pullFromServer { changed in
             guard changed else { return }
             refreshLocalStores()
@@ -978,6 +988,19 @@ struct KeyboardRootView: View {
             cfgRev += 1
             if !composing.isEmpty { refresh() }
         }
+    }
+
+    /// 秒同步落盘 + 界面刷新：本地总线内容比上次新才动。返回是否有更新。
+    /// 与服务器拉取共用 appliedKey 去重（ConfigSync.applyLocalBus 内部），
+    /// 两条路谁先到都不会把同一份包落两遍。
+    @discardableResult
+    private func applyLocalBusIfNew() -> Bool {
+        guard ConfigSync.applyLocalBus() else { return false }
+        refreshLocalStores()
+        controller.setRows(KBMetrics.rows)
+        cfgRev += 1
+        if !composing.isEmpty { refresh() }
+        return true
     }
 
     /// 主程序点了「清空打字学习记录」：见到比本地新的令牌就清一次

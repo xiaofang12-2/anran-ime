@@ -128,10 +128,23 @@ final class KeyboardViewController: UIInputViewController {
                 self?.refreshAuth()
             }
         }
+        // 秒同步门铃：主 app 改设置/短语/思想库后几十毫秒内推着整包过来，
+        // 键盘哪怕正开着也立刻落盘刷新（App Group 用不了，总线走
+        // Darwin 通知 + 命名剪贴板，见 LocalSyncBridge）。
+        // 扩展进程存活期间只注册一次；viewWillDisappear 摘掉。
+        if ringHandle == nil {
+            ringHandle = LocalSyncBridge.addRing {
+                // Darwin 回调线程不定，落盘/UI 只认主线程
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .anranLocalBusRing, object: nil)
+                }
+            }
+        }
         // 键盘每次弹出都让界面重拉一次主程序下发的配置。
-        // 配置（布局/自定义短语/设置/思想库）走剪贴板整包交接，而 SwiftUI 的
-        // onAppear 在扩展进程存活期间只会触发一次 —— 不补这一下，主程序改完
-        // 短语再回到键盘不会更新，表现为「设置了自定义等于没设置」。
+        // 配置（布局/自定义短语/设置/思想库）双通道同步：本地总线秒推 +
+        // 服务器整包兜底，而 SwiftUI 的 onAppear 在扩展进程存活期间只会
+        // 触发一次 —— 不补这一下，主程序改完短语再回到键盘不会更新，
+        // 表现为「设置了自定义等于没设置」。
         NotificationCenter.default.post(name: .anranKeyboardWillAppear, object: nil)
     }
 
@@ -139,9 +152,12 @@ final class KeyboardViewController: UIInputViewController {
         super.viewWillDisappear(animated)
         hbTimer?.invalidate()
         hbTimer = nil
+        ringHandle = nil
     }
 
     private var hbTimer: Timer?
+    /// 秒同步门铃句柄：nil = 没在听
+    private var ringHandle: LocalSyncBridge.RingHandle?
 
     // MARK: - 授权
 
@@ -201,4 +217,7 @@ extension Notification.Name {
 
     /// librime 后台部署收尾时广播一次（成功失败都发），界面据此刷新引擎诊断串
     static let anranRimeReady = Notification.Name("anran.rime.ready")
+
+    /// 秒同步门铃响了（主 app 刚改完配置）：界面立刻读本地总线落盘刷新
+    static let anranLocalBusRing = Notification.Name("anran.local_bus.ring")
 }
