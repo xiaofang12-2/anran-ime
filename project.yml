@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.17"
-    CURRENT_PROJECT_VERSION: "52"
+    MARKETING_VERSION: "0.9.18"
+    CURRENT_PROJECT_VERSION: "53"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -223,8 +223,31 @@ targets:
               collocation_min_length: 2
             translator/contextual_suggestions: true
             translator/initial_quality: 1.2
+            # 模糊音（对标百度默认开启）：雾凇默认整段注释，这里补回来，
+            # 让 librime 主力引擎也吃容错，而不是只有自研兜底层吃。
+            speller/algebra/+:
+              # 声母
+              - derive/^([zcs])h/$1/
+              - derive/^([zcs])([^h])/$1h$2/
+              - derive/^l/n/
+              - derive/^n/l/
+              - derive/^f/h/
+              - derive/^h/f/
+              - derive/^l/r/
+              - derive/^r/l/
+              # 韵母
+              - derive/ang$/an/
+              - derive/an$/ang/
+              - derive/eng$/en/
+              - derive/en$/eng/
+              - derive/in$/ing/
+              - derive/ing$/in/
+              - derive/ian$/iang/
+              - derive/iang$/ian/
+              - derive/uan$/uang/
+              - derive/uang$/uan/
           YAML
-            echo "== rime_ice.custom.yaml（grammar 配置）已写入 =="
+            echo "== rime_ice.custom.yaml（grammar + 模糊音）已写入 =="
           else
             echo "（没拿到 gram 模型，跳过 LM 配置）"
           fi
