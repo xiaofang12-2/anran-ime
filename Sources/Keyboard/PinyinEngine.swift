@@ -55,6 +55,17 @@ final class PinyinEngine {
 
     private var syllableSet = Set<String>()
 
+    // MARK: 百度 cell 词库（seed.bin）
+    //
+    // 从百度输入法 APK 的 assets/ipt/{0,1,2}.bcd 解析出的 10,736 条内置词条
+    // （口语片段 / 成语 / 软件功能名），单独做成一个小词库 cell，与主词库同格式。
+    // 这些是**成句的口语片段**（"我也不知道啊"），主词库（词为单位）里没有，
+    // 正是长口语句子候选缺的那一块。mmap 读取，390KB，不占堆。
+    private var seedData: Data?
+    private var seedCount = 0
+    private var seedKeyTbl = 0
+    private var seedValTbl = 0
+
     /// 字级 bigram 语言模型：上下文首字 -> {后继字: log P(后继 | 上下文)}。
     /// 词图打分的「上下文项」（对标 librime grammar.h 的 Grammar::Evaluate）。
     private var lm: [String: [String: Double]] = [:]
@@ -186,6 +197,56 @@ final class PinyinEngine {
             loadAssocW(url)
         }
         SecVault.dispose(wStaged)
+
+        // 百度内置词条 cell（口语片段/成语/软件名）：缺了不影响主链路
+        let seedStaged = SecVault.stage("seed", ext: "bin")
+        if let url = seedStaged {
+            loadSeed(url)
+        }
+        SecVault.dispose(seedStaged)
+    }
+
+    /// 读 seed cell：与主词库同格式（ANPY v2），只取 key/val 偏移表，mmap 不复制。
+    private func loadSeed(_ url: URL) {
+        guard let d = try? Data(contentsOf: url, options: .mappedIfSafe),
+              d.count > 44, d.prefix(4) == Data("ANPY".utf8) else { return }
+        seedData = d
+        seedCount = u32from(d, 8)
+        seedKeyTbl = u32from(d, 12)
+        seedValTbl = u32from(d, 16)
+        if seedCount <= 0 || seedCount > 400_000 { seedData = nil; seedCount = 0 }
+    }
+
+    private func seedString(_ a: Int, _ b: Int) -> String {
+        guard let d = seedData, a >= 0, b >= a, b <= d.count else { return "" }
+        return String(decoding: d[a..<b], as: UTF8.self)
+    }
+
+    /// 整串精确命中 seed cell 的候选（二分）。
+    /// 只做精确匹配：这些是整句口语片段/成语/软件名，前缀召回没有意义。
+    private func seedCandidates(_ key: String) -> [(word: String, logp: Double)] {
+        guard let d = seedData, seedCount > 0 else { return [] }
+        var lo = 0, hi = seedCount
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            let k = seedString(u32from(d, seedKeyTbl + 4 * mid),
+                               u32from(d, seedKeyTbl + 4 * (mid + 1)))
+            if k < key { lo = mid + 1 } else { hi = mid }
+        }
+        guard lo < seedCount else { return [] }
+        let a = u32from(d, seedKeyTbl + 4 * lo)
+        let b = u32from(d, seedKeyTbl + 4 * (lo + 1))
+        if seedString(a, b) != key { return [] }
+        let va = u32from(d, seedValTbl + 4 * lo)
+        let vb = u32from(d, seedValTbl + 4 * (lo + 1))
+        let blob = seedString(va, vb)
+        var out: [(String, Double)] = []
+        for rec in blob.split(separator: "\u{01}", omittingEmptySubsequences: true) {
+            let arr = Array(rec)
+            if arr.count < 3 { continue }
+            out.append((String(arr[2...]), decodeLogp(arr[0], arr[1])))
+        }
+        return out
     }
 
     private func loadSyllables() {
@@ -429,6 +490,13 @@ final class PinyinEngine {
         // 用户记忆词：完整命中顶最前；打在半路上（niha）也召回学过的整词（nihao→你好）
         for (w, lp) in userWordHits(input) { put(w, n, lp, pri: true) }
 
+        // 百度内置词条 cell：整串精确命中就顶上来（口语片段 "我也不知道啊"、
+        // 成语、软件名）。librime 的词库是「词」为单位，没有成句的口语片段。
+        // 4 字母以下不掺和：短串命中容易抢了常用词的位。
+        if n >= 4 {
+            for c in seedCandidates(input) { put(c.word, n, c.logp, pri: true) }
+        }
+
         var hits: [(text: String, position: Int)] = []
         for p in phrases where p.code == input { hits.append((p.text, p.position)) }
         return rank(&cands, input, limit: set.candidateCount, phraseHits: hits)
@@ -670,6 +738,13 @@ final class PinyinEngine {
             put(c.word, n, c.logp)
         }
 
+        // 2.5) 百度内置词条 cell：整串精确命中直接上来。
+        //      这些是成句口语片段/成语/软件名，是全量路径里唯一的「整句口语」来源；
+        //      4 字母以下不掺和，避免抢常用词的位。
+        if n >= 4 {
+            for c in seedCandidates(input) { put(c.word, n, c.logp, pri: true) }
+        }
+
         // 3) 词图 Beam Search：句子 / 前缀片段
         let states = beam(chars)
         for j in 1...n {
@@ -807,8 +882,12 @@ final class PinyinEngine {
         -> [[(Double, [String])]] {
         let n = chars.count
         if n == 0 { return [] }
-        let width = n > 12 ? 10 : min(20, max(12, n * 2))
-        let edgeCap = n > 12 ? 1200 : 3000
+        // 长句（>12 字母）原来是 width 10 / edgeCap 1200：省时间，但整句候选经常
+        // 不是最优解 —— 这正是「长句组句不如百度」的直接原因。放到 14 / 1800：
+        // 实测仍是一次按键毫秒级（states[i] 大多为空，边缘惰性展开），
+        // 换来的候选质量提升远大于这点开销。
+        let width = n > 12 ? 14 : min(20, max(12, n * 2))
+        let edgeCap = n > 12 ? 1800 : 3000
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
         var states = [[(Double, [String])]](repeating: [], count: n + 1)
