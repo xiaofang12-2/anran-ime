@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.29"
-    CURRENT_PROJECT_VERSION: "64"
+    MARKETING_VERSION: "0.9.30"
+    CURRENT_PROJECT_VERSION: "65"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -54,21 +54,6 @@ targets:
     dependencies:
       - target: AnRanKeyboard
         embed: true
-
-  # ---------------- 后台管理 App：账号 / 设备 / 用户快照 ----------------
-  AnRanAdmin:
-    type: application
-    platform: iOS
-    sources:
-      - path: Sources/AdminApp
-      - path: Support/server.crt
-        buildPhase: resources
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.anran.admin
-        INFOPLIST_FILE: Support/Admin/Info.plist
-        TARGETED_DEVICE_FAMILY: "1"
-        GENERATE_INFOPLIST_FILE: "NO"
 
   # ---------------- 键盘扩展：输入法本体 ----------------
   AnRanKeyboard:
@@ -372,14 +357,6 @@ schemes:
     build:
       targets:
         AnRanIME: all
-    run:
-      config: Debug
-    archive:
-      config: Release
-  AnRanAdmin:
-    build:
-      targets:
-        AnRanAdmin: all
     run:
       config: Debug
     archive:

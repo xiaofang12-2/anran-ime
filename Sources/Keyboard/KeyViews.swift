@@ -349,10 +349,14 @@ struct TopBar: View {
     let candidates: [PinyinCandidate]
     let onPick: (PinyinCandidate) -> Void
     let onForget: (String) -> Void
+    /// 长按候选：在该拼音下置顶 / 取消置顶（对标百度 PlumCore 的 ipt_set_firstword）
+    let onPin: (String) -> Void
     /// 候选展开栏开着（按钮点亮 + 网格铺开）
     var expandOn: Bool = false
     /// 双拼角标：方案开启时常显（如「小鹤」），空串不显示
     var schemeBadge: String = ""
+    /// 引擎角标：当前出字引擎（雾凇·30 / 自研兜底），常显，一眼看出在跑哪个引擎
+    var engineBadge: String = ""
     let onToggleExpand: () -> Void
     let onClipboard: () -> Void
     let onThought: () -> Void
@@ -370,6 +374,7 @@ struct TopBar: View {
         HStack(spacing: 0) {
             logo
             if !schemeBadge.isEmpty { badge }
+            if !engineBadge.isEmpty { engineBadgeView }
             Group {
                 if shown.isEmpty {
                     Text(composing)
@@ -405,7 +410,9 @@ struct TopBar: View {
                                     .contentShape(Rectangle())
                                     .onTapGesture { onPick(c) }
                                     .onLongPressGesture(minimumDuration: 0.45) {
-                                        onForget(c.word)
+                                        // 长按 = 置顶（再长按同一个词取消）。
+                                        // 百度/搜狗都是这个操作，比「删除记忆」更常用。
+                                        onPin(c.word)
                                     }
                                 if i < items.count - 1 { divider }
                             }
@@ -451,6 +458,20 @@ struct TopBar: View {
             .padding(.vertical, 2.5)
             .background(
                 Capsule().fill(KBMetrics.themeAccentColor.opacity(0.14)))
+            .padding(.leading, 6)
+            .fixedSize()
+    }
+
+    /// 引擎角标：雾凇就绪显主题色、自研兜底显橙，颜色直接暗示当前拼音质量档位
+    private var engineBadgeView: some View {
+        let isFallback = engineBadge.hasPrefix("自研")
+        let tint = isFallback ? Color.orange : KBMetrics.themeAccentColor
+        return Text(engineBadge)
+            .font(.system(size: 10 * scale, weight: .medium))
+            .foregroundColor(tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(Capsule().fill(tint.opacity(0.16)))
             .padding(.leading, 6)
             .fixedSize()
     }

@@ -34,7 +34,7 @@ final class InputEngine {
     func candidates(for raw: String) -> [PinyinCandidate] {
         // librime 没起来：整条链路退回纯自研引擎
         guard RimeService.shared.isReady else {
-            return PinyinEngine.shared.candidates(for: raw)
+            return applyPin(PinyinEngine.shared.candidates(for: raw), raw: raw)
         }
 
         let set = IMESettingsStore.current
@@ -43,7 +43,7 @@ final class InputEngine {
             // librime 候选够多：自研层只补「用户记忆 / 策展缩写 / 短语」，
             // 跳过耗时的词图搜索 —— 既保住 librime 的排序质量，又让打字不卡
             let light = PinyinEngine.shared.lightCandidates(for: raw)
-            return merge(rime: rime, fallback: light, raw: raw)
+            return applyPin(merge(rime: rime, fallback: light, raw: raw), raw: raw)
         }
 
         // librime 候选稀薄（生僻串 / 手滑打错 / 模糊音）：先在合并层把
@@ -75,8 +75,27 @@ final class InputEngine {
 
         // librime 候选稀薄（生僻串 / 刚部署完）：自研全量兜底，保证永远有字可出
         let fallback = PinyinEngine.shared.candidates(for: raw)
-        if rime.isEmpty && fuzzy.isEmpty { return fallback }
-        return merge(rime: rime, fallback: fallback, raw: raw, fuzzy: fuzzy)
+        if rime.isEmpty && fuzzy.isEmpty { return applyPin(fallback, raw: raw) }
+        return applyPin(merge(rime: rime, fallback: fallback, raw: raw, fuzzy: fuzzy), raw: raw)
+    }
+
+    /// 置顶词压到第一位（对标 PlumCore 的 `ipt_set_firstword`）。
+    /// 不走 merge 也要生效：librime 没起来时同样要让用户亲手置顶的词站第一格。
+    private func applyPin(_ list: [PinyinCandidate], raw: String) -> [PinyinCandidate] {
+        guard let pin = PlumLite.shared.pinned(for: raw), !pin.isEmpty else { return list }
+        var out = list.filter { $0.word != pin }
+        out.insert(PinyinCandidate(word: pin, score: 2_100_000,
+                                   consumed: raw.count, isPriority: true), at: 0)
+        return Array(out.prefix(60))
+    }
+
+    /// 长按候选：在该拼音下置顶 / 取消置顶（再点一次取消）
+    func togglePin(word: String, pinyin: String) {
+        PlumLite.shared.togglePin(pinyin: pinyin, word: word)
+    }
+
+    func isPinned(word: String, pinyin: String) -> Bool {
+        PlumLite.shared.isPinned(pinyin: pinyin, word: word)
     }
 
     /// 上屏一个候选，返回「吃掉」了多少个拼音字符（支持部分上屏）。
@@ -107,6 +126,10 @@ final class InputEngine {
             used = (c.consumed > 0 && c.consumed <= n) ? c.consumed : n
             PinyinEngine.shared.learn(c.word, pinyin: String(pinyin.prefix(used)))
         }
+
+        // PlumLite：同拼音下的选择偏好（对标 ipt_adjust_cnword）。
+        // 连续 3 次选同一个词就自动置顶 —— 百度「越用越懂你」的收敛速度。
+        PlumLite.shared.record(pinyin: String(pinyin.prefix(max(1, used))), word: c.word)
 
         // 智能造词链：只有汉字片段能进链；英文/符号上屏立即断链
         // （链里混进非汉字就拼不出词，留着只会污染下一次评估）
@@ -144,9 +167,19 @@ final class InputEngine {
         PinyinEngine.shared.learn(joined, pinyin: chainPy)
     }
 
-    /// 上屏后联想：拿刚上屏的末字查后继字（自研 bigram，够快够小）
+    /// 上屏后联想：拿刚上屏的末字查后继字（自研 bigram，够快够小）。
+    /// PlumLite 再按「句内关键词」（末 2~4 字）补一轮 —— 对标
+    /// `ipt_keyword_get_sentence_keyword`：整句场景下按词联想比按单字准。
     func associate(_ committed: String) -> [String] {
-        PinyinEngine.shared.associate(committed)
+        var out = PinyinEngine.shared.associate(committed)
+        for seed in PlumLite.shared.lianSeeds(committed) {
+            if out.count >= 8 { break }
+            for w in PinyinEngine.shared.associate(seed) where !out.contains(w) {
+                out.append(w)
+                if out.count >= 8 { break }
+            }
+        }
+        return out
     }
 
     /// 句子结束（标点/回车/空格）：上下文断层，清掉上一个词，
@@ -163,15 +196,15 @@ final class InputEngine {
         chainPy = ""
     }
 
-    /// 上下文加权分：上一个上屏词 → 当前候选词。
+    /// 上下文加权分：上一个上屏词 → 当前候选词（含 PlumLite 的同拼音选择偏好）。
     /// 用户自己的搭配重奖（打完「今天」你常打「天气」，直接改变组内顺序），
     /// 通用字级接续轻推（尾字接头字接得上的浮一浮）。两者都没有就返回 0，
     /// 组内保持引擎原序 —— 不破坏无用户数据时的默认排序。
     /// 奖励随次数递减（log 刻度）：第 1 次搭配就够改命，第 8 次也只比第 4 次
     /// 强一丝 —— 线性加分会让「偶然连打两次」的词永久霸榜。
-    private func contextBoost(_ word: String) -> Double {
-        guard !lastCommitted.isEmpty, let fol = word.first else { return 0 }
-        var b = 0.0
+    private func contextBoost(_ word: String, raw: String) -> Double {
+        var b = PlumLite.shared.boost(pinyin: raw, word: word)
+        guard !lastCommitted.isEmpty, let fol = word.first else { return b }
         if let c = PinyinEngine.shared.userContext(after: lastCommitted)?[word] {
             b += Self.boostForCount(c)
         }
@@ -197,6 +230,7 @@ final class InputEngine {
         chainWords = []
         chainPy = ""
         PinyinEngine.shared.clearLearning()
+        PlumLite.shared.clear()
         RimeService.shared.reset()
     }
 
@@ -223,7 +257,7 @@ final class InputEngine {
         //    （rimeIndex 保持 librime 里的原始下标，回灌/部分上屏都靠它）。
         //    这就是百度「越用越懂你」的核心：打完「今天」打 tianqi，「天气」顶前排。
         let rimeRanked = rime.enumerated()
-            .map { (idx: $0.offset, cand: $0.element, boost: contextBoost($0.element.text)) }
+            .map { (idx: $0.offset, cand: $0.element, boost: contextBoost($0.element.text, raw: raw)) }
             .sorted { a, b in
                 if a.boost != b.boost { return a.boost > b.boost }
                 return a.idx < b.idx        // 同分保持 librime 原顺序
@@ -246,7 +280,7 @@ final class InputEngine {
         let fallbackRanked = fallback
             .filter { !$0.isPriority }
             .enumerated()
-            .map { (idx: $0.offset, cand: $0.element, boost: contextBoost($0.element.word)) }
+            .map { (idx: $0.offset, cand: $0.element, boost: contextBoost($0.element.word, raw: raw)) }
             .sorted { a, b in
                 if a.boost != b.boost { return a.boost > b.boost }
                 return a.idx < b.idx

@@ -34,6 +34,7 @@ struct KeyboardRootView: View {
     /// 引擎诊断串（方案 id + 真实候选条数）。没有 App Groups，键盘沙箱里
     /// 的东西主程序读不到，候选栏空闲时露这一串是确认 librime 干没干活的唯一途径。
     @State private var engineDiag = ""
+    @State private var engineBadge = ""
 
     // 顶部功能栏 / 浮层面板
     @State private var panel: KBPanel = .none
@@ -149,6 +150,7 @@ struct KeyboardRootView: View {
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
         .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in
             engineDiag = Self.diag
+            engineBadge = RimeService.shared.engineBadge
         }
     }
 
@@ -192,8 +194,10 @@ struct KeyboardRootView: View {
                candidates: panel == .thought ? thoughtCands : candidates,
                onPick: panel == .thought ? pickThought : pick,
                onForget: panel == .thought ? { _ in } : forget,
+               onPin: panel == .thought ? { _ in } : pin,
                expandOn: expandedCandidates,
                schemeBadge: badge,
+               engineBadge: engineBadge,
                onToggleExpand: toggleExpandCandidates,
                onClipboard: toggleClipboard,
                onThought: toggleThought,
@@ -716,6 +720,15 @@ struct KeyboardRootView: View {
         }
     }
 
+    /// 长按候选：在该拼音下置顶 / 取消置顶（对标百度 PlumCore ipt_set_firstword）。
+    /// 置顶后立刻重排，用户能看到它跳到第一格 —— 这就是操作反馈。
+    private func pin(_ word: String) {
+        let py = enginePy.isEmpty ? composing : enginePy
+        guard !py.isEmpty else { return }
+        InputEngine.shared.togglePin(word: word, pinyin: py)
+        if !composing.isEmpty { refresh() }
+    }
+
     /// 字母键上滑（q~o = 1~9）：选候选拦对应位置的候选。
     /// 没打字、候选拦是空的，上滑就没效果 —— 上滑只做选候选 不打数字。
     private func swipe(_ spec: KeySpec, _ ch: String) {
@@ -957,6 +970,7 @@ struct KeyboardRootView: View {
             // 没就绪前候选走自研引擎，就绪后自动切过去。
             RimeService.shared.prepare()
             engineDiag = Self.diag
+            engineBadge = RimeService.shared.engineBadge
             controller.refreshAuth()
             // 思想库面板没被主动关过就还原（键盘收起再弹出 / 扩展进程被杀重开）：
             // 面板和关键词进度都接回去 接着上次那句走 只有主动关了才从头开始
