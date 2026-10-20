@@ -59,6 +59,19 @@ final class PinyinEngine {
     /// 词图打分的「上下文项」（对标 librime grammar.h 的 Grammar::Evaluate）。
     private var lm: [String: [String: Double]] = [:]
 
+    /// 词级 n-gram 语言模型（ANWG v2，mmap 紧凑二进制）：
+    /// 前词 -> {后继词: log P(后继 | 前词)}。内存映射读取，不整块进堆 ——
+    /// 键盘扩展内存红线是硬约束（rime-ice 全套词库已是大头）。
+    /// 词图打分的「上下文项」升级版：直接建模 词→词 接续（今天→天气），
+    /// 比字级 bigram 准得多。数据来自 rime-ice 短语词典 + 策展表，离线训练；
+    /// 缺失时表为空，打分自动退回字级 bigram，不破坏现有引擎。
+    private var wlmData: Data?
+    private var wlmCount = 0
+    private var wlmKeyTbl = 0
+    private var wlmValTbl = 0
+    private var wlmKeyBlk = 0
+    private var wlmValBlk = 0
+
     /// 自定义短语：触发码 -> 展开文本 + 命中后落位（主程序下发，见 PhraseStore）
     private var phrases: [(code: String, text: String, position: Int)] = []
 
@@ -99,6 +112,11 @@ final class PinyinEngine {
     private static let lmFloor = -12.0
     private static let lmRef = -3.5
     private static let lmWeight = 0.3
+
+    // 词级 LM 量化参数（与 build_assoc_w.py 一一对应）
+    private static let wlmFloor = -10.0
+    private static let wlmRef = -3.0
+    private static let wlmWeight = 0.35
 
     /// 终极兜底：任何字母串都必须出汉字，绝不让面板只剩英文。
     /// 音节起头的 u / i / ü 的规范写法 —— 词库里没有 u/i/v 开头的拼音键，
@@ -161,6 +179,13 @@ final class PinyinEngine {
             loadAssoc(url)
         }
         SecVault.dispose(assocStaged)
+
+        // 词级 n-gram（升级版上下文项）：缺失不影响，打分退回字级 bigram
+        let wStaged = SecVault.stage("assoc_w", ext: "bin")
+        if let url = wStaged {
+            loadAssocW(url)
+        }
+        SecVault.dispose(wStaged)
     }
 
     private func loadSyllables() {
@@ -200,6 +225,105 @@ final class PinyinEngine {
             if !row.isEmpty { map[ctx] = row }
         }
         lm = map
+    }
+
+    /// 载词级 n-gram（ANWG v2 紧凑 mmap 格式）：magic(4) + 版本(1) + entryCount(4)
+    /// + keyOffTblPos(4) + valOffTblPos(4) + keyBlkPos(4) + valBlkPos(4)，
+    /// 之后是 key 偏移表 / val 偏移表 / key 块 / val 块。与 build_assoc_w.py 一一对应。
+    /// 只解析头并记下偏移，查询时按需切片（内存映射，零堆膨胀）。
+    private func loadAssocW(_ url: URL) {
+        guard let d = try? Data(contentsOf: url, options: .mappedIfSafe), d.count > 25 else { return }
+        guard d.prefix(4) == Data("ANWG".utf8), d[4] == 0x32 /* '2' */ else { return }
+        wlmData = d
+        wlmCount = u32from(d, 5)
+        wlmKeyTbl = u32from(d, 9)
+        wlmValTbl = u32from(d, 13)
+        wlmKeyBlk = u32from(d, 17)
+        wlmValBlk = u32from(d, 21)
+    }
+
+    /// 任意 Data 上的小端 u32 读取（用于词级 LM 偏移表）
+    private func u32from(_ d: Data, _ off: Int) -> Int {
+        guard off >= 0, off + 4 <= d.count else { return 0 }
+        return d.withUnsafeBytes { raw -> Int in
+            let b = raw.bindMemory(to: UInt8.self)
+            return Int(b[off]) | (Int(b[off + 1]) << 8)
+                | (Int(b[off + 2]) << 16) | (Int(b[off + 3]) << 24)
+        }
+    }
+
+    private func wlmKeyAt(_ i: Int) -> String {
+        wlmString(u32from(wlmData!, wlmKeyTbl + 4 * i),
+                  u32from(wlmData!, wlmKeyTbl + 4 * (i + 1)))
+    }
+
+    private func wlmString(_ a: Int, _ b: Int) -> String {
+        guard let d = wlmData, a >= 0, b > a, b <= d.count else { return "" }
+        return String(decoding: d[a..<b], as: UTF8.self)
+    }
+
+    /// 二分定位前词，返回它的后继 blob（原始字节：
+    /// 每条 = [概率字节 1 字节][后继词 UTF8]，以 0x01 分隔）。
+    /// 走字节层解析，避免把概率字节当 UTF-8 解码（>=0x80 会被替换成 U+FFFD 而失真）。
+    private func wlmValBlob(for prev: String) -> Data? {
+        guard let d = wlmData, wlmCount > 0 else { return nil }
+        var lo = 0, hi = wlmCount
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if wlmKeyAt(mid) < prev { lo = mid + 1 } else { hi = mid }
+        }
+        if lo < wlmCount, wlmKeyAt(lo) == prev {
+            let a = u32from(d, wlmValTbl + 4 * lo)
+            let b = u32from(d, wlmValTbl + 4 * (lo + 1))
+            return d.subdata(in: a..<b)
+        }
+        return nil
+    }
+
+    /// 解析单条后继 entry：[概率字节][后继词 UTF8] -> (词, 条件对数概率)
+    private func wlmParseEntry(_ seg: Data) -> (String, Double)? {
+        guard seg.count >= 2 else { return nil }
+        let code = Int(seg[0])
+        let word = String(decoding: seg[1..<seg.count], as: UTF8.self)
+        guard !word.isEmpty else { return nil }
+        let lp = PinyinEngine.wlmFloor
+            + (Double(code) - 2) / 253.0 * (0 - PinyinEngine.wlmFloor)
+        return (word, lp)
+    }
+
+    /// 取 (前词, 后继词) 的条件对数概率；前词不在表里返回 nil（调用方退回字级 bigram），
+    /// 前词在表但后继词不在其后继集合里返回 wlmFloor（最不常见接续）。
+    private func wlmLP(_ prev: String, _ fol: String) -> Double? {
+        guard let blob = wlmValBlob(for: prev) else { return nil }
+        for seg in blob.split(separator: 0x01) {
+            if let (w, lp) = wlmParseEntry(seg), w == fol { return lp }
+        }
+        return PinyinEngine.wlmFloor
+    }
+
+    /// 词级上下文项：前词 -> 后继词。命中返回罚分（>=0），没见过的接续（前词不在表）
+    /// 返回 nil（调用方退回字级 bigram）。常见接续返回 0；生僻接续按最罕见罚。
+    /// 比字级 bigram 更贴合真实搭配 ——「今天→天气」而不是「今→天→气」。
+    private func wordPenalty(_ prev: String, _ fol: String) -> Double? {
+        guard let p = wlmLP(prev, fol) else { return nil }
+        if p >= PinyinEngine.wlmRef { return 0 }
+        return PinyinEngine.wlmWeight * (PinyinEngine.wlmRef - p)
+    }
+
+    /// 词级接续亲和度：prev 之后接 fol 在词级 LM 里算不算常见接续（0/1）。
+    private func wordAffinity(_ prev: String, _ fol: String) -> Double {
+        guard let p = wlmLP(prev, fol) else { return 0 }
+        return p >= PinyinEngine.wlmRef ? 1.0 : 0.0
+    }
+
+    /// 上屏联想用：返回前词的所有后继词（按概率降序）。
+    private func wlmSuccessors(_ prev: String) -> [(String, Double)] {
+        guard let blob = wlmValBlob(for: prev) else { return [] }
+        var out: [(String, Double)] = []
+        for seg in blob.split(separator: 0x01) {
+            if let (w, lp) = wlmParseEntry(seg) { out.append((w, lp)) }
+        }
+        return out.sorted { $0.1 > $1.1 }
     }
 
     /// 上下文项：上一个词的尾字接到这个词的头字，返回罚分（>= 0）。
@@ -351,6 +475,12 @@ final class PinyinEngine {
         var seen = Set<String>()
         if let row = userBigram[key] {
             for (w, _) in row.sorted(by: { $0.value > $1.value }) where seen.insert(w).inserted {
+                out.append(w)
+            }
+        }
+        // 词级 n-gram：刚上屏的「词」之后通用上常接什么词（今天→天气）
+        if wlmData != nil {
+            for (w, _) in wlmSuccessors(key) where seen.insert(w).inserted {
                 out.append(w)
             }
         }
@@ -700,10 +830,15 @@ final class PinyinEngine {
             }
             for (sc, ws) in cur {
                 for e in edges {
-                    // grammar.h 的上下文项：上一个词的尾字接这个词的头字
+                    // 上下文项：优先用词级 n-gram（前词 -> 后继词），
+                    // 词级没数据（生僻前词）时退回字级 bigram（尾字 -> 头字）。
                     var pen = 0.0
-                    if let lc = ws.last?.last, let fc = e.word.first {
-                        pen = lmPenalty(lc, fc)
+                    if let pw = ws.last {
+                        if let wp = wordPenalty(pw, e.word) {
+                            pen = wp
+                        } else if let lc = pw.last, let fc = e.word.first {
+                            pen = lmPenalty(lc, fc)
+                        }
                     }
                     states[e.j].append((sc + e.logp - pen, ws + [e.word]))
                 }

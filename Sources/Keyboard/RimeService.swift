@@ -18,6 +18,16 @@ final class RimeService {
     private var preparing = false
     private var readyFlag = false
 
+    /// 加载失败原因（真机角标会显示，用来判断为什么退回了自研引擎）
+    private enum FailureKind { case missing, transient }
+    private var lastFailureKind: FailureKind = .missing
+    private var lastFailureReason = ""
+    private var retryCount = 0
+
+    /// 瞬时失败（部署没起来，多半是首启内存抖动/后台抢资源）的有限重试次数与间隔
+    private static let maxRetry = 2
+    private static let retryDelay: DispatchTimeInterval = .milliseconds(1500)
+
     private init() {}
 
     var isReady: Bool {
@@ -47,15 +57,17 @@ final class RimeService {
     }
 
     private func doPrepare() {
+        lock.lock(); preparing = true; lock.unlock()
+
         let fm = FileManager.default
         guard let resource = Bundle.main.resourceURL else {
-            finish(nil, false)
+            finish(nil, false, kind: .missing, reason: "缺包资源")
             return
         }
         let shared = resource.appendingPathComponent("rime", isDirectory: true)
         guard fm.fileExists(atPath: shared.path) else {
             // 包里没带 rime 数据（或 CI 没拉到）—— 直接放弃，自研引擎兜底。
-            finish(nil, false)
+            finish(nil, false, kind: .missing, reason: "缺词库")
             return
         }
         // 光有空目录（只有 .gitkeep）不算数：必须真带了方案文件，
@@ -63,7 +75,7 @@ final class RimeService {
         let entries = (try? fm.contentsOfDirectory(atPath: shared.path)) ?? []
         let hasSchema = entries.contains { $0.hasSuffix(".schema.yaml") || $0 == "default.yaml" }
         guard hasSchema else {
-            finish(nil, false)
+            finish(nil, false, kind: .missing, reason: "缺方案")
             return
         }
 
@@ -75,19 +87,45 @@ final class RimeService {
 
         let b = AnRanRimeBridge(sharedDataDir: shared.path, userDataDir: userDir.path)
         _ = b.setupAndDeploy()
-        // 不管成没成都把 bridge 留住：没就绪时还要靠它读出方案 id / 候选条数做诊断。
-        finish(b, b.isReady())
+        if b.isReady() {
+            finish(b, true)
+        } else {
+            // 部署没起来：先留住 bridge 做诊断；按「瞬时失败」有限重试，
+            // 多半是首启内存抖动 / 后台线程抢资源，过一会儿再试往往就成。
+            finish(b, false, kind: .transient, reason: "部署失败")
+        }
     }
 
-    private func finish(_ b: AnRanRimeBridge?, _ ok: Bool) {
+    /// ok=true 时清掉失败记录并允许后续重试；ok=false 时记下失败种类与原因，
+    /// 瞬时失败且未超上限则延迟重试一次。
+    private func finish(_ b: AnRanRimeBridge?, _ ok: Bool,
+                        kind: FailureKind = .missing, reason: String = "") {
+        var shouldRetry = false
         lock.lock()
         bridge = b
         readyFlag = ok
         preparing = false
+        if ok {
+            lastFailureKind = .missing
+            lastFailureReason = ""
+            retryCount = 0
+        } else {
+            lastFailureKind = kind
+            lastFailureReason = reason
+            if kind == .transient, retryCount < RimeService.maxRetry {
+                shouldRetry = true
+                retryCount += 1
+            }
+        }
         lock.unlock()
         // 部署在后台线程，界面得知道结果才能把引擎状态刷出来
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .anranRimeReady, object: nil)
+        }
+        if shouldRetry {
+            workQueue.asyncAfter(deadline: .now() + RimeService.retryDelay) { [weak self] in
+                self?.doPrepare()
+            }
         }
     }
 
@@ -97,11 +135,29 @@ final class RimeService {
     var diagnostics: String {
         lock.lock()
         let b = bridge
+        let ok = readyFlag
+        let reason = lastFailureReason
         lock.unlock()
-        guard let b, let schema = b.activeSchemaId() as String?, !schema.isEmpty else {
-            return "未就绪"
+        guard ok, let b, let schema = b.activeSchemaId() as String?, !schema.isEmpty else {
+            return reason.isEmpty ? "未就绪" : "未就绪·\(reason)"
         }
         return "\(schema) \(b.probeCandidateCount())"
+    }
+
+    /// 顶栏用的简短引擎角标：用户一眼看出当前是谁在出字。
+    /// 雾凇/鼠须管方案就绪 → "雾凇·30"（30 = 打 nihao 能出的候选数，越大越健康）；
+    /// 没起来 → "自研兜底" 或 "自研兜底·缺方案" / "自研兜底·部署失败" 等，
+    /// 把退回自研的真实原因亮出来 —— 这是「为什么我打出来跟百度差这么远」的第一手线索。
+    var engineBadge: String {
+        lock.lock()
+        let b = bridge
+        let ok = readyFlag
+        let reason = lastFailureReason
+        lock.unlock()
+        guard ok, let b else { return reason.isEmpty ? "自研兜底" : "自研兜底·\(reason)" }
+        let sch = (b.activeSchemaId() as String?) ?? ""
+        let cnt = b.probeCandidateCount()
+        return "\(sch)·\(cnt)"
     }
 
     // MARK: - 候选

@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.28"
-    CURRENT_PROJECT_VERSION: "63"
+    MARKETING_VERSION: "0.9.29"
+    CURRENT_PROJECT_VERSION: "64"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -83,6 +83,9 @@ targets:
       - path: Support/dict/pinyin.bin.enc
         buildPhase: resources
       - path: Support/dict/assoc.bin.enc
+        buildPhase: resources
+      # 词级 n-gram 语言模型（ANWG v2，自研兜底引擎的上下文项升级）
+      - path: Support/dict/assoc_w.bin.enc
         buildPhase: resources
       # Rime 中州韵方案数据（CI 拉鼠须管 SharedSupport 填进来；folder 引用保留目录结构）
       - path: Support/rime

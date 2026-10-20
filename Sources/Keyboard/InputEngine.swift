@@ -178,6 +178,8 @@ final class InputEngine {
         if let ctx = lastCommitted.last {
             b += PinyinEngine.shared.contextAffinity(ctx, fol) * 0.8
         }
+        // 词级接续亲和（上屏词 -> 候选词）：直接命中常见搭配（今天→天气）浮一浮
+        b += PinyinEngine.shared.wordAffinity(lastCommitted, word) * 0.8
         return b
     }
 
