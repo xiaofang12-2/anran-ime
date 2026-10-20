@@ -311,7 +311,8 @@ final class PinyinEngine {
     }
 
     /// 词级接续亲和度：prev 之后接 fol 在词级 LM 里算不算常见接续（0/1）。
-    private func wordAffinity(_ prev: String, _ fol: String) -> Double {
+    /// internal：InputEngine.contextBoost 跨文件调用。
+    func wordAffinity(_ prev: String, _ fol: String) -> Double {
         guard let p = wlmLP(prev, fol) else { return 0 }
         return p >= PinyinEngine.wlmRef ? 1.0 : 0.0
     }
