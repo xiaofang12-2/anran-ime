@@ -1,81 +1,148 @@
 // 26 键拼音候选质量评测（CI 里跑，不依赖真机）
 //
-// 目的：把「候选栏垃圾不垃圾」变成一组可断言数字，改完代码 CI 直接判红/绿，
+// 目的：把「候选栏垃圾不垃圾」变成可断言数字，改完代码 CI 直接判红/绿，
 // 不再靠人肉试打字。
 //
-// 编译（在仓库根目录，macOS）：
-//   xcrun swiftc -O -o /tmp/evalbin \
-//     tools/eval/main.swift \
-//     Sources/Keyboard/PinyinEngine.swift \
-//     Sources/Shared/IMESettings.swift Sources/Shared/PhraseStore.swift \
-//     Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
-// 运行（明文词库目录）：
-//   ANRAN_DICT_DIR=Support/dict /tmp/evalbin
+// 四组用例 + 一个噪音指标：
+//   ① 词库用例 cases.tsv（240 条，期望首位 = 该拼音下词库最高频词）
+//      —— 抓「seed / 前缀补全 / 缩写表 / LM 罚分」把首位挤掉的回归
+//   ② 短输入（1~3 字母）—— 抓最高频单字
+//   ③ 长句（10~25 字母）—— 抓整句组句能力
+//   ④ 错拼 —— 抓纠错召回
+//   ⑤ 噪音：短输入时前 9 条里「≥5 字长候选」的占比上限
 //
-// 判定：全拼用例首位命中率 >= 88%、前三命中率 >= 96%，否则 exit(1)。
+// 编译（仓库根目录，macOS）：
+//   xcrun swiftc -Onone -g -o /tmp/evalbin \
+//     tools/eval/main.swift tools/eval/stubs.swift \
+//     Sources/Keyboard/PinyinEngine.swift \
+//     Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
+// 运行：
+//   ANRAN_DICT_DIR=Support/dict ANRAN_CASES=tools/eval/cases.tsv /tmp/evalbin
 
 import Foundation
 
-/// 全拼精确用例：输入 → 期望首候选
-let fullCases: [(String, String)] = [
-    ("nihao", "你好"), ("xiexie", "谢谢"), ("zaijian", "再见"),
-    ("jintian", "今天"), ("mingtian", "明天"), ("tianqi", "天气"),
-    ("shenme", "什么"), ("weishenme", "为什么"), ("zenme", "怎么"),
-    ("keyi", "可以"), ("buzhidao", "不知道"), ("duibuqi", "对不起"),
-    ("meiguanxi", "没关系"), ("women", "我们"), ("zhege", "这个"),
-    ("shijian", "时间"), ("gongsi", "公司"), ("pengyou", "朋友"),
-    ("dianhua", "电话"), ("chifan", "吃饭"), ("xihuan", "喜欢"),
-    ("wanshang", "晚上"), ("xuexiao", "学校"), ("gongzuo", "工作"),
-    ("wenti", "问题"), ("fangfa", "方法"), ("zhongguo", "中国"),
-    ("xianzai", "现在"), ("yijing", "已经"), ("yinwei", "因为"),
-    ("suoyi", "所以"), ("danshi", "但是"), ("ruguo", "如果"),
-    ("keneng", "可能"), ("xuyao", "需要"), ("zhengzai", "正在"),
-    ("mingbai", "明白"), ("zhidao", "知道"), ("kaixin", "开心"),
-    ("shengri", "生日"), ("shouji", "手机"), ("youxi", "游戏"),
-    ("yisheng", "医生"), ("laoban", "老板"), ("tongxue", "同学"),
-]
+// ---------------------------------------------------------------- 用例
 
-/// 短输入用例（1~3 字母）：期望首位是最高频单字
+/// ① 词库用例（cases.tsv，期望 = 词库该键最高频词）
+func loadCasesFile() -> [(String, String)] {
+    let path = ProcessInfo.processInfo.environment["ANRAN_CASES"]
+        ?? "tools/eval/cases.tsv"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        print("!! 读不到用例文件：\(path)")
+        return []
+    }
+    var out: [(String, String)] = []
+    for line in text.split(separator: "\n") {
+        if line.hasPrefix("#") { continue }
+        let p = line.split(separator: "\t")
+        guard p.count >= 2 else { continue }
+        out.append((String(p[0]), String(p[1])))
+    }
+    return out
+}
+
+/// ② 短输入：期望最高频单字
 let shortCases: [(String, String)] = [
     ("ni", "你"), ("wo", "我"), ("de", "的"), ("shi", "是"),
     ("bu", "不"), ("le", "了"), ("zai", "在"), ("you", "有"),
     ("hao", "好"), ("ta", "他"), ("ma", "吗"), ("ne", "呢"),
 ]
 
-func topN(_ list: [PinyinCandidate], _ n: Int) -> [String] {
-    list.prefix(n).map { $0.word }
+/// ③ 长句：整句组句能力
+let sentenceCases: [(String, String)] = [
+    ("woxiangchifan", "我想吃饭"),
+    ("jintiantianqihenhao", "今天天气很好"),
+    ("womenmingtianjian", "我们明天见"),
+    ("wanshangyiqichifan", "晚上一起吃饭"),
+    ("xiexienidebangzhu", "谢谢你的帮助"),
+    ("nizaiganma", "你在干嘛"),
+    ("woyijingchiguole", "我已经吃过了"),
+    ("zhegeshijianhenzhongyao", "这个事情很重要"),
+    ("mingnianzaijian", "明年再见"),
+    ("buhaoyisilaiwanle", "不好意思来晚了"),
+    ("tamenchenglehaopengyou", "他们成了好朋友"),
+    ("womenshizuihaodepengyou", "我们是最好的朋友"),
+    ("jintianwanshangchishenme", "今天晚上吃什么"),
+    ("nizuijinzenmeyang", "你最近怎么样"),
+]
+
+/// ④ 错拼：期望纠正后能进前三
+let typoCases: [(String, String)] = [
+    ("nihap", "你好"), ("jintain", "今天"), ("tainqi", "天气"),
+    ("xieixe", "谢谢"), ("duibqi", "对不起"), ("meiguanx", "没关系"),
+    ("zuotain", "昨天"), ("mingtain", "明天"), ("shenm", "什么"),
+    ("wanshan", "晚上"),
+]
+
+// ---------------------------------------------------------------- 跑
+
+struct Result {
+    var total = 0
+    var hit1 = 0
+    var hit3 = 0
+    var fails: [String] = []
 }
 
-func run(_ cases: [(String, String)], label: String,
-         top1Threshold: Double, top3Threshold: Double) -> Bool {
-    guard !cases.isEmpty else { return true }
-    var hit1 = 0, hit3 = 0
-    var failures: [String] = []
-
+func measure(_ cases: [(String, String)]) -> Result {
+    var r = Result()
     for (py, want) in cases {
-        // 逐条打印：万一引擎在某条输入上崩了，日志最后一行就是崩点
-        print("· \(py)")
-        fflush(stdout)
         let list = PinyinEngine.shared.candidates(for: py)
-        let words = topN(list, 3)
-        if words.first == want { hit1 += 1 }
-        if words.contains(want) { hit3 += 1 } else {
-            failures.append("\(py) 期望「\(want)」实际 \(words.prefix(3).joined(separator: " / "))")
+        let words = list.prefix(3).map { $0.word }
+        r.total += 1
+        if words.first == want { r.hit1 += 1 }
+        if words.contains(want) { r.hit3 += 1 } else {
+            r.fails.append("\(py) 期望「\(want)」实际 \(words.joined(separator: " / "))")
         }
     }
+    return r
+}
 
-    let n = Double(cases.count)
-    let r1 = Double(hit1) / n, r3 = Double(hit3) / n
+@discardableResult
+func report(_ r: Result, _ label: String,
+            top1: Double, top3: Double) -> Bool {
+    guard r.total > 0 else { return true }
+    let n = Double(r.total)
+    let r1 = Double(r.hit1) / n, r3 = Double(r.hit3) / n
     print(String(format: "[%@] 用例 %d  首位 %.1f%%(%d)  前三 %.1f%%(%d)",
-                 label, cases.count, r1 * 100, hit1, r3 * 100, hit3))
-    if !failures.isEmpty {
-        for f in failures.prefix(12) { print("    ✗ " + f) }
-    }
-    let ok = r1 >= top1Threshold && r3 >= top3Threshold
-    print(ok ? "[\(label)] PASS" : "[\(label)] FAIL（阈值 首位>=\(Int(top1Threshold*100))% 前三>=\(Int(top3Threshold*100))%）")
+                 label, r.total, r1 * 100, r.hit1, r3 * 100, r.hit3))
+    for f in r.fails.prefix(8) { print("    ✗ " + f) }
+    let ok = r1 >= top1 && r3 >= top3
+    print(ok ? "[\(label)] PASS"
+             : "[\(label)] FAIL（阈值 首位>=\(Int(top1*100))% 前三>=\(Int(top3*100))%）")
     return ok
 }
 
-let okFull = run(fullCases, label: "全拼", top1Threshold: 0.88, top3Threshold: 0.96)
-let okShort = run(shortCases, label: "短输入", top1Threshold: 0.70, top3Threshold: 0.90)
-exit(okFull && okShort ? 0 : 1)
+/// 噪音指标：短输入时前 9 条里「≥5 字的长候选」占比。
+/// 商业输入法第一屏应该以词为主；长怪句占比高，用户就觉得「候选栏垃圾」。
+func noiseShare() -> Double {
+    var total = 0, long = 0
+    let probes = ["nihao", "jintian", "shenme", "keyi", "xiexie",
+                  "mingtian", "pengyou", "gongsi", "dianhua", "xihuan"]
+    for py in probes {
+        for c in PinyinEngine.shared.candidates(for: py).prefix(9) {
+            total += 1
+            if c.word.count >= 5 { long += 1 }
+        }
+    }
+    return total == 0 ? 0 : Double(long) / Double(total)
+}
+
+let corpus = loadCasesFile()
+print("词库用例：\(corpus.count) 条")
+
+var allOK = true
+allOK = report(measure(corpus), "词库", top1: 0.92, top3: 0.99) && allOK
+allOK = report(measure(shortCases), "短输入", top1: 0.70, top3: 0.90) && allOK
+allOK = report(measure(sentenceCases), "长句", top1: 0.60, top3: 0.85) && allOK
+allOK = report(measure(typoCases), "错拼", top1: 0.30, top3: 0.80) && allOK
+
+let noise = noiseShare()
+print(String(format: "[噪音] 短输入前9条中 ≥5字长候选占比 %.1f%%（上限 20%%）", noise * 100))
+if noise > 0.20 {
+    print("[噪音] FAIL")
+    allOK = false
+} else {
+    print("[噪音] PASS")
+}
+
+exit(allOK ? 0 : 1)
