@@ -42,11 +42,17 @@ jobs:
             tools/eval/main.swift tools/eval/stubs.swift \
             Sources/Keyboard/PinyinEngine.swift \
             Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
-          # 崩了要能看到调用栈：lldb 跑一遍，backtrace 直接进日志
-          ANRAN_TRACE=1 ANRAN_DICT_DIR=/tmp/evaldict lldb -b \
-            -o "run" -o "thread backtrace all" -o "quit" -- /tmp/evalbin 2>&1 | tee /tmp/eval.log
-          # lldb 的退出码不可靠，用日志判断：必须出现 PASS
-          grep -q "PASS" /tmp/eval.log
+          # 崩了要能看到调用栈：lldb 跑一遍，backtrace 直接进日志。
+          # lldb 在进程正常退出时也会返回非 0（backtrace 命令无进程可看），
+          # 所以这里不拿它的退出码当结论，只看日志里是否有两条 PASS。
+          ANRAN_DICT_DIR=/tmp/evaldict lldb -b \
+            -o "run" -o "thread backtrace all" -o "quit" -- /tmp/evalbin 2>&1 \
+            | tee /tmp/eval.log || true
+          test "$(grep -c 'PASS' /tmp/eval.log)" -ge 2 || {
+            echo "==== 候选质量未达标，评测尾部 ===="
+            tail -40 /tmp/eval.log
+            exit 1
+          }
 
       - name: 编译（不签名）
         run: |
