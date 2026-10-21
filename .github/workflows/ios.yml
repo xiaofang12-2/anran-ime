@@ -38,11 +38,15 @@ jobs:
           for n in pinyin assoc assoc_w seed; do
             /tmp/ev/bin/python tools/vault_enc.py dec2 "Support/dict/$n.bin.enc" "/tmp/evaldict/$n.bin"
           done
-          xcrun swiftc -O -o /tmp/evalbin \
+          xcrun swiftc -Onone -g -o /tmp/evalbin \
             tools/eval/main.swift tools/eval/stubs.swift \
             Sources/Keyboard/PinyinEngine.swift \
             Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
-          ANRAN_DICT_DIR=/tmp/evaldict SWIFT_BACKTRACE=enable=yes /tmp/evalbin 2>&1 | tee /tmp/eval.log
+          # 崩了要能看到调用栈：lldb 跑一遍，backtrace 直接进日志
+          ANRAN_DICT_DIR=/tmp/evaldict lldb -b \
+            -o "run" -o "thread backtrace all" -o "quit" -- /tmp/evalbin 2>&1 | tee /tmp/eval.log
+          # lldb 的退出码不可靠，用日志判断：必须出现 PASS
+          grep -q "PASS" /tmp/eval.log
 
       - name: 编译（不签名）
         run: |
