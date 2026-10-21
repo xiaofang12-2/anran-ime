@@ -31,10 +31,12 @@ jobs:
       - name: 26 键拼音候选质量评测
         run: |
           set -o pipefail
-          python3 -m pip install --quiet cryptography
+          # macOS runner 的 python3 是 externally-managed，不能直接 pip install
+          python3 -m venv /tmp/ev
+          /tmp/ev/bin/python -m pip install --quiet cryptography
           mkdir -p /tmp/evaldict
           for n in pinyin assoc assoc_w seed; do
-            python3 tools/vault_enc.py dec2 "Support/dict/$n.bin.enc" "/tmp/evaldict/$n.bin"
+            /tmp/ev/bin/python tools/vault_enc.py dec2 "Support/dict/$n.bin.enc" "/tmp/evaldict/$n.bin"
           done
           xcrun swiftc -O -o /tmp/evalbin \
             tools/eval/main.swift tools/eval/stubs.swift \
