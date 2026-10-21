@@ -906,10 +906,15 @@ final class PinyinEngine {
             // 不能「先只跑低罚分的，有命中就不跑漏键」—— duibqi→对不起、wanshan→晚上
             // 恰好都是漏键，会被前面的垃圾命中挡掉，永远救不回来。
             // 代价控制：每个变体只取 2 条、总数上限 40 条。
+            // 关键校验：候选字数必须等于纠正串的音节数。
+            // 否则「对白」（2 字）会冒充 duibuqi（3 音节）的整串解，
+            // 把真正的「对不起」压下去 —— duibqi 那条用例就是这么挂的。
             let ctier = splitOK ? 2 : 1
             var added = 0
             for v in correctedVariants(input) {
-                for c in prefixWords(v.variant, perKey: 2) {
+                let syl = syllableCount(v.variant)
+                if syl == 0 { continue }
+                for c in prefixWords(v.variant, perKey: 3) where c.word.count == syl {
                     put(c.word, n, c.logp - v.pen, tier: ctier)
                     added += 1
                 }
@@ -1209,6 +1214,25 @@ final class PinyinEngine {
     }
 
     // MARK: - 音节切分 / 模糊音 / 纠错
+
+    /// 把串切成音节的个数（贪心最长匹配）；切不干净返回 0。
+    /// 纠错用它校验「字数 == 音节数」，挡掉两字词冒充长拼音整串解。
+    private func syllableCount(_ s: String) -> Int {
+        let chars = Array(s)
+        var i = 0, count = 0
+        while i < chars.count {
+            var len = min(6, chars.count - i)
+            var hit = 0
+            while len >= 1 {
+                if syllableSet.contains(String(chars[i..<(i + len)])) { hit = len; break }
+                len -= 1
+            }
+            if hit == 0 { return 0 }
+            i += hit
+            count += 1
+        }
+        return count
+    }
 
     /// 整串能否切成「完整音节」的序列（贪心最长匹配）。
     private func splitsIntoSyllables(_ s: String) -> Bool {
