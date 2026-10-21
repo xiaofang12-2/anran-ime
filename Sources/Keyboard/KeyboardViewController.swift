@@ -43,8 +43,8 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 主程序改了键高/间距后调一次，把键盘高度跟着重算，否则行会被裁掉
     func setRows(_ n: Int) {
-        let h = KBMetrics.totalHeight(rows: n, extra: extraHeight,
-                                      composingRow: composingRow)
+        // 拼音串与图标共用顶栏那一格，不再额外占行 → 高度恒定，打字不会跳。
+        let h = KBMetrics.totalHeight(rows: n, extra: extraHeight)
         guard let c = heightConstraint, abs(c.constant - h) > 0.5 else { return }
         c.constant = h
         view.setNeedsLayout()
@@ -58,10 +58,10 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 拼音串从「空 ↔ 非空」时调一次：键盘高度要跟着加/减一行，
     /// 否则拼音行会把键区顶出去（或留下空白）。
+    /// 保留接口（调用点还在），但**故意不做任何事**：
+    /// 拼音不再独占一行，键盘高度必须恒定，否则一按字母就整块往下长。
     func setComposingRow(_ visible: Bool) {
-        guard composingRow != visible else { return }
-        composingRow = visible
-        setRows(KBMetrics.rows)
+        _ = visible
     }
 
     // MARK: - 往当前 app 的输入框里塞字

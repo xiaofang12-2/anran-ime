@@ -36,7 +36,29 @@ final class InputEngine {
         // 包一层 autoreleasepool：每次按键结束就把这些临时对象放掉，
         // 不让它们堆到自动释放池边界（扩展的 jetsam 红线只有 60~70MB）。
         autoreleasepool {
-            limitWordLength(candidatesInner(for: raw), raw: raw)
+            dropSymbolNoise(limitWordLength(candidatesInner(for: raw), raw: raw))
+        }
+    }
+
+    /// 掉符号/emoji 候选。
+    /// 用户实拍：打 `s` 时候选里混进 ⬆️ / 3 / 👋 —— 这些来自词库里的符号条目，
+    /// 对拼音输入毫无意义，还挤掉真正的汉字。用户置顶/自定义短语豁免。
+    private func dropSymbolNoise(_ list: [PinyinCandidate]) -> [PinyinCandidate] {
+        list.filter { c in
+            if c.isPriority || c.literal { return true }
+            for u in c.word.unicodeScalars {
+                let v = u.value
+                if (0x1F000...0x1FAFF).contains(v)      // emoji 主区
+                    || (0x2190...0x2BFF).contains(v)    // 箭头 / 数学 / 杂符号
+                    || (0x2600...0x27BF).contains(v)    // 装饰符号
+                    || (0xFE00...0xFE0F).contains(v)    // 变体选择符
+                    || (0x20E3...0x20E3).contains(v) {  // 组合键帽
+                    return false
+                }
+            }
+            // 纯数字候选（打 s 出「3」）也是噪声
+            if c.word.allSatisfy({ $0.isNumber }) { return false }
+            return true
         }
     }
 

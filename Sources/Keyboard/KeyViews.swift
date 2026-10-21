@@ -371,44 +371,41 @@ struct TopBar: View {
     private var scale: CGFloat { KBMetrics.fontScale }
 
     var body: some View {
-        let showPinyin = typing && !composing.isEmpty
-        return VStack(spacing: 0) {
-            if showPinyin { pinyinRow }
-            barRow
-        }
-        .frame(height: KBMetrics.barHeight
-               + (showPinyin ? KBMetrics.pinyinRowHeight : 0))
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(KBMetrics.themeBarColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-
-    /// 已输入的拼音：单独一行放在图标上方（学百度，不跟候选挤在一起）
-    private var pinyinRow: some View {
-        HStack(spacing: 0) {
-            Text(composing)
-                .font(.system(size: 14 * scale))
-                .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.85))
-                .lineLimit(1)
-                .truncationMode(.head)
-                .padding(.horizontal, 10)
-            Spacer(minLength: 0)
-        }
-        .frame(height: KBMetrics.pinyinRowHeight)
+        // ⚠️ 顶栏高度必须恒定。曾经给拼音串单独加过一行（24pt），
+        // 结果一按字母整块键盘往下长、清空又缩回去，观感极差。
+        // 现在拼音串和图标共用同一格：打字时图标让位、拼音顶上去，高度不动。
+        barRow
+            .frame(height: KBMetrics.barHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(KBMetrics.themeBarColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private var barRow: some View {
         HStack(spacing: 0) {
-            logo
+            // 有拼音串时图标隐藏，位置留给拼音：既不挡候选，也不会有头像
+            // 和拼音挤在一起的怪异感（用户实拍反馈）。
+            if composing.isEmpty {
+                logo
+            } else {
+                Text(composing)
+                    .font(.system(size: 15 * scale, weight: .medium))
+                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.head)     // 打长了保留尾部（正在敲的部分）
+                    .frame(maxWidth: 112, alignment: .leading)
+                    .padding(.horizontal, 10)
+                divider
+            }
             if !schemeBadge.isEmpty { badge }
             if !engineBadge.isEmpty { engineBadgeView }
             Group {
                 if shown.isEmpty {
-                    Text(composing)
-                        .font(.system(size: 15 * scale))
-                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
-                        .padding(.horizontal, 10)
+                    Text(composing.isEmpty ? "" : "无候选")
+                        .font(.system(size: 12 * scale))
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.4))
+                        .padding(.horizontal, 9)
                     Spacer(minLength: 0)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
