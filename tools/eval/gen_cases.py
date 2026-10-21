@@ -91,7 +91,7 @@ def main():
         stat.append((n, len(picked[n]), len(items)))
         lines += ["%s\t%s\tw%d" % (k, w, n) for k, w, _ in items]
 
-    with open(OUT, "w", encoding="utf-8") as f:
+    with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("# pinyin\texpect\tcategory\n")
         f.write("\n".join(lines) + "\n")
 

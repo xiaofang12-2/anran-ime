@@ -57,13 +57,18 @@ func loadCasesFile() -> [Case] {
         return []
     }
     print("用例文件：\(used)")
+    // ⚠️ 别用 body.split(separator: "\n")：Swift 里 "\r\n" 是**一个 Character**，
+    // Windows 生成的 TSV 会整体被当成一行（且以 # 开头 → 全跳过，用例数变 0）。
+    // 按 CharacterSet.newlines 切才稳，再逐行去掉首尾空白。
     var out: [Case] = []
-    for line in body.split(separator: "\n") {
-        if line.hasPrefix("#") { continue }
-        let p = line.split(separator: "\t")
+    for raw in body.components(separatedBy: CharacterSet.newlines) {
+        let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if line.isEmpty || line.hasPrefix("#") { continue }
+        let p = line.components(separatedBy: "\t")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
         guard p.count >= 2 else { continue }
-        out.append(Case(py: String(p[0]), want: String(p[1]),
-                        cat: p.count >= 3 ? String(p[2]) : "w2"))
+        out.append(Case(py: p[0], want: p[1],
+                        cat: p.count >= 3 ? p[2] : "w2"))
     }
     return out
 }

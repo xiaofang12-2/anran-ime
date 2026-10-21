@@ -1024,9 +1024,9 @@ final class PinyinEngine {
         if n <= 12 {
             width = min(20, max(12, n * 2)); edgeCap = 3000
         } else if n <= 20 {
-            width = 10; edgeCap = 1200
+            width = 8; edgeCap = 900
         } else {
-            width = 8; edgeCap = 800
+            width = 6; edgeCap = 600
         }
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
