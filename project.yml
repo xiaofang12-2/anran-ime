@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.53"
-    CURRENT_PROJECT_VERSION: "88"
+    MARKETING_VERSION: "0.9.54"
+    CURRENT_PROJECT_VERSION: "89"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -222,16 +222,16 @@ targets:
             translator/initial_quality: 1.2
             # 模糊音（对标百度默认档）：雾凇默认整段注释，这里补回来，
             # 让 librime 主力引擎也吃容错，而不是只有自研兜底层吃。
-            # 取舍：只留百度默认档的规则（平翘舌、n/l、前后鼻音），
-            # 删掉 f/h、l/r 双向全开——过于激进，打 "fa" 会混入 "ha"
-            # 系候选、打 "li" 混入 "ri" 系，叠加超级简拼和 page_size
-            # 30 会把正确候选冲下去，单行候选栏变成一锅粥。
+            # 取舍：只留百度默认档的规则（平翘舌、前后鼻音），
+            # 删掉 f/h、l/r、n/l 三组声母级双向 derive——过于激进：
+            # derive/^n/l/ 会把 ne 无条件派生成 le，于是打 ne 出「了/乐/蓝」
+            # （用户实拍）。百度虽然默认开 n/l，但它是纠错式（切不开音节才补），
+            # rime derive 是全音节候选合并，污染完全不同级别。平翘舌/前后鼻音
+            # 要么词频差异大、要么只动韵尾不跨音节，保留；声母替换一律不留。
             speller/algebra/+:
-              # 声母
+              # 声母（平翘舌：zh/z, ch/c, sh/s 双向）
               - derive/^([zcs])h/$1/
               - derive/^([zcs])([^h])/$1h$2/
-              - derive/^l/n/
-              - derive/^n/l/
               # 韵母
               - derive/ang$/an/
               - derive/an$/ang/

@@ -1490,10 +1490,12 @@ final class PinyinEngine {
         return out
     }
 
-    /// 生成容错变体：翘舌/平舌、n/l、前后鼻音（百度默认档，双向）。
-    /// 跟 project.yml 里 rime_ice.custom.yaml 的 14 条 derive 保持同一套规则 ——
+    /// 生成容错变体：翘舌/平舌、前后鼻音（百度默认档，双向）。
+    /// 跟 project.yml 里 rime_ice.custom.yaml 的 derive 保持同一套规则 ——
     /// librime 那层是编译期写死的，运行时的模糊音靠这里生成变体再查一遍。
     /// 变体越靠后罚分越多（调用方按序号罚）。
+    /// ⚠️ n/l 已删除：它是声母级替换，打 ne 会派生出 le，于是「了/乐/蓝」
+    /// 全涌进候选（用户实拍）。百度的 n/l 是纠错式，rime derive 是全合并，不可类比。
     func fuzzyVariants(_ s: String) -> [String] {
         let rules: [(String, String)] = [
             ("zh", "z"), ("z", "zh"),
@@ -1502,7 +1504,6 @@ final class PinyinEngine {
             ("ang", "an"), ("an", "ang"),
             ("eng", "en"), ("en", "eng"),
             ("in", "ing"), ("ing", "in"),
-            ("n", "l"), ("l", "n"),
             ("ian", "iang"), ("iang", "ian"),
             ("uan", "uang"), ("uang", "uan"),
         ]
