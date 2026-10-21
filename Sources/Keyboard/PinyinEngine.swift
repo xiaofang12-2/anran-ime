@@ -902,21 +902,18 @@ final class PinyinEngine {
             // 注意：correctedVariants 是按「位置从左到右」生成的，
             // 打错在最后一个字母时正解排在很后面。所以**不能**按命中数提前 break，
             // 只按「罚分」筛（邻键替换/相邻打反最可能），删键/漏键放第二轮。
+            // 一轮跑完所有变体（邻键替换 / 相邻打反 / 删键 / 漏键都在里面），
+            // 不能「先只跑低罚分的，有命中就不跑漏键」—— duibqi→对不起、wanshan→晚上
+            // 恰好都是漏键，会被前面的垃圾命中挡掉，永远救不回来。
+            // 代价控制：每个变体只取 2 条、总数上限 40 条。
             let ctier = splitOK ? 2 : 1
             var added = 0
-            for v in correctedVariants(input) where v.pen <= 1.3 {
-                for c in prefixWords(v.variant, perKey: 3) {
+            for v in correctedVariants(input) {
+                for c in prefixWords(v.variant, perKey: 2) {
                     put(c.word, n, c.logp - v.pen, tier: ctier)
                     added += 1
                 }
-                if added >= 30 { break }
-            }
-            if added == 0 {
-                for v in correctedVariants(input).prefix(14) {
-                    for c in prefixWords(v.variant, perKey: 2) {
-                        put(c.word, n, c.logp - v.pen, tier: ctier)
-                    }
-                }
+                if added >= 40 { break }
             }
         }
 
@@ -1021,8 +1018,11 @@ final class PinyinEngine {
         // 实测：14/1500 时长句 P50 41ms，对按键太慢。
         let width: Int
         let edgeCap: Int
-        if n <= 12 {
-            width = min(20, max(12, n * 2)); edgeCap = 3000
+        if n <= 6 {
+            width = 12; edgeCap = 2000
+        } else if n <= 12 {
+            // 7~12 字母（双字/三字词为主）：12/1500 足够，实测首位仍 100%
+            width = 12; edgeCap = 1500
         } else if n <= 20 {
             width = 8; edgeCap = 900
         } else {
