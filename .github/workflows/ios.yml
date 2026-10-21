@@ -25,6 +25,23 @@ jobs:
       - name: 显示可用 SDK
         run: xcodebuild -showsdks
 
+      # 候选质量自动化评测：把「候选栏垃圾不垃圾」变成可断言数字。
+      # 解密词库 → 编一个命令行工具（复用同一份 PinyinEngine 源码）→ 跑用例。
+      # 首位命中率或前三命中率不达标就让这个 job 红，不靠人肉试打字。
+      - name: 26 键拼音候选质量评测
+        run: |
+          set -o pipefail
+          python3 -m pip install --quiet cryptography
+          mkdir -p /tmp/evaldict
+          for n in pinyin assoc assoc_w seed; do
+            python3 tools/vault_enc.py dec2 "Support/dict/$n.bin.enc" "/tmp/evaldict/$n.bin"
+          done
+          xcrun swiftc -O -o /tmp/evalbin \
+            tools/eval/main.swift tools/eval/stubs.swift \
+            Sources/Keyboard/PinyinEngine.swift \
+            Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
+          ANRAN_DICT_DIR=/tmp/evaldict /tmp/evalbin | tee /tmp/eval.log
+
       - name: 编译（不签名）
         run: |
           set -o pipefail

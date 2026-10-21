@@ -186,7 +186,7 @@ struct KeyboardRootView: View {
     /// （「unable to type-check this expression in reasonable time」）。
     private var topBar: some View {
         // 三元提到调用外：参数表达式越单纯，类型检查器越不容易超时
-        let badge = (panel != .thought && dpScheme != .off) ? dpScheme.displayName : ""
+        // 双拼已移除：全拼键盘不再显示方案角标
         return TopBar(thoughtOn: panel == .thought,
                clipboardOn: panel == .clipboard,
                typing: typing,
@@ -196,7 +196,7 @@ struct KeyboardRootView: View {
                onForget: panel == .thought ? { _ in } : forget,
                onPin: panel == .thought ? { _ in } : pin,
                expandOn: expandedCandidates,
-               schemeBadge: badge,
+               schemeBadge: "",
                engineBadge: engineBadge,
                onToggleExpand: toggleExpandCandidates,
                onClipboard: toggleClipboard,
@@ -419,7 +419,7 @@ struct KeyboardRootView: View {
             return
         }
         // 思想库面板里打拼音同样吃双拼解码（用户在哪儿都会用同一套方案）
-        let py = engineInput(thoughtComposing)
+        let py = thoughtComposing
         thoughtCands = py.isEmpty ? [] : InputEngine.shared.candidates(for: py)
     }
 
@@ -785,22 +785,6 @@ struct KeyboardRootView: View {
 
     // MARK: - 输入态同步
 
-    /// 当前双拼方案（设置改了即时生效，不用重开键盘）
-    private var dpScheme: DoublePinyinScheme {
-        DoublePinyinScheme.safe(IMESettingsStore.current.doublePinyin)
-    }
-
-    /// 双拼模式下把键串解码成全拼喂给引擎；解不了就透传原键
-    /// （不成对的尾键 / 简拼 / 英文，走原有路径）。
-    /// 单键在双拼里不成音节，直接不出候选（商业双拼输入器的行为）。
-    private func engineInput(_ keys: String) -> String {
-        let scheme = dpScheme
-        guard scheme != .off else { return keys }
-        if keys.count == 1 { return "" }
-        if let d = DoublePinyin.decodePrefix(keys, scheme: scheme) { return d.full }
-        return keys
-    }
-
     /// 拼音串变了：重算候选
     private func refresh() {
         if composing.isEmpty {
@@ -808,7 +792,7 @@ struct KeyboardRootView: View {
             controller.setComposing("")
             return
         }
-        enginePy = engineInput(composing)
+        enginePy = composing
         candidates = enginePy.isEmpty ? [] : InputEngine.shared.candidates(for: enginePy)
         controller.setComposing(composing)
     }
@@ -830,29 +814,18 @@ struct KeyboardRootView: View {
 
     /// 上屏一个词。若这条候选只吃掉了拼音串的一部分（比如打 jintianx 选了「今天」），
     /// 剩下的「x」继续留在串里接着拼 —— 百度就是这么干的。
-    /// 双拼模式下剩下的全拼要编回双拼键串，未成对的尾键原样保留。
     private func applyCommit(_ c: PinyinCandidate, pinyin: String) {
         controller.commit(c.word)
         let used = InputEngine.shared.commit(c, pinyin: pinyin)
         lastOutput = (c.word, false)
 
         let restPy = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
-        let pending = (dpScheme != .off && composing.count % 2 == 1)
-            ? String(composing.last!) : ""
-        if restPy.isEmpty {
-            composing = pending
-        } else if dpScheme != .off,
-                  let enc = DoublePinyin.encode(restPy, scheme: dpScheme) {
-            composing = enc + pending
-        } else {
-            // 编码失败（极端情况）：按全拼残留接着拼，功能不碎
-            composing = restPy + pending
-        }
+        composing = restPy
         if composing.isEmpty {
             // 上屏完就完 不做联想：候选拦只跟着拼音串走
             candidates = []
         } else {
-            enginePy = engineInput(composing)
+            enginePy = composing
             controller.setComposing(composing)
             candidates = enginePy.isEmpty ? [] : InputEngine.shared.candidates(for: enginePy)
         }

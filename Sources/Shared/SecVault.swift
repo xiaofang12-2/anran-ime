@@ -38,6 +38,15 @@ enum SecVault {
     private final class Token {}
     private static let owner = Bundle(for: Token.self)
 
+    /// 评测/CI 用：设了 `ANRAN_DICT_DIR` 就直接读该目录下的明文 `name.ext`，
+    /// 跳过解密。**只在命令行工具里生效**：iOS 进程拿不到这个环境变量，
+    /// 线上包永远走下面的密文路径。
+    private static var plainDir: URL? {
+        guard let p = ProcessInfo.processInfo.environment["ANRAN_DICT_DIR"],
+              !p.isEmpty else { return nil }
+        return URL(fileURLWithPath: p, isDirectory: true)
+    }
+
     static func decrypt(_ data: Data) -> Data? {
         guard data.prefix(4) == magic, data.count > 4 + 12 + 16 else { return nil }
         // 注意：这里**不能**用 data.subdata(in:) —— 那会再复制一份 27MB。
@@ -61,6 +70,11 @@ enum SecVault {
     ///   ANX2（分块，推荐）—— 流式解密，峰值内存 = 一块（约 1MB），与词库大小无关
     ///   ANAX（整包，旧）  —— 只为兼容老包，27MB 词库走这里峰值仍有 50MB 级
     static func stage(_ name: String, ext: String) -> URL? {
+        // 评测通道（见 plainDir 注释）
+        if let dir = plainDir {
+            let u = dir.appendingPathComponent("\(name).\(ext)")
+            if FileManager.default.fileExists(atPath: u.path) { return u }
+        }
         let want = "\(name).\(ext).enc"
         for u in (owner.urls(forResourcesWithExtension: "enc", subdirectory: nil)
                    ?? []) {

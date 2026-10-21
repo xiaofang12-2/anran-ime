@@ -152,8 +152,9 @@ final class PinyinEngine {
     private static let tailPen = 1.0
     /// 末音节补全最多展开多少个候选音节
     private static let tailMax = 40
-    /// 词数罚分：同样概率下「少切、长词」更贴近真实意图（你好 优于 你 好）
-    private static let wordPen = 0.5
+    /// 词数罚分：同样概率下「少切、长词」更贴近真实意图（你好 优于 你 好）。
+    /// 0.5 → 0.7：多段拼句在长输入时仍然该有（整句候选），但不该轻易压过整词。
+    private static let wordPen = 0.7
 
     private func decodeLogp(_ a: Character, _ b: Character) -> Double {
         let hi = Int(a.unicodeScalars.first?.value ?? 0) - PinyinEngine.logBase
@@ -814,6 +815,10 @@ final class PinyinEngine {
                 if ws.isEmpty { continue }
                 // 没吃完整个输入的「单字」片段纯属噪声（打 awsl 蹦出 啊/阿）
                 if j < n && ws.count == 1 && ws[0].count == 1 { continue }
+                // 短输入（≤8 字母）不掺「3 段以上拼句」：打 nihao 用户要「你好」，
+                // 不是「你/好/啊」拼出来的句子。商业输入法同样不在短串上给整句，
+                // 这条是「候选栏第一屏全是长怪句」的直接原因。
+                if n <= 8 && ws.count >= 3 { continue }
                 // 词数罚分：同样概率下「少切、长词」更贴近真实意图（你好 优于 你 好）
                 let wPen = PinyinEngine.wordPen * Double(max(0, ws.count - 1))
                 put(ws.joined(), j, sc - wPen)

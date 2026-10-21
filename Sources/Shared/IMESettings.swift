@@ -11,9 +11,6 @@ struct IMESettings: Codable, Equatable {
     var abbrevInput = true
     /// 智能纠错：按错相邻键也能出词（nihap → 你好）
     var smartCorrect = true
-    /// 双拼方案：off=全拼，flypy/mspy/sogou/nature/ziguang/abc/jiajia
-    /// （键位表见 DoublePinyinTables.swift，由 tools/gen_shuangpin.py 生成）
-    var doublePinyin = "off"
     /// 句首自动大写（英文）
     var autoCapitalize = true
     /// 按键音效
@@ -40,7 +37,7 @@ struct IMESettings: Codable, Equatable {
     static let outputSpeedRange: ClosedRange<Int> = 0...300
 
     private enum CodingKeys: String, CodingKey {
-        case fuzzyPinyin, abbrevInput, smartCorrect, doublePinyin, autoCapitalize
+        case fuzzyPinyin, abbrevInput, smartCorrect, autoCapitalize
         case keySound, vibration, candidateCount, outputSpeed
         case clearLearnToken, tailEnabled, tailSymbol, rev
     }
@@ -53,7 +50,6 @@ struct IMESettings: Codable, Equatable {
         fuzzyPinyin     = try c.decodeIfPresent(Bool.self, forKey: .fuzzyPinyin) ?? true
         abbrevInput     = try c.decodeIfPresent(Bool.self, forKey: .abbrevInput) ?? true
         smartCorrect    = try c.decodeIfPresent(Bool.self, forKey: .smartCorrect) ?? true
-        doublePinyin    = try c.decodeIfPresent(String.self, forKey: .doublePinyin) ?? "off"
         autoCapitalize  = try c.decodeIfPresent(Bool.self, forKey: .autoCapitalize) ?? true
         keySound        = try c.decodeIfPresent(Bool.self, forKey: .keySound) ?? true
         vibration       = try c.decodeIfPresent(Bool.self, forKey: .vibration) ?? false
@@ -73,7 +69,6 @@ struct IMESettings: Codable, Equatable {
                             IMESettings.outputSpeedRange.upperBound)
         if s.tailSymbol.count > 1 { s.tailSymbol = String(s.tailSymbol.prefix(1)) }
         // 双拼方案校验：存了不认识的值当全拼，别让键盘卡在解码不了的状态
-        if DoublePinyinScheme(rawValue: s.doublePinyin) == nil { s.doublePinyin = "off" }
         return s
     }
 }
