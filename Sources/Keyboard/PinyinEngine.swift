@@ -1279,10 +1279,13 @@ final class PinyinEngine {
             v.remove(at: i)
             add(String(v), 1.6)
         }
-        // 4) 漏打一个字母（在相邻键里补一个进去）
+        // 4) 漏打一个字母：候选字母 = 前一个字母的邻键 + 全部元音 + n/g。
+        //    只补邻键是不够的：duibqi 少的是 u（b 的邻键里没有），
+        //    wanshan 少的是 g（n 的邻键里也没有），这两类恰恰最常见。
         for i in 0...chars.count {
-            let src = i > 0 ? PinyinEngine.keyNeighbors[chars[i - 1]] : nil
-            for c in (src ?? "aeioun") {
+            let nb = i > 0 ? (PinyinEngine.keyNeighbors[chars[i - 1]] ?? "") : ""
+            let src = Array(Set(Array(nb) + Array("aeioung")))
+            for c in src {
                 var v = chars
                 v.insert(c, at: i)
                 add(String(v), 2.0)
