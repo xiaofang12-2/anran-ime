@@ -22,11 +22,11 @@ import Darwin
 // ---------------------------------------------------------------- 预算
 
 enum Budget {
-    static let wordTop1: Double = 0.92       // 双字词首位
+    static let wordTop1: Double = 0.96       // 双字词首位（实测 98.5%）
     static let wordTop3: Double = 0.99
     static let shortTop1: Double = 0.70      // 短输入首位
-    static let sentenceTop1: Double = 0.60   // 长句整句
-    static let sentenceTop3: Double = 0.80   // 长句进前三
+    static let sentenceTop1: Double = 0.80   // 长句/句级整句（实测 真实口语 83.5%）
+    static let sentenceTop3: Double = 0.90   // 长句进前三（实测 96.2%）
     static let typoTop3: Double = 0.80       // 错拼进前三
     static let noiseShare: Double = 0.20     // 长候选占屏上限
     static let p95Ms: Double = 50            // 单键解码 P95
@@ -153,7 +153,8 @@ func check(_ r: Result, _ label: String,
     let r1 = Double(r.hit1) / n, r3 = Double(r.hit3) / n
     print(String(format: "[%@] n=%d  首位 %.1f%%  前三 %.1f%%  解码 P50 %.1fms P95 %.1fms max %.1fms",
                  label, r.total, r1 * 100, r3 * 100, r.t0, r.t95, r.tMax))
-    for f in r.fails.prefix(6) { print("    ✗ " + f) }
+    let show = r1 < 1.0 || r3 < 1.0
+    if show { for f in r.fails.prefix(6) { print("    ✗ " + f) } }
     let pass = r1 >= top1 && r3 >= top3
     print(pass ? "[\(label)] PASS" : "[\(label)] FAIL（阈值 首位≥\(Int(top1*100))% 前三≥\(Int(top3*100))%）")
     return pass
