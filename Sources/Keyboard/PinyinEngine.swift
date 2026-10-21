@@ -170,6 +170,17 @@ final class PinyinEngine {
         loadUser()
     }
 
+    // MARK: - 诊断（仅 CI 评测用）
+
+    /// 设了 `ANRAN_TRACE=1` 才输出，正常运行零开销。
+    /// 用途：命令行评测里崩了要能精确到函数（lldb 的 backtrace 在这种环境里拿不全）。
+    private static let tracing = ProcessInfo.processInfo.environment["ANRAN_TRACE"] != nil
+
+    private func tr(_ s: @autoclosure () -> String) {
+        guard PinyinEngine.tracing else { return }
+        FileHandle.standardError.write(Data(("[T] " + s() + "\n").utf8))
+    }
+
     // MARK: - 词库加载
     //
     // 分成两档，这是「按键就跳走」的核心修复：
@@ -186,6 +197,7 @@ final class PinyinEngine {
         if metaLoaded { return }
         metaLoaded = true
 
+        tr("meta: stage assoc")
         let assocStaged = SecVault.stage("assoc", ext: "bin")
         if let url = assocStaged {
             loadAssoc(url)
@@ -193,6 +205,7 @@ final class PinyinEngine {
         SecVault.dispose(assocStaged)
 
         // 词级 n-gram（升级版上下文项）：缺失不影响，打分退回字级 bigram
+        tr("meta: stage assoc_w")
         let wStaged = SecVault.stage("assoc_w", ext: "bin")
         if let url = wStaged {
             loadAssocW(url)
@@ -200,6 +213,7 @@ final class PinyinEngine {
         SecVault.dispose(wStaged)
 
         // 百度内置词条 cell（口语片段/成语/软件名）：缺了不影响主链路
+        tr("meta: stage seed")
         let seedStaged = SecVault.stage("seed", ext: "bin")
         if let url = seedStaged {
             loadSeed(url)
@@ -216,6 +230,7 @@ final class PinyinEngine {
         dictTried = true
 
         // 词库在包里是密文（SecVault）：流式解到临时文件 -> 内存映射 -> 立刻删盘
+        tr("dict: stage pinyin")
         let staged = SecVault.stage("pinyin", ext: "bin")
         if let url = staged,
            let d = try? Data(contentsOf: url, options: .mappedIfSafe),
@@ -224,7 +239,9 @@ final class PinyinEngine {
             entryCount = u32(8)
             keyOffTable = u32(12)
             valOffTable = u32(16)
+            tr("dict: mmap ok, entries=\(entryCount)")
             loadSyllables()
+            tr("dict: syllables=\(syllableSet.count)")
             ready = true
             clearCache()
         }
@@ -806,10 +823,12 @@ final class PinyinEngine {
             for c in seedCandidates(input) { put(c.word, n, c.logp, pri: true) }
         }
 
+        tr("decode: n=\(n) splitOK=\(splitOK) cands=\(cands.count)")
         // 3) 词图 Beam Search：句子 / 前缀片段
         //    超长输入（误触长按、粘贴整段）直接跳过：代价是 O(n·width·edges)，
         //    40 个字母以上就会把扩展主线程卡到被系统打断，宁可只给前缀候选。
         let states = n <= 40 ? beam(chars) : []
+        tr("decode: beam done")
         for j in 1...n {
             for (sc, ws) in states[j] {
                 if ws.isEmpty { continue }

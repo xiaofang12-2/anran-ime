@@ -43,7 +43,7 @@ jobs:
             Sources/Keyboard/PinyinEngine.swift \
             Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
           # 崩了要能看到调用栈：lldb 跑一遍，backtrace 直接进日志
-          ANRAN_DICT_DIR=/tmp/evaldict lldb -b \
+          ANRAN_TRACE=1 ANRAN_DICT_DIR=/tmp/evaldict lldb -b \
             -o "run" -o "thread backtrace all" -o "quit" -- /tmp/evalbin 2>&1 | tee /tmp/eval.log
           # lldb 的退出码不可靠，用日志判断：必须出现 PASS
           grep -q "PASS" /tmp/eval.log
