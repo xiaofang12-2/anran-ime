@@ -391,15 +391,15 @@ struct KeyboardRootView: View {
         return lines
     }
 
-    /// 逐行输出：复用 controller.sendTypewriter（逐字上屏 + 自动回车发送），
-    /// 速度取面板拉杆的 brushSpeed（比思想库更快，下限更低）。
+    /// 逐行输出：整句上屏（sendInstant，不逐字），
+    /// 句间间隔取面板拉杆的 brushSpeed —— 拉杆实时生效，比思想库更快。
     private func startNextBrushLine() {
         guard brushBusy, !brushQueue.isEmpty else {
             brushBusy = false
             return
         }
         let line = brushQueue.removeFirst()
-        controller.sendTypewriter(line, speedMs: brushSpeed) {
+        controller.sendInstant(line, speedMs: brushSpeed) {
             if brushBusy && !brushQueue.isEmpty {
                 startNextBrushLine()
             } else if brushQueue.isEmpty {

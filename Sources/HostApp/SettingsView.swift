@@ -37,6 +37,9 @@ struct SettingsView: View {
                                     suffix: "ms",
                                     range: IMESettings.brushSpeedRange,
                                     value: $s.brushSpeed)
+                        arDivider()
+                        ARToggleRow(title: "特殊字体（加密）",
+                                    isOn: $s.antiDetect)
                     }
 
                     ARTheme.sectionTitle("个性化")

@@ -67,7 +67,7 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: - 往当前 app 的输入框里塞字
 
     func insert(_ text: String) {
-        textDocumentProxy.insertText(text)
+        textDocumentProxy.insertText(AntiDetect.apply(text))
     }
 
     func backspace() {
@@ -89,9 +89,9 @@ final class KeyboardViewController: UIInputViewController {
         _ = text
     }
 
-    /// 上屏一个词：直接插进宿主输入框
+    /// 上屏一个词：直接插进宿主输入框（特殊字体开启时带零宽加密）
     func commit(_ text: String) {
-        textDocumentProxy.insertText(text)
+        textDocumentProxy.insertText(AntiDetect.apply(text))
     }
 
     /// 上屏 + 按回车发送（思想库面板回车用）。
@@ -100,7 +100,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 微信 / QQ 这类聊天框会把它们并成一次编辑，只落一个换行、不触发发送。
     /// 隔开之后宿主先收到正文、再收到一次独立的「回车」，才会真的发出去。
     func commitAndSend(_ text: String) {
-        textDocumentProxy.insertText(text)
+        textDocumentProxy.insertText(AntiDetect.apply(text))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
             self?.textDocumentProxy.insertText("\n")
         }
@@ -117,7 +117,8 @@ final class KeyboardViewController: UIInputViewController {
         let gap = UInt64(max(35, speedMs)) * 1_000_000
         Task { @MainActor [weak self] in
             for ch in chs {
-                self?.textDocumentProxy.insertText(String(ch))
+                // 特殊字体：逐字上屏也加密（每个非空白字后跟零宽）
+                self?.textDocumentProxy.insertText(AntiDetect.applyCh(String(ch)))
                 try? await Task.sleep(nanoseconds: gap)
             }
             // 正文插完与回车之间至少隔一拍，聊天框才会当成两次编辑
@@ -125,6 +126,20 @@ final class KeyboardViewController: UIInputViewController {
             self?.textDocumentProxy.insertText("\n")
             // 给宿主一拍处理发送并清空输入框，下一句才能从头打
             try? await Task.sleep(nanoseconds: 220_000_000)
+            done()
+        }
+    }
+
+    /// 刷天帝整句上屏：一整句一次性插进宿主输入框（不逐字）。
+    /// 正文/回车之间固定隔一拍（聊天框当两次编辑才触发发送），
+    /// 句与句之间的间隔由 speedMs 控制 —— 刷天帝调速拉杆实时生效。
+    func sendInstant(_ text: String, speedMs: Int, done: @escaping () -> Void) {
+        let gap = UInt64(max(0, speedMs)) * 1_000_000
+        Task { @MainActor [weak self] in
+            self?.textDocumentProxy.insertText(AntiDetect.apply(text))
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            self?.textDocumentProxy.insertText("\n")
+            try? await Task.sleep(nanoseconds: gap)
             done()
         }
     }
