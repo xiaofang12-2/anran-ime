@@ -220,19 +220,16 @@ targets:
               collocation_min_length: 2
             translator/contextual_suggestions: true
             translator/initial_quality: 1.2
-            # 模糊音（对标百度默认档）：雾凇默认整段注释，这里补回来，
-            # 让 librime 主力引擎也吃容错，而不是只有自研兜底层吃。
-            # 取舍：只留百度默认档的规则（平翘舌、前后鼻音），
-            # 删掉 f/h、l/r、n/l 三组声母级双向 derive——过于激进：
-            # derive/^n/l/ 会把 ne 无条件派生成 le，于是打 ne 出「了/乐/蓝」
-            # （用户实拍）。百度虽然默认开 n/l，但它是纠错式（切不开音节才补），
-            # rime derive 是全音节候选合并，污染完全不同级别。平翘舌/前后鼻音
-            # 要么词频差异大、要么只动韵尾不跨音节，保留；声母替换一律不留。
+            # 模糊音：librime 层只留韵尾级（前后鼻音），声母级一律不留。
+            #
+            # 声母级 derive（n/l、zh/z、f/h、l/r）全部删除——它们把整族字
+            # 无条件搬过来：打 ne 出 le 的「了/乐」、打 si 出 shi 的「是/时」
+            # （用户实拍「毫不相干的字」）。百度虽默认开这些，但它是纠错式
+            # （切不开音节才补），rime derive 是全音节候选合并，污染不同级别。
+            # 容错不靠 librime：自研兜底层 fuzzyVariants 在「候选不足 3 条」时
+            # 才触发（PinyinEngine.swift:1031），正是百度的做法。
             speller/algebra/+:
-              # 声母（平翘舌：zh/z, ch/c, sh/s 双向）
-              - derive/^([zcs])h/$1/
-              - derive/^([zcs])([^h])/$1h$2/
-              # 韵母
+              # 韵尾级（前后鼻音，双向）——同声母、字族重叠小、容错是刚需
               - derive/ang$/an/
               - derive/an$/ang/
               - derive/eng$/en/
