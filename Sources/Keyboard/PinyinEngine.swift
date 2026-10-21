@@ -138,12 +138,14 @@ final class PinyinEngine {
     // 语言模型量化参数（与 build_assoc.py 一一对应）
     private static let lmFloor = -12.0
     private static let lmRef = -3.5
-    private static let lmWeight = 0.3
+    private static let lmWeight = 0.6        // 字级 bigram 权重（在/再、着/这 靠它）
 
     // 词级 LM 量化参数（与 build_assoc_w.py 一一对应）
     private static let wlmFloor = -10.0
     private static let wlmRef = -3.0
-    private static let wlmWeight = 0.35
+    private static let wlmWeight = 0.8       // 词级 bigram 权重（真实搭配靠它）
+    private static let wlmPenCap = 3.0       // 单次接续罚分上限
+    private static let lmPenCap = 2.5        // 单次字接续罚分上限
 
     /// 终极兜底：任何字母串都必须出汉字，绝不让面板只剩英文。
     /// 音节起头的 u / i / ü 的规范写法 —— 词库里没有 u/i/v 开头的拼音键，
@@ -456,7 +458,11 @@ final class PinyinEngine {
     private func wordPenalty(_ prev: String, _ fol: String) -> Double? {
         guard let p = wlmLP(prev, fol) else { return nil }
         if p >= PinyinEngine.wlmRef { return 0 }
-        return PinyinEngine.wlmWeight * (PinyinEngine.wlmRef - p)
+        // 封顶：LM 里没有的搭配只说明「没见过」，不等于错。
+        // 不封顶的话任何见过的搭配都能碾压更好的词（打 kendinghui 会为了
+        // 「肯定→会」而牺牲更合理的切分）。
+        return min(PinyinEngine.wlmWeight * (PinyinEngine.wlmRef - p),
+                   PinyinEngine.wlmPenCap)
     }
 
     /// 用户自己的接续习惯：常这么打就给负罚分（等价加分）。
@@ -495,7 +501,8 @@ final class PinyinEngine {
     private func lmPenalty(_ ctx: Character, _ fol: Character) -> Double {
         let lp = lm[String(ctx)]?[String(fol)] ?? PinyinEngine.lmFloor
         if lp >= PinyinEngine.lmRef { return 0 }
-        return PinyinEngine.lmWeight * (PinyinEngine.lmRef - lp)
+        return min(PinyinEngine.lmWeight * (PinyinEngine.lmRef - lp),
+                   PinyinEngine.lmPenCap)
     }
 
     // MARK: - 二进制读取（小端）
@@ -1067,13 +1074,13 @@ final class PinyinEngine {
         let width: Int
         let edgeCap: Int
         if n <= 6 {
-            width = 18; edgeCap = 2600
-        } else if n <= 12 {
             width = 20; edgeCap = 2600
+        } else if n <= 12 {
+            width = 24; edgeCap = 2600
         } else if n <= 20 {
-            width = 14; edgeCap = 1800
+            width = 20; edgeCap = 2200
         } else {
-            width = 10; edgeCap = 1200
+            width = 14; edgeCap = 1600
         }
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
