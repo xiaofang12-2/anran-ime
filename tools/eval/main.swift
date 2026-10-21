@@ -26,6 +26,7 @@ enum Budget {
     static let wordTop3: Double = 0.99
     static let shortTop1: Double = 0.70      // 短输入首位
     static let sentenceTop1: Double = 0.60   // 长句整句
+    static let sentenceTop3: Double = 0.80   // 长句进前三
     static let typoTop3: Double = 0.80       // 错拼进前三
     static let noiseShare: Double = 0.20     // 长候选占屏上限
     static let p95Ms: Double = 50            // 单键解码 P95
@@ -38,11 +39,15 @@ enum Budget {
 
 struct Case { let py: String; let want: String; let cat: String }
 
-func loadCasesFile() -> [Case] {
-    let env = ProcessInfo.processInfo.environment["ANRAN_CASES"]
+func loadCasesFile(_ name: String = "cases.tsv") -> [Case] {
+    // 环境变量只覆盖主用例文件；句级用例按同名目录找
+    let env = name == "cases.tsv"
+        ? ProcessInfo.processInfo.environment["ANRAN_CASES"] : nil
+    var dir = "tools/eval"
+    if let e = env { dir = (e as NSString).deletingLastPathComponent }
     // 多个候选路径：CI 里 cwd 可能是仓库根，也可能被 lldb 改掉
-    let paths = [env, "tools/eval/cases.tsv",
-                 "../tools/eval/cases.tsv", "../../tools/eval/cases.tsv"]
+    let paths = [env, "\(dir)/\(name)", "../\(dir)/\(name)",
+                 "../../\(dir)/\(name)", "tools/eval/\(name)"]
         .compactMap { $0 }
     var text: String?
     var used = ""
@@ -166,6 +171,10 @@ func peakRSSMB() -> Double {
 let corpus = loadCasesFile()
 print("词库用例：\(corpus.count) 条（\(Set(corpus.map { $0.cat }).sorted().joined(separator: "/"))）")
 
+// 句级用例：连续输入（无空格），期望值由词库反查拼音生成
+let sentCorpus = loadCasesFile("sentences.tsv")
+print("句级用例：\(sentCorpus.count) 条（\(Set(sentCorpus.map { $0.cat }).sorted().joined(separator: "/"))）")
+
 // 冷启动：第一条会把词库解密 + mmap + 音节表建起来
 let cold0 = CFAbsoluteTimeGetCurrent()
 _ = PinyinEngine.shared.candidates(for: "ceshi")
@@ -181,6 +190,17 @@ for cat in ["w2", "w3", "w4"] {
 }
 if !check(measure(shortCases), "短输入", top1: Budget.shortTop1, top3: 0.90) { ok = false }
 if !check(measure(sentenceCases), "长句", top1: Budget.sentenceTop1, top3: 0.85) { ok = false }
+for cat in ["s1", "s2", "s3"] {
+    let sub = sentCorpus.filter { $0.cat == cat }.map { ($0.py, $0.want) }
+    if sub.isEmpty { continue }
+    // s1 = 真人会打的句子，硬门禁；s2/s3 = LM 生成搭配，只观测不判红
+    if cat == "s1" {
+        if !check(measure(sub), "句级-真实口语", top1: Budget.sentenceTop1,
+                  top3: Budget.sentenceTop3) { ok = false }
+    } else {
+        _ = check(measure(sub), "句级-LM\(cat)", top1: 0.0, top3: 0.0)
+    }
+}
 if !check(measure(typoCases), "错拼", top1: 0.30, top3: Budget.typoTop3) { ok = false }
 
 // 性能总账：拿全量词库用例的延迟分布

@@ -80,6 +80,14 @@ final class PinyinEngine {
     private var wlmCount = 0
     private var wlmKeyTbl = 0
     private var wlmValTbl = 0
+
+    /// 词级 LM 的「后继集合」解析缓存：把 blob 一次性解析成字典。
+    /// 原来每次 wordPenalty 都要 split + 逐条 UTF-8 解码（每次至少 1 次堆分配），
+    /// 而 beam 内层是 O(状态 × 边) 次调用 —— 这就是宽度只能压到 6~8 的根本原因。
+    /// 变成 O(1) 查表后，beam 才敢放宽度换精度。
+    private var wlmMemo: [String: [String: Double]] = [:]
+    private var wlmMemoQ: [String] = []
+    private static let wlmMemoMax = 1024
     private var wlmKeyBlk = 0
     private var wlmValBlk = 0
 
@@ -420,11 +428,26 @@ final class PinyinEngine {
     /// 取 (前词, 后继词) 的条件对数概率；前词不在表里返回 nil（调用方退回字级 bigram），
     /// 前词在表但后继词不在其后继集合里返回 wlmFloor（最不常见接续）。
     private func wlmLP(_ prev: String, _ fol: String) -> Double? {
+        if let m = wlmMemo[prev] { return m[fol] ?? PinyinEngine.wlmFloor }
         guard let blob = wlmValBlob(for: prev) else { return nil }
+        var m: [String: Double] = [:]
+        m.reserveCapacity(16)
         for seg in blob.split(separator: 0x01) {
-            if let (w, lp) = wlmParseEntry(seg), w == fol { return lp }
+            if let (w, lp) = wlmParseEntry(seg) { m[w] = lp }
         }
-        return PinyinEngine.wlmFloor
+        memoizeSuccessors(prev, m)
+        return m[fol] ?? PinyinEngine.wlmFloor
+    }
+
+    /// FIFO 淘汰（不做真 LRU：这里命中率对顺序不敏感，省一次链表维护）
+    private func memoizeSuccessors(_ prev: String, _ m: [String: Double]) {
+        if wlmMemoQ.count >= PinyinEngine.wlmMemoMax {
+            let drop = wlmMemoQ.count / 2
+            for i in 0..<drop { wlmMemo.removeValue(forKey: wlmMemoQ[i]) }
+            wlmMemoQ.removeFirst(drop)
+        }
+        wlmMemo[prev] = m
+        wlmMemoQ.append(prev)
     }
 
     /// 词级上下文项：前词 -> 后继词。命中返回罚分（>=0），没见过的接续（前词不在表）
@@ -436,6 +459,14 @@ final class PinyinEngine {
         return PinyinEngine.wlmWeight * (PinyinEngine.wlmRef - p)
     }
 
+    /// 用户自己的接续习惯：常这么打就给负罚分（等价加分）。
+    /// 商业输入法的「按你的用词习惯排序」必须作用在 beam 内部 ——
+    /// 只在最后重排的话，你的习惯切分早在剪枝阶段就被丢掉了。
+    private func userPenalty(_ prev: String, _ fol: String) -> Double {
+        guard let m = userBigram[prev], let c = m[fol], c > 0 else { return 0 }
+        return -min(Double(c), 8.0) * 0.45
+    }
+
     /// 词级接续亲和度：prev 之后接 fol 在词级 LM 里算不算常见接续（0/1）。
     /// internal：InputEngine.contextBoost 跨文件调用。
     func wordAffinity(_ prev: String, _ fol: String) -> Double {
@@ -445,12 +476,18 @@ final class PinyinEngine {
 
     /// 上屏联想用：返回前词的所有后继词（按概率降序）。
     private func wlmSuccessors(_ prev: String) -> [(String, Double)] {
-        guard let blob = wlmValBlob(for: prev) else { return [] }
-        var out: [(String, Double)] = []
-        for seg in blob.split(separator: 0x01) {
-            if let (w, lp) = wlmParseEntry(seg) { out.append((w, lp)) }
+        var m = wlmMemo[prev]
+        if m == nil {
+            guard let blob = wlmValBlob(for: prev) else { return [] }
+            var built: [String: Double] = [:]
+            built.reserveCapacity(16)
+            for seg in blob.split(separator: 0x01) {
+                if let (w, lp) = wlmParseEntry(seg) { built[w] = lp }
+            }
+            memoizeSuccessors(prev, built)
+            m = built
         }
-        return out.sorted { $0.1 > $1.1 }
+        return (m ?? [:]).sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
     }
 
     /// 上下文项：上一个词的尾字接到这个词的头字，返回罚分（>= 0）。
@@ -1021,17 +1058,18 @@ final class PinyinEngine {
         //   13~20    → 10 / 1200（整句为主，够用且稳在 25ms 内）
         //   >20      → 8  / 800 （超长句只求「有个合理整句」，不追极致）
         // 实测：14/1500 时长句 P50 41ms，对按键太慢。
+        // 宽度是「首屏句子质量」的第一决定项。原来被 wlmLP 的逐条解析拖住，
+        // 只能压到 6~12；LM 改成 O(1) 查表后，同预算下可以放到 16~20。
         let width: Int
         let edgeCap: Int
         if n <= 6 {
-            width = 12; edgeCap = 2000
+            width = 18; edgeCap = 2600
         } else if n <= 12 {
-            // 7~12 字母（双字/三字词为主）：12/1500 足够，实测首位仍 100%
-            width = 12; edgeCap = 1500
+            width = 20; edgeCap = 2600
         } else if n <= 20 {
-            width = 8; edgeCap = 900
+            width = 14; edgeCap = 1800
         } else {
-            width = 6; edgeCap = 600
+            width = 10; edgeCap = 1200
         }
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
@@ -1064,6 +1102,7 @@ final class PinyinEngine {
                         } else if let lc = pw.last, let fc = e.word.first {
                             pen = lmPenalty(lc, fc)
                         }
+                        pen += userPenalty(pw, e.word)
                     }
                     states[e.j].append((sc + e.logp - pen, ws + [e.word]))
                 }
