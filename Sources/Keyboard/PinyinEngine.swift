@@ -705,7 +705,7 @@ final class PinyinEngine {
         // 策展缩写词（整串切不成音节时才用，跟全量路径同一套判断）。
         // 依赖主词库的音节表与缩写表，词库没加载就跳过（不能拿空音节集误判）。
         if ready, set.abbrevInput, !splitsIntoSyllables(input) {
-            for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true, tier: 4) }
+            for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true, tier: 3) }
         }
         // 用户记忆词：完整命中顶最前；打在半路上（niha）也召回学过的整词（nihao→你好）
         for (w, lp) in userWordHits(input) { put(w, n, lp, pri: true) }
@@ -959,18 +959,18 @@ final class PinyinEngine {
             }
             // nb/sb/tm/wx/nh 这类两字母缩写切不成音节，走缩写表
             if set.abbrevInput && !splitOK {
-                for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true, tier: 4) }
+                for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true, tier: 3) }
             }
             // 单字母 u/i/v、两字母乱码（ik/ul/vz）这些也必须有汉字
             if cands.isEmpty {
-                for c in fallback(input) { put(c.word, n, c.logp, tier: 6) }
+                for c in fallback(input) { put(c.word, n, c.logp, tier: 4) }
             }
             return rank(&cands, input, limit: set.candidateCount, phraseHits: phraseHits)
         }
 
         // 2) 前缀补全词：拼音以 input 开头的词（你好 → 你好啊/你好吗）
         for c in prefixWords(input) {
-            put(c.word, n, c.logp, tier: 2)
+            put(c.word, n, c.logp, tier: 1)
         }
 
         // 2.5) 百度内置词条 cell：整串精确命中直接上来。
@@ -997,9 +997,7 @@ final class PinyinEngine {
                 if n <= 8 && ws.count >= 3 { continue }
                 // 词数罚分：同样概率下「少切、长词」更贴近真实意图（你好 优于 你 好）
                 let wPen = PinyinEngine.wordPen * Double(max(0, ws.count - 1))
-                // 0=单词精确命中  1=多段完整覆盖(拼句)  2=部分覆盖片段
-                put(ws.joined(), j, sc - wPen,
-                    tier: j == n ? (ws.count == 1 ? 0 : 1) : 2)
+                put(ws.joined(), j, sc - wPen, tier: j == n ? 0 : 1)
             }
         }
 
@@ -1008,21 +1006,21 @@ final class PinyinEngine {
         if !splitOK {
             for v in tailCompletions(input) {
                 let d = PinyinEngine.tailPen * Double(v.count - n)
-                for c in prefixWords(v) { put(c.word, n, c.logp - d, tier: 2) }
+                for c in prefixWords(v) { put(c.word, n, c.logp - d, tier: 1) }
             }
         }
 
         // 5) 缩写/混拼：整串切不成完整音节时才用（xbzz / nmsl / wsnb / wosnb）。
         //    缩写是「猜」，罚 abbrPen 保证真音节读法压过它。
         if set.abbrevInput && !splitOK {
-            for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true, tier: 4) }
+            for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true, tier: 3) }
         }
 
         // 6) 模糊音兜底：主串候选不足 3 条才掺和
         if set.fuzzyPinyin && cands.count < 3 {
             for (vi, variant) in fuzzyVariants(input).enumerated() where vi > 0 {
                 for c in prefixWords(variant) {
-                    put(c.word, n, c.logp - Double(vi) * 1.0, tier: 4)
+                    put(c.word, n, c.logp - Double(vi) * 1.0, tier: 3)
                 }
             }
         }
@@ -1044,7 +1042,7 @@ final class PinyinEngine {
             // 关键校验：候选字数必须等于纠正串的音节数。
             // 否则「对白」（2 字）会冒充 duibuqi（3 音节）的整串解，
             // 把真正的「对不起」压下去 —— duibqi 那条用例就是这么挂的。
-            let ctier = 5
+            let ctier = splitOK ? 2 : 1
             var added = 0
             for v in correctedVariants(input) {
                 let syl = syllableCount(v.variant)
@@ -1060,7 +1058,7 @@ final class PinyinEngine {
         // 8) 终极兜底：查完还是没汉字（乱按 qwert/zxcvb 这种），退到最长能出字的
         //    前缀顶上。任何字母串都必须有汉字候选，绝不让面板只剩英文。
         if cands.isEmpty {
-            for c in fallback(input) { put(c.word, n, c.logp, tier: 6) }
+            for c in fallback(input) { put(c.word, n, c.logp, tier: 4) }
         }
 
         // 9) 用户自己记下的词：同样的拼音直接顶到最前；拼音前缀命中也召回
@@ -1331,7 +1329,7 @@ final class PinyinEngine {
         // 策展词加成（微信/呵呵 这类：rime 词频口径偏旧，本就排在生僻同音词后面）。
         // 只抬分数不改词库字节，所以不会破坏「同键显示顺序」的既有保证。
         if !CuratedWords.set.isEmpty {
-            for (w, v) in cands where CuratedWords.set.contains(w) {
+            for (w, v) in cands where w.count >= 2 && CuratedWords.set.contains(w) {
                 let lifted = min(v.lp + CuratedWords.boost, CuratedWords.ceiling)
                 if lifted > v.lp {
                     cands[w] = (v.cov, lifted, v.pri, v.tier)
@@ -1343,11 +1341,12 @@ final class PinyinEngine {
         // 排序三级：覆盖度（吃完全串的在前）→ 分档（精确词 > 前缀补全 > 兜底 > 缩写 > 纠错）
         // → 每字平均 logP（librime 的 LeftAssociateCompare 思路）→ 短词优先。
         items.sort { a, b in
-            // tier 先于覆盖度：打 ne 时「呢」（精确词，cov=2）必须压过
-            // 尾巴补全出来的「能」（neng，cov=4）—— 原来 cov 优先，
-            // 补全因为吃掉的字母多，反而排到了精确匹配前面。
-            if a.tier != b.tier { return a.tier < b.tier }
+            // 覆盖度优先，再分档。
+            // 试过把 tier 提到 cov 前面（想让「精确词」压过「补全」），
+            // 但实测纠错候选会被前缀补全挤掉：nihap → 「你哈」而不是「你好」，
+            // 错拼首位从 80% 掉到 20%。所以维持 cov 优先。
             if a.cov != b.cov { return a.cov > b.cov }
+            if a.tier != b.tier { return a.tier < b.tier }
             let na = a.lp / Double(a.cov)
             let nb = b.lp / Double(b.cov)
             if na != nb { return na > nb }
