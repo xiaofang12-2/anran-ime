@@ -393,16 +393,24 @@ final class PinyinEngine {
         if lo < wlmCount, wlmKeyAt(lo) == prev {
             let a = u32from(d, wlmValTbl + 4 * lo)
             let b = u32from(d, wlmValTbl + 4 * (lo + 1))
-            return d.subdata(in: a..<b)
+            guard a >= 0, b > a, b <= d.count else { return nil }
+            // 返回切片而不是 subdata：subdata 会复制（每次查询最多几 KB，
+            // 但按键是热路径，能省就省）。切片的下标是绝对下标，
+            // wlmParseEntry 已按 first/dropFirst 处理。
+            return d[a..<b]
         }
         return nil
     }
 
     /// 解析单条后继 entry：[概率字节][后继词 UTF8] -> (词, 条件对数概率)
+    ///
+    /// ⚠️ 必须用 first/dropFirst，**不能用 seg[0]**：`split` 出来的每个元素是
+    /// 原 Data 的**切片**，startIndex 不是 0（第二条起就大于 0），
+    /// 用绝对下标会直接越界崩溃 —— 表现为「打着打着键盘消失、切回上一输入法」。
     private func wlmParseEntry(_ seg: Data) -> (String, Double)? {
-        guard seg.count >= 2 else { return nil }
-        let code = Int(seg[0])
-        let word = String(decoding: seg[1..<seg.count], as: UTF8.self)
+        guard seg.count >= 2, let first = seg.first else { return nil }
+        let code = Int(first)
+        let word = String(decoding: seg.dropFirst(), as: UTF8.self)
         guard !word.isEmpty else { return nil }
         let lp = PinyinEngine.wlmFloor
             + (Double(code) - 2) / 253.0 * (0 - PinyinEngine.wlmFloor)
