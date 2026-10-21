@@ -899,14 +899,24 @@ final class PinyinEngine {
             // 以前只在 cands 为空时才纠错 —— 但兜底/尾补全总能凑出几个垃圾词，
             // 这条分支几乎永远不执行：用户打 nihap 只能看到「纽汉浦」。
             // 现在「整串切不成音节」就纠错，而且分档压过尾补全与兜底。
+            // 注意：correctedVariants 是按「位置从左到右」生成的，
+            // 打错在最后一个字母时正解排在很后面。所以**不能**按命中数提前 break，
+            // 只按「罚分」筛（邻键替换/相邻打反最可能），删键/漏键放第二轮。
             let ctier = splitOK ? 2 : 1
-            var got = 0
-            for v in correctedVariants(input).prefix(8) {
-                for c in prefixWords(v.variant) {
+            var added = 0
+            for v in correctedVariants(input) where v.pen <= 1.3 {
+                for c in prefixWords(v.variant, perKey: 3) {
                     put(c.word, n, c.logp - v.pen, tier: ctier)
-                    got += 1
+                    added += 1
                 }
-                if got >= 8 { break }
+                if added >= 30 { break }
+            }
+            if added == 0 {
+                for v in correctedVariants(input).prefix(14) {
+                    for c in prefixWords(v.variant, perKey: 2) {
+                        put(c.word, n, c.logp - v.pen, tier: ctier)
+                    }
+                }
             }
         }
 
@@ -1004,11 +1014,20 @@ final class PinyinEngine {
         // 不是最优解 —— 这正是「长句组句不如百度」的直接原因。放到 14 / 1800：
         // 实测仍是一次按键毫秒级（states[i] 大多为空，边缘惰性展开），
         // 换来的候选质量提升远大于这点开销。
-        // 长句（>12 字母）：0.9.31 曾放大到 14/1800，长句候选确实更全，
-        // 但每次按键的分配量跟着涨（每个状态都复制一份路径数组），
-        // 在扩展里会推高内存峰值。回退到 12/1500 —— 拿回一半收益，风险减半。
-        let width = n > 12 ? 12 : min(20, max(12, n * 2))
-        let edgeCap = n > 12 ? 1500 : 3000
+        // 宽度/配额按长度分级：
+        //   ≤12 字母  → 12 / 3000（短输入要全，延迟本来就低）
+        //   13~20    → 10 / 1200（整句为主，够用且稳在 25ms 内）
+        //   >20      → 8  / 800 （超长句只求「有个合理整句」，不追极致）
+        // 实测：14/1500 时长句 P50 41ms，对按键太慢。
+        let width: Int
+        let edgeCap: Int
+        if n <= 12 {
+            width = min(20, max(12, n * 2)); edgeCap = 3000
+        } else if n <= 20 {
+            width = 10; edgeCap = 1200
+        } else {
+            width = 8; edgeCap = 800
+        }
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
         var states = [[(Double, [String])]](repeating: [], count: n + 1)

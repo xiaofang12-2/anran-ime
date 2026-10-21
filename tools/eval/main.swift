@@ -39,14 +39,26 @@ enum Budget {
 struct Case { let py: String; let want: String; let cat: String }
 
 func loadCasesFile() -> [Case] {
-    let path = ProcessInfo.processInfo.environment["ANRAN_CASES"]
-        ?? "tools/eval/cases.tsv"
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
-        print("!! 读不到用例文件：\(path)")
+    let env = ProcessInfo.processInfo.environment["ANRAN_CASES"]
+    // 多个候选路径：CI 里 cwd 可能是仓库根，也可能被 lldb 改掉
+    let paths = [env, "tools/eval/cases.tsv",
+                 "../tools/eval/cases.tsv", "../../tools/eval/cases.tsv"]
+        .compactMap { $0 }
+    var text: String?
+    var used = ""
+    for p in paths {
+        if let t = try? String(contentsOfFile: p, encoding: .utf8) {
+            text = t; used = p; break
+        }
+    }
+    guard let body = text else {
+        print("!! 读不到用例文件。尝试过：\(paths)")
+        print("   cwd=\(FileManager.default.currentDirectoryPath)")
         return []
     }
+    print("用例文件：\(used)")
     var out: [Case] = []
-    for line in text.split(separator: "\n") {
+    for line in body.split(separator: "\n") {
         if line.hasPrefix("#") { continue }
         let p = line.split(separator: "\t")
         guard p.count >= 2 else { continue }

@@ -44,6 +44,7 @@ jobs:
             Sources/Keyboard/PinyinEngine.swift \
             Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
 
+          echo "用例文件:"; ls -l "$PWD/tools/eval/cases.tsv"; wc -l "$PWD/tools/eval/cases.tsv"
           set +e
           ANRAN_DICT_DIR=/tmp/evaldict ANRAN_CASES=$PWD/tools/eval/cases.tsv \
             /tmp/evalbin > /tmp/eval.log 2>&1
