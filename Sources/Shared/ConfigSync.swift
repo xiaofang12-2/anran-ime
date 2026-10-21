@@ -13,6 +13,8 @@ struct SyncBundle: Codable, Equatable {
     var phrases: PhraseBook?
     var settings: IMESettings?
     var thoughts: ThoughtBook?
+    /// 刷天帝文本集合
+    var brushes: BrushBook?
     /// 登录态并进整包，键盘落包时顺手换新票据
     var auth: AuthState?
     var rev: Int = 0
@@ -39,6 +41,7 @@ enum ConfigSync {
                    phrases: PhraseStore.current.sanitized,
                    settings: IMESettingsStore.current.sanitized,
                    thoughts: ThoughtStore.current.sanitized,
+                   brushes: BrushStore.current.sanitized,
                    auth: auth ?? AuthStore.current,
                    rev: 0)
     }
@@ -56,11 +59,13 @@ enum ConfigSync {
                         phrases: PhraseBook? = nil,
                         settings: IMESettings? = nil,
                         thoughts: ThoughtBook? = nil,
+                        brushes: BrushBook? = nil,
                         auth: AuthState? = nil) -> Bool {
         if let l = layout { KBConfigStore.saveLocal(l) }
         if let p = phrases { PhraseStore.saveLocal(p) }
         if let s = settings { IMESettingsStore.saveLocal(s) }
         if let t = thoughts { ThoughtStore.saveLocal(t) }
+        if let b = brushes { BrushStore.saveLocal(b) }
 
         var bundle = snapshot(auth: auth)
         bundle.rev = Int(Date().timeIntervalSince1970 * 1000)
@@ -194,6 +199,7 @@ enum ConfigSync {
         if let p = bundle.phrases { PhraseStore.saveLocal(p) }
         if let s = bundle.settings { IMESettingsStore.saveLocal(s) }
         if let t = bundle.thoughts { ThoughtStore.saveLocal(t) }
+        if let b = bundle.brushes { BrushStore.saveLocal(b) }
         if let a = bundle.auth, !a.ticket.isEmpty, a.machine == DeviceID.current {
             AuthStore.write(a)
         }

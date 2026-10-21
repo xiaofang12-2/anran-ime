@@ -9,6 +9,7 @@ struct SetupView: View {
     /// 键盘功能栏点图标/长按跳过来时，程序化推对应设置页
     @State private var goPhrases = false
     @State private var goThoughts = false
+    @State private var goBrush = false
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -16,6 +17,7 @@ struct SetupView: View {
         NavigationView {
             if logged {
                 HomeView(goPhrases: $goPhrases, goThoughts: $goThoughts,
+                         goBrush: $goBrush,
                          onLogout: { logged = false })
             } else {
                 LoginGateView(onLogin: { logged = true })
@@ -55,6 +57,7 @@ struct SetupView: View {
             switch url.host {
             case "phrases": goPhrases = true
             case "thoughts": goThoughts = true
+            case "brush": goBrush = true
             default: break
             }
         }
@@ -377,6 +380,7 @@ private struct HomeView: View {
 
     @Binding var goPhrases: Bool
     @Binding var goThoughts: Bool
+    @Binding var goBrush: Bool
     let onLogout: () -> Void
 
     @State private var who = AuthStore.current?.username ?? ""
@@ -531,6 +535,11 @@ private struct HomeView: View {
             arDivider()
             NavigationLink(destination: ThoughtSettingsView(), isActive: $goThoughts) {
                 navLabel("思想库")
+            }
+            .buttonStyle(.plain)
+            arDivider()
+            NavigationLink(destination: BrushSettingsView(), isActive: $goBrush) {
+                navLabel("刷天帝")
             }
             .buttonStyle(.plain)
         }

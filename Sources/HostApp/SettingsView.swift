@@ -32,6 +32,11 @@ struct SettingsView: View {
                                     suffix: "ms",
                                     range: IMESettings.outputSpeedRange,
                                     value: $s.outputSpeed)
+                        arDivider()
+                        ARNumberFieldRow(title: "刷天帝上屏间隔",
+                                    suffix: "ms",
+                                    range: IMESettings.brushSpeedRange,
+                                    value: $s.brushSpeed)
                     }
 
                     ARTheme.sectionTitle("个性化")

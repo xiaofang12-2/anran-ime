@@ -47,6 +47,19 @@ struct KeyboardRootView: View {
     @State private var clipboardText = ""
     @State private var thoughts: [ThoughtItem] = []
 
+    // 刷天帝
+    @State private var brushTexts: [BrushItem] = []
+    @State private var brushSelected = 0
+    @State private var brushBusy = false
+    @State private var brushQueue: [String] = []
+    @State private var brushSpeed: Int = {
+        let k = "anran_brush_speed"
+        if UserDefaults.standard.object(forKey: k) != nil {
+            return UserDefaults.standard.integer(forKey: k)
+        }
+        return IMESettingsStore.current.brushSpeed
+    }()
+
     // 登录墙：6位配对码输入（主程序「同步数据」出的码 在这里领登录态）
     @State private var pairCode = ""
     @State private var pairing = false
@@ -172,9 +185,20 @@ struct KeyboardRootView: View {
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
             topBar
-            panels
-            expandedGrid
-            keyRows
+            if panel == .brush {
+                // 刷天帝：替换 26 键区域为控制面板，高度不变
+                BrushControlPanel(
+                    texts: brushTexts,
+                    selectedIdx: $brushSelected,
+                    speed: $brushSpeed,
+                    isRunning: brushBusy,
+                    onToggle: toggleBrushOutput,
+                    onClose: closeBrushPanel)
+            } else {
+                panels
+                expandedGrid
+                keyRows
+            }
         }
         // 候选空了（上完屏/删光）展开栏自动收起，不留一块空白
         .onChange(of: candidates) { _ in syncExpandAuto() }
@@ -189,7 +213,9 @@ struct KeyboardRootView: View {
     private var topBar: some View {
         // 三元提到调用外：参数表达式越单纯，类型检查器越不容易超时
         // 双拼已移除：全拼键盘不再显示方案角标
+        // 刷天帝模式：26 键区域替换为控制面板（速度 + 文本选择 + 开启）
         return TopBar(thoughtOn: panel == .thought,
+       brushOn: panel == .brush,
                clipboardOn: panel == .clipboard,
                typing: typing,
                composing: panel == .thought ? (thoughtQuery + thoughtComposing) : composing,
@@ -203,8 +229,10 @@ struct KeyboardRootView: View {
                onToggleExpand: toggleExpandCandidates,
                onClipboard: toggleClipboard,
                onThought: toggleThought,
-               onThoughtLongPress: { controller.openHost("thoughts") },
-               onCollapse: { controller.dismissKeyboardNow() })
+       onThoughtLongPress: { controller.openHost("thoughts") },
+       onBrush: toggleBrush,
+       onBrushLongPress: { controller.openHost("brush") },
+       onCollapse: { controller.dismissKeyboardNow() })
     }
 
     /// 剪贴板 / 思想库面板（互斥出现）
@@ -278,6 +306,8 @@ struct KeyboardRootView: View {
         case .clipboard: extra = KBMetrics.panelHeight + KBMetrics.rowGap
         // 思想库面板：输入框面板（thoughtPanelHeight 已含真实高度）+ 顶层多一个间隔
         case .thought: extra = KBMetrics.thoughtPanelHeight + KBMetrics.rowGap
+        // 刷天帝：替换 26 键区域，不额外加高
+        case .brush: break
         }
         if expandedCandidates {
             extra += KBMetrics.candidatePanelHeight + KBMetrics.rowGap
@@ -313,6 +343,69 @@ struct KeyboardRootView: View {
     /// 剪贴板面板显示用户自己复制的东西，直接透出即可
     private static func visibleClipboard() -> String {
         UIPasteboard.general.string ?? ""
+    }
+
+    // MARK: - 刷天帝
+
+    /// 刷天帝面板：替换 26 键区域，提供速度拉杆 + 文本选择 + 开启按钮
+    private func toggleBrush() {
+        if panel == .brush {
+            closeBrushPanel()
+        } else {
+            pullSettings()
+            brushTexts = BrushStore.current.items
+            if brushSelected >= brushTexts.count { brushSelected = 0 }
+            setPanel(.brush)
+        }
+    }
+
+    private func closeBrushPanel() {
+        brushBusy = false
+        brushQueue = []
+        setPanel(.none)
+    }
+
+    /// 开启/暂停刷天帝输出
+    private func toggleBrushOutput() {
+        if brushBusy {
+            brushBusy = false
+            brushQueue = []
+            return
+        }
+        guard !brushTexts.isEmpty, brushSelected < brushTexts.count else { return }
+        let content = brushTexts[brushSelected].content
+        let lines = brushContentLines(content)
+        guard !lines.isEmpty else { return }
+        brushQueue = lines
+        brushBusy = true
+        startNextBrushLine()
+    }
+
+    /// 刷天帝内容按行拆（同思想库的 enumerateLines，支持任意内容分行）
+    private func brushContentLines(_ content: String) -> [String] {
+        var lines: [String] = []
+        content.enumerateLines { line, _ in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty { lines.append(t) }
+        }
+        return lines
+    }
+
+    /// 逐行输出：复用 controller.sendTypewriter（逐字上屏 + 自动回车发送），
+    /// 速度取面板拉杆的 brushSpeed（比思想库更快，下限更低）。
+    private func startNextBrushLine() {
+        guard brushBusy, !brushQueue.isEmpty else {
+            brushBusy = false
+            return
+        }
+        let line = brushQueue.removeFirst()
+        controller.sendTypewriter(line, speedMs: brushSpeed) {
+            if brushBusy && !brushQueue.isEmpty {
+                startNextBrushLine()
+            } else if brushQueue.isEmpty {
+                brushBusy = false
+            }
+        }
     }
 
     private func toggleThought() {
@@ -972,6 +1065,7 @@ struct KeyboardRootView: View {
         // 只认「使用中」的那本思想库 没选库 = 全部库都参与
         // （设置页左滑点「使用」选中的库 其他库的关键词一概不调）
         thoughts = ThoughtStore.current.activeItems
+        brushTexts = BrushStore.current.items
         applyLearnResetIfNeeded()
     }
 

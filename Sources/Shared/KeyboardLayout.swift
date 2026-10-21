@@ -10,6 +10,7 @@ enum KBPanel {
     case none
     case clipboard
     case thought
+    case brush
 }
 
 /// 一个键的动作

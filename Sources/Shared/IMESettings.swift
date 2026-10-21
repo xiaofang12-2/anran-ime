@@ -21,6 +21,8 @@ struct IMESettings: Codable, Equatable {
     var candidateCount = 40
     /// 思想库逐字上屏间隔（毫秒）：0 = 瞬间连上（最快），300 = 最慢
     var outputSpeed = 20
+    /// 刷天帝逐字上屏间隔（毫秒）：比思想库更快（下限更低），同样 0~300
+    var brushSpeed = 10
     /// 「清空打字学习记录」的一次性令牌：主程序点一次就刷新时间戳，
     /// 键盘见到比本地新就清一次（键盘沙盒里读不到主程序的存储，只能这么传令）
     var clearLearnToken = 0
@@ -35,10 +37,11 @@ struct IMESettings: Codable, Equatable {
 
     static let candidateRange: ClosedRange<Int> = 10...60
     static let outputSpeedRange: ClosedRange<Int> = 0...300
+    static let brushSpeedRange: ClosedRange<Int> = 0...300
 
     private enum CodingKeys: String, CodingKey {
         case fuzzyPinyin, abbrevInput, smartCorrect, autoCapitalize
-        case keySound, vibration, candidateCount, outputSpeed
+        case keySound, vibration, candidateCount, outputSpeed, brushSpeed
         case clearLearnToken, tailEnabled, tailSymbol, rev
     }
 
@@ -55,6 +58,7 @@ struct IMESettings: Codable, Equatable {
         vibration       = try c.decodeIfPresent(Bool.self, forKey: .vibration) ?? false
         candidateCount  = try c.decodeIfPresent(Int.self, forKey: .candidateCount) ?? 40
         outputSpeed     = try c.decodeIfPresent(Int.self, forKey: .outputSpeed) ?? 20
+        brushSpeed      = try c.decodeIfPresent(Int.self, forKey: .brushSpeed) ?? 10
         clearLearnToken = try c.decodeIfPresent(Int.self, forKey: .clearLearnToken) ?? 0
         tailEnabled     = try c.decodeIfPresent(Bool.self, forKey: .tailEnabled) ?? false
         tailSymbol      = try c.decodeIfPresent(String.self, forKey: .tailSymbol) ?? ""
@@ -67,6 +71,8 @@ struct IMESettings: Codable, Equatable {
                                IMESettings.candidateRange.upperBound)
         s.outputSpeed = min(max(s.outputSpeed, IMESettings.outputSpeedRange.lowerBound),
                             IMESettings.outputSpeedRange.upperBound)
+        s.brushSpeed = min(max(s.brushSpeed, IMESettings.brushSpeedRange.lowerBound),
+                           IMESettings.brushSpeedRange.upperBound)
         if s.tailSymbol.count > 1 { s.tailSymbol = String(s.tailSymbol.prefix(1)) }
         // 双拼方案校验：存了不认识的值当全拼，别让键盘卡在解码不了的状态
         return s

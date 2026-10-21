@@ -342,6 +342,7 @@ struct KeyRow: View {
 struct TopBar: View {
 
     let thoughtOn: Bool
+    let brushOn: Bool
     let clipboardOn: Bool
     /// 正在打拼音：右侧功能图标整组让位，候选词拉满整行（学百度）
     var typing: Bool = false
@@ -361,6 +362,8 @@ struct TopBar: View {
     let onClipboard: () -> Void
     let onThought: () -> Void
     let onThoughtLongPress: () -> Void
+    let onBrush: () -> Void
+    let onBrushLongPress: () -> Void
     let onCollapse: () -> Void
 
     /// 单行候选栏只摆 9 条（对标百度：6~9 条的干净横排，第一条加粗放大）。
@@ -480,6 +483,8 @@ struct TopBar: View {
                      tap: onClipboard, longPress: nil)
                 icon("lightbulb", active: thoughtOn,
                      tap: onThought, longPress: onThoughtLongPress)
+                icon("paintbrush", active: brushOn,
+                     tap: onBrush, longPress: onBrushLongPress)
                 icon("keyboard.chevron.compact.down", active: false,
                      tap: onCollapse, longPress: nil)
             }
@@ -738,6 +743,123 @@ struct CandidateGridPanel: View {
         .frame(height: KBMetrics.candidatePanelHeight, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(KBMetrics.themeBarColor))
+    }
+}
+
+/// 刷天帝控制面板：开启后替换 26 键区域，提供速度拉杆 + 文本选择 + 开启按钮。
+/// 用户在主 app「刷天帝」里建的文本，这里选一条点开启就自动逐行输出。
+/// 速度比思想库更快（下限更低、默认 10ms），专门用来刷量。
+struct BrushControlPanel: View {
+
+    let texts: [BrushItem]
+    @Binding var selectedIdx: Int
+    @Binding var speed: Int
+    let isRunning: Bool
+    let onToggle: () -> Void
+    let onClose: () -> Void
+
+    private var scale: CGFloat { KBMetrics.fontScale }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            // 顶行：标题 + 关闭
+            HStack {
+                Text("刷天帝")
+                    .font(.system(size: 15 * scale, weight: .semibold))
+                    .foregroundColor(KBMetrics.themeCandidateTextColor)
+                Spacer()
+                if isRunning {
+                    Text("输出中…")
+                        .font(.system(size: 11 * scale))
+                        .foregroundColor(KBMetrics.themeAccentColor)
+                        .padding(.trailing, 4)
+                }
+                Button { onClose() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if texts.isEmpty {
+                Spacer()
+                Text("还没有文本\n主程序「刷天帝」里建一个")
+                    .font(.system(size: 13 * scale))
+                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.5))
+                    .multilineTextAlignment(.center)
+                Spacer()
+            } else {
+                // 文本选择（横向滚动）
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(texts.enumerated()), id: \.offset) { pair in
+                            let i = pair.offset
+                            let t = pair.element
+                            Text(t.name)
+                                .font(.system(size: 14 * scale,
+                                               weight: i == selectedIdx ? .semibold : .regular))
+                                .foregroundColor(i == selectedIdx
+                                                 ? .white
+                                                 : KBMetrics.themeCandidateTextColor.opacity(0.7))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(i == selectedIdx
+                                              ? KBMetrics.themeAccentColor
+                                              : KBMetrics.themeKeyColor.opacity(0.6)))
+                                .contentShape(Capsule())
+                                .onTapGesture { selectedIdx = i }
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .frame(height: 34)
+
+                // 速度拉杆 0~300
+                VStack(spacing: 4) {
+                    HStack {
+                        Text("速度")
+                            .font(.system(size: 12 * scale))
+                            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.6))
+                        Spacer()
+                        Text("\(speed) ms")
+                            .font(.system(size: 12 * scale, design: .monospaced))
+                            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.6))
+                    }
+                    Slider(value: Binding(get: { Double(speed) },
+                                          set: {
+                                              speed = max(0, min(300, Int($0)))
+                                              UserDefaults.standard.set(speed, forKey: "anran_brush_speed")
+                                          }),
+                           in: 0...300)
+                        .tint(KBMetrics.themeAccentColor)
+                }
+
+                Spacer(minLength: 0)
+
+                // 开启/暂停按钮
+                Button { onToggle() } label: {
+                    Text(isRunning ? "暂停" : "开启输出")
+                        .font(.system(size: 16 * scale, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(isRunning
+                                      ? KBMetrics.themeAccentColor.opacity(0.6)
+                                      : KBMetrics.themeAccentColor))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
                 .fill(KBMetrics.themeBarColor))
     }
 }
