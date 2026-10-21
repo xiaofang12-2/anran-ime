@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.45"
-    CURRENT_PROJECT_VERSION: "80"
+    MARKETING_VERSION: "0.9.46"
+    CURRENT_PROJECT_VERSION: "81"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -71,6 +71,9 @@ targets:
         buildPhase: resources
       # 词级 n-gram 语言模型（ANWG v2，自研兜底引擎的上下文项升级）
       - path: Support/dict/assoc_w.bin.enc
+        buildPhase: resources
+      # 三元语言模型（ANWT v1)：虚词/同音序列判定
+      - path: Support/dict/assoc_t.bin.enc
         buildPhase: resources
       # 百度内置词条 cell（口语片段/成语/软件名，10,736 条，解析自百度 APK 的 .bcd）
       - path: Support/dict/seed.bin.enc

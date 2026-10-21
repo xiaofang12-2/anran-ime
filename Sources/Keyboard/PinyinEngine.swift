@@ -91,6 +91,17 @@ final class PinyinEngine {
     private var wlmKeyBlk = 0
     private var wlmValBlk = 0
 
+    // ---- 三元语言模型（ANWT v1）：词 a,b -> 词 c ----
+    // 二元分不出「一下→在 / 一下→再」这种：两项都未登录、罚分相同，
+    // 只能由 unigram 决胜（在 比 再 常见得多）。三元能看到「查/一下/再」才判得准。
+    private var tlmData: Data?
+    private var tlmCount = 0
+    private var tlmKeyTbl = 0
+    private var tlmValTbl = 0
+    private var tlmMemo: [String: [String: Double]] = [:]
+    private var tlmMemoQ: [String] = []
+    private static let tlmMemoMax = 512
+
     /// 自定义短语：触发码 -> 展开文本 + 命中后落位（主程序下发，见 PhraseStore）
     private var phrases: [(code: String, text: String, position: Int)] = []
 
@@ -145,6 +156,11 @@ final class PinyinEngine {
     private static let wlmRef = -3.0
     private static let wlmWeight = 0.8       // 词级 bigram 权重（真实搭配靠它）
     private static let wlmPenCap = 3.0       // 单次接续罚分上限
+    private static let tlmFloor = -8.0       // 三元 log P 下限（与 assoc_t.bin 的 LPMIN 一致）
+    private static let tlmRef = -3.0
+    private static let tlmWeight = 0.9       // 三元信息量更大，权重略高于二元
+    private static let tlmPenCap = 3.0
+    private static let tlmBackoff = 0.35     // 回退二元的代价
     private static let lmPenCap = 2.5        // 单次字接续罚分上限
 
     /// 终极兜底：任何字母串都必须出汉字，绝不让面板只剩英文。
@@ -221,6 +237,13 @@ final class PinyinEngine {
             loadAssocW(url)
         }
         SecVault.dispose(wStaged)
+
+        // 三元语言模型：缺了自动退回二元，不影响主链路
+        let tStaged = SecVault.stage("assoc_t", ext: "bin")
+        if let url = tStaged {
+            loadTrigram(url)
+        }
+        SecVault.dispose(tStaged)
 
         // 百度内置词条 cell（口语片段/成语/软件名）：缺了不影响主链路
         tr("meta: stage seed")
@@ -359,6 +382,15 @@ final class PinyinEngine {
     /// + keyOffTblPos(4) + valOffTblPos(4) + keyBlkPos(4) + valBlkPos(4)，
     /// 之后是 key 偏移表 / val 偏移表 / key 块 / val 块。与 build_assoc_w.py 一一对应。
     /// 只解析头并记下偏移，查询时按需切片（内存映射，零堆膨胀）。
+    private func loadTrigram(_ url: URL) {
+        guard let d = try? Data(contentsOf: url, options: .mappedIfSafe), d.count > 25 else { return }
+        guard d.prefix(4) == Data("ANWT".utf8), d[4] == 0x31 /* '1' */ else { return }
+        tlmData = d
+        tlmCount = u32from(d, 5)
+        tlmKeyTbl = u32from(d, 9)
+        tlmValTbl = u32from(d, 13)
+    }
+
     private func loadAssocW(_ url: URL) {
         guard let d = try? Data(contentsOf: url, options: .mappedIfSafe), d.count > 25 else { return }
         guard d.prefix(4) == Data("ANWG".utf8), d[4] == 0x32 /* '2' */ else { return }
@@ -471,6 +503,63 @@ final class PinyinEngine {
     private func userPenalty(_ prev: String, _ fol: String) -> Double {
         guard let m = userBigram[prev], let c = m[fol], c > 0 else { return 0 }
         return -min(Double(c), 8.0) * 0.45
+    }
+
+    /// 三元查询：(a,b) 之后接 c 的条件对数概率。
+    /// 键存在但 c 不在其后继里 → 返回三元下限（表示「这组搭配没见过」）；
+    /// 键本身不存在 → nil（调用方回退二元）。
+    private func trigramLP(_ a: String, _ b: String, _ c: String) -> Double? {
+        let key = a + "\u{1f}" + b
+        if let m = tlmMemo[key] { return m[c] ?? PinyinEngine.tlmFloor }
+        guard let d = tlmData, tlmCount > 0 else { return nil }
+        var lo = 0, hi = tlmCount
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            let ka = u32from(d, tlmKeyTbl + 4 * mid)
+            let kb = u32from(d, tlmKeyTbl + 4 * (mid + 1))
+            let k = String(decoding: d[ka..<kb], as: UTF8.self)
+            if k < key { lo = mid + 1 } else { hi = mid }
+        }
+        guard lo < tlmCount else { return nil }
+        let ka = u32from(d, tlmKeyTbl + 4 * lo)
+        let kb = u32from(d, tlmKeyTbl + 4 * (lo + 1))
+        guard String(decoding: d[ka..<kb], as: UTF8.self) == key else { return nil }
+
+        let va = u32from(d, tlmValTbl + 4 * lo)
+        let vb = u32from(d, tlmValTbl + 4 * (lo + 1))
+        var row: [String: Double] = [:]
+        row.reserveCapacity(8)
+        for seg in d[va..<vb].split(separator: 0x01) {
+            guard let first = seg.first else { continue }
+            let w = String(decoding: seg.dropFirst(), as: UTF8.self)
+            if w.isEmpty { continue }
+            row[w] = PinyinEngine.tlmFloor
+                + (Double(first) - 2) / 253.0 * (0 - PinyinEngine.tlmFloor)
+        }
+        // 与二元同一套 FIFO 淘汰
+        if tlmMemoQ.count >= PinyinEngine.tlmMemoMax {
+            let drop = tlmMemoQ.count / 2
+            for i in 0..<drop { tlmMemo.removeValue(forKey: tlmMemoQ[i]) }
+            tlmMemoQ.removeFirst(drop)
+        }
+        tlmMemo[key] = row
+        tlmMemoQ.append(key)
+        return row[c] ?? PinyinEngine.tlmFloor
+    }
+
+    /// 三元罚分：命中用三元，键不存在回退二元并加一点回退罚分
+    /// （让「统计过」的三元搭配压过「没统计过」的，但不至于把二元信息丢掉）。
+    private func trigramPenalty(_ a: String, _ b: String, _ c: String) -> Double? {
+        if let lp = trigramLP(a, b, c) {
+            if lp >= PinyinEngine.tlmRef { return 0 }
+            return min(PinyinEngine.tlmWeight * (PinyinEngine.tlmRef - lp),
+                       PinyinEngine.tlmPenCap)
+        }
+        guard let bp = wordPenalty(b, c) else {
+            guard let lc = b.last, let fc = c.first else { return nil }
+            return lmPenalty(lc, fc) + PinyinEngine.tlmBackoff
+        }
+        return bp + PinyinEngine.tlmBackoff
     }
 
     /// 词级接续亲和度：prev 之后接 fol 在词级 LM 里算不算常见接续（0/1）。
@@ -1107,7 +1196,14 @@ final class PinyinEngine {
                     // 上下文项：优先用词级 n-gram（前词 -> 后继词），
                     // 词级没数据（生僻前词）时退回字级 bigram（尾字 -> 头字）。
                     var pen = 0.0
-                    if let pw = ws.last {
+                    if ws.count >= 2 {
+                        // 有前两个词：优先三元（虚词歧义只有三元能判）
+                        let a = ws[ws.count - 2], b = ws[ws.count - 1]
+                        if let tp = trigramPenalty(a, b, e.word) {
+                            pen = tp
+                        }
+                        pen += userPenalty(b, e.word)
+                    } else if let pw = ws.last {
                         if let wp = wordPenalty(pw, e.word) {
                             pen = wp
                         } else if let lc = pw.last, let fc = e.word.first {

@@ -34,7 +34,7 @@ jobs:
           python3 -m venv /tmp/ev
           /tmp/ev/bin/python -m pip install --quiet cryptography
           mkdir -p /tmp/evaldict
-          for n in pinyin assoc assoc_w seed; do
+          for n in pinyin assoc assoc_w seed assoc_t; do
             /tmp/ev/bin/python tools/vault_enc.py dec2 "Support/dict/$n.bin.enc" "/tmp/evaldict/$n.bin"
           done
 
