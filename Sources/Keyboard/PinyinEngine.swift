@@ -1376,7 +1376,7 @@ final class PinyinEngine {
             result.removeAll { $0.word == hit.text }
             let idx = max(0, min(hit.position - 1, result.count))
             result.insert(PinyinCandidate(word: hit.text, score: 2_000_000,
-                                          consumed: n), at: idx)
+                                          consumed: n, isPriority: true), at: idx)
         }
         if !inp.isEmpty, !result.contains(where: { $0.word == inp }) {
             result.append(PinyinCandidate(word: inp, score: Int.min,

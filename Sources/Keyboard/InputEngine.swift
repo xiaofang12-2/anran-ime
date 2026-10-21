@@ -45,7 +45,8 @@ final class InputEngine {
     /// 对拼音输入毫无意义，还挤掉真正的汉字。用户置顶/自定义短语豁免。
     private func dropSymbolNoise(_ list: [PinyinCandidate]) -> [PinyinCandidate] {
         list.filter { c in
-            if c.isPriority || c.literal { return true }
+            // 用户内容（自定义短语 / 置顶词，score 200 万+）一律不参与过滤
+            if c.isPriority || c.literal || c.score >= 2_000_000 { return true }
             for u in c.word.unicodeScalars {
                 let v = u.value
                 if (0x1F000...0x1FAFF).contains(v)      // emoji 主区
@@ -73,7 +74,8 @@ final class InputEngine {
         guard n > 0, n <= 6 else { return list }
         let cap = max(2, Int(Double(n) * 0.8) + 1)
         return list.filter {
-            $0.isPriority || $0.literal || $0.word.count <= cap
+            $0.isPriority || $0.literal || $0.score >= 2_000_000
+                || $0.word.count <= cap
         }
     }
 
@@ -121,8 +123,31 @@ final class InputEngine {
 
         // librime 候选稀薄（生僻串 / 刚部署完）：自研全量兜底，保证永远有字可出
         let fallback = PinyinEngine.shared.candidates(for: raw)
-        if rime.isEmpty && fuzzy.isEmpty { return applyPin(fallback, raw: raw) }
+        if rime.isEmpty && fuzzy.isEmpty {
+            return applyPhrases(applyPin(fallback, raw: raw), raw: raw)
+        }
         return applyPin(merge(rime: rime, fallback: fallback, raw: raw, fuzzy: fuzzy), raw: raw)
+    }
+
+    /// 自定义短语按「位置」插回它该在的名次（位置 1 = 排第一）。
+    ///
+    /// 单独抽出来是因为它有**两条调用路径**：merge() 的常规路径，以及
+    /// librime 一条候选都没有时的纯自研兜底路径 —— 后者以前直接 return，
+    /// 绕过了这里，用户的自定义短语就整条消失。
+    private func applyPhrases(_ list: [PinyinCandidate], raw: String) -> [PinyinCandidate] {
+        let hits = PinyinEngine.shared.phraseHits(for: raw)
+        guard !hits.isEmpty else { return list }
+        var out = list
+        for hit in hits.sorted(by: { $0.position < $1.position }) {
+            out.removeAll { $0.word == hit.text }
+            let idx = max(0, min(hit.position - 1, out.count))
+            // isPriority 必须置真：自定义短语的典型形态是「短码 + 长文本」
+            // （wx → 微信支付），短输入的字数上限、符号过滤都会把它当噪声丢掉。
+            // 用户自己定的东西，任何过滤都不许动。
+            out.insert(PinyinCandidate(word: hit.text, score: 2_000_000,
+                                       consumed: raw.count, isPriority: true), at: idx)
+        }
+        return out
     }
 
     /// 置顶词压到第一位（对标 PlumCore 的 `ipt_set_firstword`）。
@@ -333,15 +358,6 @@ final class InputEngine {
             }
         for e in fallbackRanked { push(e.cand) }
 
-        // 4) 自定义短语按「位置」插回它该在的名次（位置 1 = 排第一）
-        let hits = PinyinEngine.shared.phraseHits(for: raw)
-        for hit in hits.sorted(by: { $0.position < $1.position }) {
-            out.removeAll { $0.word == hit.text }
-            let idx = max(0, min(hit.position - 1, out.count))
-            out.insert(PinyinCandidate(word: hit.text, score: 2_000_000,
-                                       consumed: raw.count), at: idx)
-        }
-
-        return Array(out.prefix(60))
+        return Array(applyPhrases(out, raw: raw).prefix(60))
     }
 }
