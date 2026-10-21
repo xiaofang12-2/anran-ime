@@ -43,6 +43,7 @@ jobs:
           xcrun swiftc -O -o /tmp/evalbin \
             tools/eval/main.swift tools/eval/stubs.swift \
             Sources/Keyboard/PinyinEngine.swift \
+            Sources/Keyboard/CuratedWords.swift \
             Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
 
           echo "用例文件:"; ls -l "$PWD/tools/eval/cases.tsv"; wc -l "$PWD/tools/eval/cases.tsv"
