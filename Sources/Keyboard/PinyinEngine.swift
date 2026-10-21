@@ -559,7 +559,7 @@ final class PinyinEngine {
         //   1 = 前缀补全（你好 → 你好啊）与词图的部分覆盖片段
         //   2 = 兜底（最长可出字前缀）
         //   3 = 缩写（nh → 你好）、模糊音
-        //   4 = 手滑纠错
+        //   4 = 兜底（最后手段）
         // 商业输入法的第一屏以「精确词」为主，前缀补全和拼句不能压过它。
         var cands = [String: (cov: Int, lp: Double, pri: Bool, tier: Int)]()
         func put(_ text: String, _ cov: Int, _ lp: Double,
@@ -800,7 +800,7 @@ final class PinyinEngine {
         //   1 = 前缀补全（你好 → 你好啊）与词图的部分覆盖片段
         //   2 = 兜底（最长可出字前缀）
         //   3 = 缩写（nh → 你好）、模糊音
-        //   4 = 手滑纠错
+        //   4 = 兜底（最后手段）
         // 商业输入法的第一屏以「精确词」为主，前缀补全和拼句不能压过它。
         var cands = [String: (cov: Int, lp: Double, pri: Bool, tier: Int)]()
         func put(_ text: String, _ cov: Int, _ lp: Double,
@@ -830,7 +830,7 @@ final class PinyinEngine {
             }
             // 单字母 u/i/v、两字母乱码（ik/ul/vz）这些也必须有汉字
             if cands.isEmpty {
-                for c in fallback(input) { put(c.word, n, c.logp, tier: 2) }
+                for c in fallback(input) { put(c.word, n, c.logp, tier: 4) }
             }
             return rank(&cands, input, limit: set.candidateCount, phraseHits: phraseHits)
         }
@@ -895,17 +895,25 @@ final class PinyinEngine {
         // 7) 智能纠错兜底：整串一个前缀都对不上时，多半是手滑了。
         //    按「错误类型」分级逐轮尝试（相邻键替换 → 相邻打反 → 多键 → 漏键），
         //    哪一轮查出词就停；越靠后的类型罚分越重，绝不压过真解。
-        if set.smartCorrect && cands.isEmpty && n >= 3 {
-            for v in correctedVariants(input) {
-                for c in prefixWords(v.variant) { put(c.word, n, c.logp - v.pen, tier: 4) }
-                if cands.count >= 3 { break }
+        if set.smartCorrect && n >= 3 && (!splitOK || cands.isEmpty) {
+            // 以前只在 cands 为空时才纠错 —— 但兜底/尾补全总能凑出几个垃圾词，
+            // 这条分支几乎永远不执行：用户打 nihap 只能看到「纽汉浦」。
+            // 现在「整串切不成音节」就纠错，而且分档压过尾补全与兜底。
+            let ctier = splitOK ? 2 : 1
+            var got = 0
+            for v in correctedVariants(input).prefix(8) {
+                for c in prefixWords(v.variant) {
+                    put(c.word, n, c.logp - v.pen, tier: ctier)
+                    got += 1
+                }
+                if got >= 8 { break }
             }
         }
 
         // 8) 终极兜底：查完还是没汉字（乱按 qwert/zxcvb 这种），退到最长能出字的
         //    前缀顶上。任何字母串都必须有汉字候选，绝不让面板只剩英文。
         if cands.isEmpty {
-            for c in fallback(input) { put(c.word, n, c.logp, tier: 2) }
+            for c in fallback(input) { put(c.word, n, c.logp, tier: 4) }
         }
 
         // 9) 用户自己记下的词：同样的拼音直接顶到最前；拼音前缀命中也召回

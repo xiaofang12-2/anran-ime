@@ -89,10 +89,10 @@ def main():
         # （按字母序取会抽到一堆「阿拜/阿宝」这种生僻词，测了没意义）
         items = sorted(picked[n], key=lambda x: -x[2])[:quota]
         stat.append((n, len(picked[n]), len(items)))
-        lines += ["%s\t%s" % (k, w) for k, w, _ in items]
+        lines += ["%s\t%s\tw%d" % (k, w, n) for k, w, _ in items]
 
     with open(OUT, "w", encoding="utf-8") as f:
-        f.write("# pinyin\texpect\n")
+        f.write("# pinyin\texpect\tcategory\n")
         f.write("\n".join(lines) + "\n")
 
     print("跳过的 seed 键:", skipped_seed, " 非汉字/超长:", skipped_char)
