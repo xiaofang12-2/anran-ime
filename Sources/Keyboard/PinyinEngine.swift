@@ -982,25 +982,29 @@ final class PinyinEngine {
     /// cap：边长硬闸（长输入时收紧，见 beam）
     private func fullEdges(_ chars: [Character], _ start: Int, cap: Int = 3000)
         -> [(j: Int, word: String, logp: Double)] {
+        // 从 start 出发的所有「连续子串」里，凡是词库有的键都是候选边。
+        //
+        // 原来用 DFS：按音节长度递增递归拼 acc，命中就吐候选，超全局上限直接
+        // `return` —— 那是**静默截断**：长输入（>15 字母）时 DFS 先钻深分支，
+        // 上限一到，后面位置的边整片消失，正确切分可能在词图上根本不存在。
+        // 「打长句偶尔出莫名其妙的结果」就来自这里。
+        //
+        // 子串枚举和 DFS 产出的边集合是同一个（形状都是连续区间），
+        // 但没有递归、没有截断，而且 O(n²) 次二分比递归快一个量级。
         var out: [(Int, String, Double)] = []
         let n = chars.count
-
-        func dfs(_ pos: Int, _ acc: String) {
-            if out.count > cap { return }
-            if !acc.isEmpty, let idx = exactIndex(acc) {
-                for c in candidatesAt(idx) { out.append((pos, c.word, c.logp)) }
+        let maxKeyLen = 24                     // 词库键最长约 24 字母（8 音节短句），再长没有意义
+        var j = start + 1
+        while j <= n && j - start <= maxKeyLen {
+            let sub = String(chars[start..<j])
+            if let idx = exactIndex(sub) {
+                for c in candidatesAt(idx) {
+                    out.append((j, c.word, c.logp))
+                    if out.count >= cap { return out }
+                }
             }
-            if pos >= n { return }
-            var L = 1
-            let maxL = min(6, n - pos)
-            while L <= maxL {
-                let sub = String(chars[pos..<(pos + L)])
-                if syllableSet.contains(sub) { dfs(pos + L, acc + sub) }
-                L += 1
-            }
+            j += 1
         }
-
-        dfs(start, "")
         return out
     }
 
