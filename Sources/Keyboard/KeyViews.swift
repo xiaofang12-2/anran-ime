@@ -446,7 +446,9 @@ struct TopBar: View {
                                 let i = pair.offset
                                 let c = pair.element
                                 Text(c.word)
-                                    .font(.system(size: (i == 0 ? 21 : 18) * scale,
+                                    // 字号统一 19，只让首位加粗：
+                                    // 原来首位 21 / 其余 18，行内基线不齐、看着像排版出错。
+                                    .font(.system(size: 19 * scale,
                                                   weight: i == 0 ? .semibold : .regular))
                                     .foregroundColor(c.literal
                                                      ? KBMetrics.themeAccentColor.opacity(0.6)
@@ -487,8 +489,8 @@ struct TopBar: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(KBMetrics.themeCandidateTextColor.opacity(0.10))
-            .frame(width: 0.5, height: 20)
+            .fill(KBMetrics.themeCandidateTextColor.opacity(0.07))
+            .frame(width: 0.5, height: 15)
     }
 
     /// 双拼角标：让用户随时看得见自己在哪个方案里
