@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.50"
-    CURRENT_PROJECT_VERSION: "85"
+    MARKETING_VERSION: "0.9.51"
+    CURRENT_PROJECT_VERSION: "86"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly

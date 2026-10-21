@@ -382,21 +382,40 @@ struct TopBar: View {
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
+    /// 已输入的拼音：紧凑胶囊，宽度跟着字数走。
+    /// 视觉上自成一块（浅底色），因此不再需要额外的竖分隔线，候选紧邻其右。
+    private var pinyinChip: some View {
+        // 超过 10 个字母只显示尾部（正在敲的那几个），避免把候选挤没
+        let shown = composing.count > 10
+            ? "…" + String(composing.suffix(10))
+            : composing
+        return Text(shown)
+            .font(.system(size: 14 * scale, weight: .medium))
+            .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.62))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)   // 按内容宽度，不撑开
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(KBMetrics.themeCandidateTextColor.opacity(0.07))
+            )
+            .padding(.leading, 8)
+            .padding(.trailing, 4)
+    }
+
     private var barRow: some View {
         HStack(spacing: 0) {
-            // 有拼音串时图标隐藏，位置留给拼音：既不挡候选，也不会有头像
-            // 和拼音挤在一起的怪异感（用户实拍反馈）。
+            // 有拼音串时图标隐藏，位置留给拼音。
+            //
+            // ⚠️ 不要用 .frame(maxWidth:) 给拼音留固定宽度：那会让 sbs 这种
+            // 3 个字母也占满一整块，左侧拼音和第一个候选之间留出一大片空白
+            // （用户实拍的「隔那么开」就是它）。改成「胶囊」——宽度随字数，
+            // 超过 10 个字母才截断（保留尾部，正在敲的都看得见）。
             if composing.isEmpty {
                 logo
             } else {
-                Text(composing)
-                    .font(.system(size: 15 * scale, weight: .medium))
-                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.75))
-                    .lineLimit(1)
-                    .truncationMode(.head)     // 打长了保留尾部（正在敲的部分）
-                    .frame(maxWidth: 112, alignment: .leading)
-                    .padding(.horizontal, 10)
-                divider
+                pinyinChip
             }
             if !schemeBadge.isEmpty { badge }
             if !engineBadge.isEmpty { engineBadgeView }
