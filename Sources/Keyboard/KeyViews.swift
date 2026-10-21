@@ -371,6 +371,34 @@ struct TopBar: View {
     private var scale: CGFloat { KBMetrics.fontScale }
 
     var body: some View {
+        let showPinyin = typing && !composing.isEmpty
+        return VStack(spacing: 0) {
+            if showPinyin { pinyinRow }
+            barRow
+        }
+        .frame(height: KBMetrics.barHeight
+               + (showPinyin ? KBMetrics.pinyinRowHeight : 0))
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(KBMetrics.themeBarColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    /// 已输入的拼音：单独一行放在图标上方（学百度，不跟候选挤在一起）
+    private var pinyinRow: some View {
+        HStack(spacing: 0) {
+            Text(composing)
+                .font(.system(size: 14 * scale))
+                .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.85))
+                .lineLimit(1)
+                .truncationMode(.head)
+                .padding(.horizontal, 10)
+            Spacer(minLength: 0)
+        }
+        .frame(height: KBMetrics.pinyinRowHeight)
+    }
+
+    private var barRow: some View {
         HStack(spacing: 0) {
             logo
             if !schemeBadge.isEmpty { badge }
@@ -385,11 +413,13 @@ struct TopBar: View {
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
-                            Text(composing.isEmpty ? "联想" : composing)
-                                .font(.system(size: (composing.isEmpty ? 12 : 15) * scale))
-                                .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
-                                .padding(.horizontal, 9)
-                            divider
+                            if composing.isEmpty {
+                                Text("联想")
+                                    .font(.system(size: 12 * scale))
+                                    .foregroundColor(KBMetrics.themeCandidateTextColor.opacity(0.55))
+                                    .padding(.horizontal, 9)
+                                divider
+                            }
                             // 遍历 indices 再按下标取元素是经典崩溃源：候选数在
                             // 渲染途中变少（点字母/上屏/引擎异步回调），旧 indices
                             // 快照去取 shown[i] 就越界 → 扩展被打死 → iOS 立刻切回
@@ -437,9 +467,6 @@ struct TopBar: View {
             }
         }
         .frame(height: KBMetrics.barHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(KBMetrics.themeBarColor))
     }
 
     private var divider: some View {

@@ -150,7 +150,9 @@ struct KeyboardRootView: View {
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
         .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in
             engineDiag = Self.diag
-            engineBadge = RimeService.shared.engineBadge
+            // 引擎角标（rime_ice·30）会挡候选视野，用户明确不要 —— 
+            // 诊断信息仍保留在 engineDiag 里，需要时再看
+            engineBadge = ""
         }
     }
 
@@ -197,7 +199,7 @@ struct KeyboardRootView: View {
                onPin: panel == .thought ? { _ in } : pin,
                expandOn: expandedCandidates,
                schemeBadge: "",
-               engineBadge: engineBadge,
+               engineBadge: "",
                onToggleExpand: toggleExpandCandidates,
                onClipboard: toggleClipboard,
                onThought: toggleThought,
@@ -787,6 +789,8 @@ struct KeyboardRootView: View {
 
     /// 拼音串变了：重算候选
     private func refresh() {
+        // 拼音行显隐 → 键盘整体高度要跟着变（多一行拼音行）
+        controller.setComposingRow(!composing.isEmpty)
         if composing.isEmpty {
             enginePy = ""
             controller.setComposing("")
@@ -821,6 +825,7 @@ struct KeyboardRootView: View {
 
         let restPy = used < pinyin.count ? String(pinyin.dropFirst(used)) : ""
         composing = restPy
+        controller.setComposingRow(!composing.isEmpty)
         if composing.isEmpty {
             // 上屏完就完 不做联想：候选拦只跟着拼音串走
             candidates = []
@@ -943,7 +948,9 @@ struct KeyboardRootView: View {
             // 没就绪前候选走自研引擎，就绪后自动切过去。
             RimeService.shared.prepare()
             engineDiag = Self.diag
-            engineBadge = RimeService.shared.engineBadge
+            // 引擎角标（rime_ice·30）会挡候选视野，用户明确不要 —— 
+            // 诊断信息仍保留在 engineDiag 里，需要时再看
+            engineBadge = ""
             controller.refreshAuth()
             // 思想库面板没被主动关过就还原（键盘收起再弹出 / 扩展进程被杀重开）：
             // 面板和关键词进度都接回去 接着上次那句走 只有主动关了才从头开始

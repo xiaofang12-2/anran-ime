@@ -36,7 +36,22 @@ final class InputEngine {
         // 包一层 autoreleasepool：每次按键结束就把这些临时对象放掉，
         // 不让它们堆到自动释放池边界（扩展的 jetsam 红线只有 60~70MB）。
         autoreleasepool {
-            candidatesInner(for: raw)
+            limitWordLength(candidatesInner(for: raw), raw: raw)
+        }
+    }
+
+    /// 短输入的字数硬约束：候选字数不能远大于输入字母数。
+    /// 打 3 个字母（yua）却把「原来的把你不能」顶到第一位，是候选栏最刺眼的问题 —— 
+    /// 全拼平均 2~3 字母一个字，这里按 0.8 字/字母留足余量（3 字母→3 字、4 字母→4 字），
+    /// 只挡「明显不成比例的长句」。n > 6 不限制（长句本来该出现）。
+    /// isPriority（用户置顶/策展词/自定义短语）与 literal 不受限。
+    private func limitWordLength(_ list: [PinyinCandidate],
+                                 raw: String) -> [PinyinCandidate] {
+        let n = raw.count
+        guard n > 0, n <= 6 else { return list }
+        let cap = max(2, Int(Double(n) * 0.8) + 1)
+        return list.filter {
+            $0.isPriority || $0.literal || $0.word.count <= cap
         }
     }
 

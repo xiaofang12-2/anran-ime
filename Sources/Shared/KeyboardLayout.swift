@@ -110,6 +110,8 @@ enum KBMetrics {
 
     /// 顶栏：LOGO + 候选词 + 功能图标 一行搞定（学百度，功能栏不再单独占一条）
     static let barHeight: CGFloat = 45
+    /// 拼音输入行（学百度：已输入的字母单独一行，在图标上方，不跟候选挤在一起）
+    static let pinyinRowHeight: CGFloat = 24
     /// 剪贴板面板高度
     static let panelHeight: CGFloat = 38
     /// 思想库输入框面板实际高度（输入框34 + 间距6 + 预览条20 + 上下边距16）
@@ -123,9 +125,11 @@ enum KBMetrics {
 
     /// extra = 展开的浮层面板额外占的高度（思想库/剪贴板）
     /// 顶层元素：顶栏 + 键区 rows 行，行间 rowGap 共 rows 个
-    static func totalHeight(rows: Int, extra: CGFloat = 0) -> CGFloat {
+    static func totalHeight(rows: Int, extra: CGFloat = 0,
+                            composingRow: Bool = false) -> CGFloat {
         topInset + bottomInset
             + barHeight
+            + (composingRow ? pinyinRowHeight : 0)
             + keyHeight * CGFloat(rows)
             + rowGap * CGFloat(max(rows, 1))
             + extra

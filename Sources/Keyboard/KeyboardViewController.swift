@@ -11,6 +11,8 @@ final class KeyboardViewController: UIInputViewController {
     private var heightConstraint: NSLayoutConstraint?
     /// 展开的浮层面板额外占的高度（剪贴板/思想库），跟着行高一起算总高
     private var extraHeight: CGFloat = 0
+    /// 拼音行是否显示（正在拼拼音时为 true，键盘整体多一行高）
+    private var composingRow = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -41,7 +43,8 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 主程序改了键高/间距后调一次，把键盘高度跟着重算，否则行会被裁掉
     func setRows(_ n: Int) {
-        let h = KBMetrics.totalHeight(rows: n, extra: extraHeight)
+        let h = KBMetrics.totalHeight(rows: n, extra: extraHeight,
+                                      composingRow: composingRow)
         guard let c = heightConstraint, abs(c.constant - h) > 0.5 else { return }
         c.constant = h
         view.setNeedsLayout()
@@ -50,6 +53,14 @@ final class KeyboardViewController: UIInputViewController {
     /// 功能栏点开/收起浮层面板时调一次，把多出来的高度算进键盘总高
     func setExtraHeight(_ extra: CGFloat) {
         extraHeight = extra
+        setRows(KBMetrics.rows)
+    }
+
+    /// 拼音串从「空 ↔ 非空」时调一次：键盘高度要跟着加/减一行，
+    /// 否则拼音行会把键区顶出去（或留下空白）。
+    func setComposingRow(_ visible: Bool) {
+        guard composingRow != visible else { return }
+        composingRow = visible
         setRows(KBMetrics.rows)
     }
 

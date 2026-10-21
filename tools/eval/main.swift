@@ -209,6 +209,28 @@ print(String(format: "[噪音] 短输入前9条中 ≥5字长候选 %.1f%%（上
 if noise > Budget.noiseShare { print("[噪音] FAIL"); ok = false }
 else { print("[噪音] PASS") }
 
+// 长度比例：短输入不许出「字数远大于字母数」的长句
+// （用户实测：打 yua 三个字母，第一条是「原来的把你不能」七个字）
+var ratioBad: [String] = []
+var ratioSlots = 0
+for py in ["yua", "niha", "nihao", "jintian", "shenme", "keyi", "zaijian", "buzhidao"] {
+    let n = py.count
+    let cap = n <= 6 ? max(2, Int(Double(n) * 0.8) + 1) : Int.max
+    for c in PinyinEngine.shared.candidates(for: py).prefix(9) {
+        ratioSlots += 1
+        if c.word.count > cap && !c.isPriority {
+            ratioBad.append("\(py)(\(n)字母) → \(c.word)(\(c.word.count)字)")
+        }
+    }
+}
+if ratioBad.isEmpty {
+    print("[长度比例] PASS（\(ratioSlots) 个候选槽，无超比例长句）")
+} else {
+    print("[长度比例] FAIL")
+    for b in ratioBad.prefix(6) { print("    ✗ " + b) }
+    ok = false
+}
+
 let rss = peakRSSMB()
 print(String(format: "[内存] 峰值 RSS %.1fMB（预算 %.0fMB）", rss, Budget.peakRSSMB))
 if rss > Budget.peakRSSMB { print("[内存] FAIL"); ok = false }
