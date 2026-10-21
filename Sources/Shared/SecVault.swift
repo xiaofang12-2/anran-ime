@@ -40,33 +40,105 @@ enum SecVault {
 
     static func decrypt(_ data: Data) -> Data? {
         guard data.prefix(4) == magic, data.count > 4 + 12 + 16 else { return nil }
-        guard let box = try? AES.GCM.SealedBox(combined: data.subdata(in: 4..<data.count))
+        // 注意：这里**不能**用 data.subdata(in:) —— 那会再复制一份 27MB。
+        // 用切片（共享底层 buffer）构造 SealedBox，峰值只多一份明文。
+        let body = data.dropFirst(4)
+        let nonceData = body.prefix(12)
+        let rest = body.dropFirst(12)
+        guard rest.count > 16,
+              let nonce = try? AES.GCM.Nonce(data: nonceData),
+              let box = try? AES.GCM.SealedBox(nonce: nonce,
+                                               ciphertext: rest.dropLast(16),
+                                               tag: rest.suffix(16))
         else { return nil }
         return try? AES.GCM.open(box, using: key)
     }
 
     /// bundle 里找 `name.ext.enc` 解到临时文件；找不到密文就退回明文
     /// `name.ext`（本地调试兼容）。返回临时文件路径或明文原路径。
+    ///
+    /// 两种密文格式都认：
+    ///   ANX2（分块，推荐）—— 流式解密，峰值内存 = 一块（约 1MB），与词库大小无关
+    ///   ANAX（整包，旧）  —— 只为兼容老包，27MB 词库走这里峰值仍有 50MB 级
     static func stage(_ name: String, ext: String) -> URL? {
         let want = "\(name).\(ext).enc"
         for u in (owner.urls(forResourcesWithExtension: "enc", subdirectory: nil)
                    ?? []) {
-            guard u.lastPathComponent == want,
-                  let raw = try? Data(contentsOf: u),
-                  let plain = decrypt(raw) else { continue }
-            let out = FileManager.default.temporaryDirectory
-                .appendingPathComponent("sv_\(UUID().uuidString).\(ext)")
-            do {
-                try plain.write(to: out, options: .atomic)
-            } catch {
-                return nil
+            guard u.lastPathComponent == want else { continue }
+            if let out = stageChunked(u, ext: ext) { return out }
+            // ANAX 旧格式兜底：先解出来，再立刻丢掉密文引用，最后才写盘
+            if let raw = try? Data(contentsOf: u),
+               let plain = decryptInto(raw) {
+                let out = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("sv_\(UUID().uuidString).\(ext)")
+                // 不用 .atomic：atomic 会额外复制一份 27MB 到临时文件
+                do {
+                    try plain.write(to: out)
+                    return out
+                } catch {
+                    return nil
+                }
             }
-            return out
         }
         if let u = owner.url(forResource: name, withExtension: ext) {
             return u
         }
         return nil
+    }
+
+    /// 读密文 -> 解出明文 -> 立刻释放密文（放在内层作用域），再返回明文
+    private static func decryptInto(_ raw: Data) -> Data? {
+        var plain: Data?
+        autoreleasepool {
+            plain = decrypt(raw)
+        }
+        return plain
+    }
+
+    /// ANX2 流式解密：逐块读、逐块解、逐块写。
+    /// 布局：`ANX2` + u32 块大小 + u32 块数 + u32[块数] 各块密文长度 + 各块密文
+    /// （每块 = nonce12 + 密文 + tag16）
+    private static func stageChunked(_ url: URL, ext: String) -> URL? {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? fh.close() }
+
+        func le32(_ d: Data, _ o: Int) -> Int {
+            guard o + 4 <= d.count else { return 0 }
+            return Int(d[d.startIndex + o]) | (Int(d[d.startIndex + o + 1]) << 8)
+                | (Int(d[d.startIndex + o + 2]) << 16) | (Int(d[d.startIndex + o + 3]) << 24)
+        }
+
+        guard let head = try? fh.read(upToCount: 12), head.count == 12,
+              head.prefix(4) == Data("ANX2".utf8) else { return nil }
+        let n = le32(head, 8)
+        guard n > 0, n < 200_000,
+              let tbl = try? fh.read(upToCount: 4 * n), tbl.count == 4 * n
+        else { return nil }
+
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sv_\(UUID().uuidString).\(ext)")
+        guard FileManager.default.createFile(atPath: out.path, contents: nil),
+              let oh = try? FileHandle(forWritingTo: out) else { return nil }
+
+        var ok = true
+        for i in 0..<n {
+            let L = le32(tbl, 4 * i)
+            guard L > 28, L < (32 << 20),
+                  let seg = try? fh.read(upToCount: L), seg.count == L,
+                  let nonce = try? AES.GCM.Nonce(data: seg.prefix(12)),
+                  let box = try? AES.GCM.SealedBox(nonce: nonce,
+                                                   ciphertext: seg.dropFirst(12).dropLast(16),
+                                                   tag: seg.suffix(16)),
+                  let plain = try? AES.GCM.open(box, using: key)
+            else { ok = false; break }
+            do { try oh.write(contentsOf: plain) } catch { ok = false; break }
+        }
+        try? oh.close()
+        if !ok {
+            try? FileManager.default.removeItem(at: out)
+            return nil
+        }
+        return out
     }
 
     /// 映射建立后删盘（POSIX 上删掉后已映射的内存页照样有效）。

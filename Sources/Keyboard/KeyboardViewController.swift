@@ -125,6 +125,12 @@ final class KeyboardViewController: UIInputViewController {
     override func didReceiveMemoryWarning() {
         super.didReceiveMemoryWarning()
         PinyinEngine.shared.trimCache()
+        // 主词库是 27MB 的文件映射：librime 已经常驻时它是纯负担（脏页虽可回收，
+        // 但映射本身占进程地址空间与页表）。内存告急就整个放掉，
+        // 之后只有真的需要自研解码（librime 没起来/候选太薄）才重新加载一次。
+        if RimeService.shared.isReady {
+            PinyinEngine.shared.releaseDict()
+        }
         KBMetrics.releaseBgImage()
     }
 

@@ -148,7 +148,7 @@ enum ConfigSync {
     @discardableResult
     static func pullFromServer(_ done: ((Bool) -> Void)? = nil) -> Bool {
         guard let auth = AuthStore.current, !auth.ticket.isEmpty else {
-            done?(false)
+            finish(done, false)
             return false
         }
         attemptPull(ticket: auth.ticket, allowRetry: true, done)
@@ -166,18 +166,26 @@ enum ConfigSync {
                     }
                     return
                 }
-                done?(false)
+                finish(done, false)
                 return
             }
             let json = String(data: data, encoding: .utf8) ?? ""
             if json == UserDefaults.standard.string(forKey: appliedKey) {
-                done?(false)
+                finish(done, false)
                 return
             }
             apply(bundle)
             UserDefaults.standard.set(json, forKey: appliedKey)
-            done?(true)
+            finish(done, true)
         }
+    }
+
+    /// 完成回调一律回主线程：拉取走 URLSession / 回环 TCP，天然在后台队列，
+    /// 而调用方（键盘界面）要在回调里改 @State —— 后台改状态是 SwiftUI 的
+    /// 「Modifying state during view update」崩溃源。
+    private static func finish(_ done: ((Bool) -> Void)?, _ v: Bool) {
+        guard let done else { return }
+        if Thread.isMainThread { done(v) } else { DispatchQueue.main.async { done(v) } }
     }
 
     /// 整包落盘：配置各归各库，登录态只收本机设备的票据
@@ -196,15 +204,15 @@ enum ConfigSync {
     /// 主 app 没在跑（连不上/超时）→ false，调用方照旧走服务器。
     static func pullLocal(_ done: @escaping (Bool) -> Void) {
         LocalSyncLink.fetchBundle { bundle in
-            guard let bundle else { done(false); return }
-            guard let json = encoded(bundle) else { done(false); return }
+            guard let bundle else { finish(done, false); return }
+            guard let json = encoded(bundle) else { finish(done, false); return }
             if json == UserDefaults.standard.string(forKey: appliedKey) {
                 done(false)
                 return
             }
             apply(bundle)
             UserDefaults.standard.set(json, forKey: appliedKey)
-            done(true)
+            finish(done, true)
         }
     }
 

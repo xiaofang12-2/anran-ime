@@ -95,6 +95,14 @@ final class PinyinEngine {
     private var cacheKey = ""
     private var cacheResult: [PinyinCandidate] = []
 
+    /// 小 LRU：最近 8 个输入串的候选。
+    /// 单槽缓存时，按一次退格就是「整个词图重算一遍」——长按连删每秒 20 多次，
+    /// 扩展的 CPU 预算扛不住（被系统杀掉的表现同样是「键盘突然消失」）。
+    /// 8 条足够覆盖「打错一个字母再退回来」这类高频回退。
+    private var lruCache: [String: [PinyinCandidate]] = [:]
+    private var lruOrder: [String] = []
+    private static let lruCap = 8
+
     // 用户词频（越用越准）
     private var userFreq: [String: Int] = [:]
     /// 用户自己记下的「拼音 -> 词」，打同样拼音时它们永远排在词典前面
@@ -162,28 +170,20 @@ final class PinyinEngine {
     }
 
     // MARK: - 词库加载
+    //
+    // 分成两档，这是「按键就跳走」的核心修复：
+    //   · ensureMeta  —— 小层（assoc 745KB / assoc_w 6MB / seed 390KB），随时可加载
+    //   · ensureDict  —— 主词库 27MB，只允许尝试一次
+    //
+    // 旧实现把两者绑在一起：只要 librime 没就绪，每次敲键都会重新 stage 一遍
+    // 27MB 词库；而且 librime 已经占了 50MB 时再去解 27MB，
+    // 峰值直接顶穿扩展的 jetsam 红线 —— 表现就是「打几个字键盘消失、切回上一个输入法」。
+    private var metaLoaded = false
+    private var dictTried = false
 
-    private func ensureLoaded() {
-        if ready { return }
-
-        // 词库在包里是密文（SecVault）：解到临时文件 -> 内存映射 -> 立刻删盘
-        let staged = SecVault.stage("pinyin", ext: "bin")
-        if let url = staged,
-           let d = try? Data(contentsOf: url, options: .mappedIfSafe),
-           d.count > 44, d.prefix(4) == Data("ANPY".utf8) {
-            data = d
-            entryCount = u32(8)
-            keyOffTable = u32(12)
-            valOffTable = u32(16)
-            loadSyllables()
-        } else {
-            // 词库没读到就别把 ready 立起来 —— 否则整块键盘永远只剩英文字母。
-            // 下次敲键会再试一遍（例如扩展刚起来时 bundle 还没就绪）。
-            SecVault.dispose(staged)
-            return
-        }
-        ready = true
-        cacheKey = ""
+    private func ensureMeta() {
+        if metaLoaded { return }
+        metaLoaded = true
 
         let assocStaged = SecVault.stage("assoc", ext: "bin")
         if let url = assocStaged {
@@ -204,6 +204,45 @@ final class PinyinEngine {
             loadSeed(url)
         }
         SecVault.dispose(seedStaged)
+    }
+
+    /// 主词库：只在真的要用自研解码时才加载，且**只试一次**。
+    /// 失败不重试 —— 重试的代价是每次按键再解一遍 27MB。
+    @discardableResult
+    private func ensureDict() -> Bool {
+        if ready { return true }
+        if dictTried { return false }
+        dictTried = true
+
+        // 词库在包里是密文（SecVault）：流式解到临时文件 -> 内存映射 -> 立刻删盘
+        let staged = SecVault.stage("pinyin", ext: "bin")
+        if let url = staged,
+           let d = try? Data(contentsOf: url, options: .mappedIfSafe),
+           d.count > 44, d.prefix(4) == Data("ANPY".utf8) {
+            data = d
+            entryCount = u32(8)
+            keyOffTable = u32(12)
+            valOffTable = u32(16)
+            loadSyllables()
+            ready = true
+            clearCache()
+        }
+        SecVault.dispose(staged)
+        return ready
+    }
+
+    /// 内存告急/长时间空闲：把主词库映射放掉（下次需要时再加载一次）。
+    /// 只有 ready 才需要，且必须同时清 dictTried 才能重新加载。
+    func releaseDict() {
+        data = nil
+        entryCount = 0
+        keyOffTable = 0
+        valOffTable = 0
+        syllableSet = []
+        ready = false
+        dictTried = false
+        clearCache()
+        cacheResult = []
     }
 
     /// 读 seed cell：与主词库同格式（ANPY v2），只取 key/val 偏移表，mmap 不复制。
@@ -452,14 +491,24 @@ final class PinyinEngine {
     // MARK: - 对外出候选
 
     func candidates(for raw: String) -> [PinyinCandidate] {
-        ensureLoaded()
+        ensureMeta()
+        // 主词库缺失（首次加载失败 / 内存告急被放掉）：直接给空，
+        // 由 InputEngine 用 librime / 短语 / 用户词兜底，绝不在这里反复重解 27MB。
+        guard ensureDict() else { return [] }
         let key = "q:" + raw
         if key == cacheKey { return cacheResult }
+        if let hit = lruCache[key] { return hit }
         let t0 = CFAbsoluteTimeGetCurrent()
         let result = qwertyCandidates(raw)
         lastDecodeMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
         cacheKey = key
         cacheResult = result
+        lruCache[key] = result
+        lruOrder.removeAll { $0 == key }
+        lruOrder.append(key)
+        if lruOrder.count > PinyinEngine.lruCap {
+            lruCache.removeValue(forKey: lruOrder.removeFirst())
+        }
         return result
     }
 
@@ -470,7 +519,10 @@ final class PinyinEngine {
     /// **策展缩写词**（口语/梗/怼人）、**自定义短语**。跳过耗时的词图搜索，
     /// 打字才不会卡 —— 这是「零卡顿」的底线。
     func lightCandidates(for raw: String) -> [PinyinCandidate] {
-        ensureLoaded()
+        // 注意：这里**故意不加载主词库**（27MB）。
+        // 轻量层的四样东西 —— 用户记忆词 / seed cell / 自定义短语 / 音节表 —— 
+        // 全都在小层里；为了它们去解 27MB，在 librime 已经占 50MB 时就是自杀。
+        ensureMeta()
         let input = raw.lowercased().filter { $0 >= "a" && $0 <= "z" }
         guard !input.isEmpty else { return [] }
         let n = input.count
@@ -483,8 +535,9 @@ final class PinyinEngine {
             cands[text] = (cov, lp, pri)
         }
 
-        // 策展缩写词（整串切不成音节时才用，跟全量路径同一套判断）
-        if set.abbrevInput && !splitsIntoSyllables(input) {
+        // 策展缩写词（整串切不成音节时才用，跟全量路径同一套判断）。
+        // 依赖主词库的音节表与缩写表，词库没加载就跳过（不能拿空音节集误判）。
+        if ready, set.abbrevInput, !splitsIntoSyllables(input) {
             for e in abbrEdges(input) { put(e.word, n, e.logp - PinyinEngine.abbrPen, pri: true) }
         }
         // 用户记忆词：完整命中顶最前；打在半路上（niha）也召回学过的整词（nihao→你好）
@@ -523,7 +576,7 @@ final class PinyinEngine {
             }
         }
         phrases = out
-        cacheKey = ""
+        clearCache()
         cacheResult = []
     }
 
@@ -537,7 +590,7 @@ final class PinyinEngine {
     /// 上屏后联想：先看「这个词之后你自己常打什么」（用户上下文），
     /// 再看「这个字之后通用上常接什么」（字级 bigram），合并去重。
     func associate(_ committed: String) -> [String] {
-        ensureLoaded()
+        ensureMeta()      // 只需要字/词级 LM 小表，不碰 27MB 主词库
         let key = committed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let last = key.last else { return [] }
         var out: [String] = []
@@ -616,7 +669,7 @@ final class PinyinEngine {
             userWords[py] = list
         }
 
-        cacheKey = ""            // 下次重算，让刚学的词立刻往前提
+        clearCache()             // 下次重算，让刚学的词立刻往前提
         persistUser()
     }
 
@@ -643,7 +696,7 @@ final class PinyinEngine {
                     .prefix(1500)
                     .map { ($0.key, $0.value) })
         }
-        cacheKey = ""
+        clearCache()
         persistUser()
     }
 
@@ -663,7 +716,7 @@ final class PinyinEngine {
         for (k, row) in userBigram where row[w] != nil {
             userBigram[k] = row.filter { $0.key != w }
         }
-        cacheKey = ""
+        clearCache()
         persistUser()
     }
 
@@ -672,7 +725,7 @@ final class PinyinEngine {
         userFreq.removeAll()
         userWords.removeAll()
         userBigram.removeAll()
-        cacheKey = ""
+        clearCache()
         persistUser()
     }
 
@@ -688,8 +741,15 @@ final class PinyinEngine {
     /// 内存告急时（系统 jetsam 红线附近）清掉解码缓存，给键盘扩展续一口命。
     /// 缓存只是「上一次拼音 → 候选」的镜像，扔了下次敲键重算即可，零功能损失。
     func trimCache() {
+        clearCache()
+    }
+
+    /// 清空候选缓存（学词/换短语/换设置后必须调，否则候选是旧的）
+    private func clearCache() {
         cacheKey = ""
         cacheResult = []
+        lruCache.removeAll(keepingCapacity: true)
+        lruOrder.removeAll(keepingCapacity: true)
     }
 
     // MARK: - 26 键解码
@@ -746,7 +806,9 @@ final class PinyinEngine {
         }
 
         // 3) 词图 Beam Search：句子 / 前缀片段
-        let states = beam(chars)
+        //    超长输入（误触长按、粘贴整段）直接跳过：代价是 O(n·width·edges)，
+        //    40 个字母以上就会把扩展主线程卡到被系统打断，宁可只给前缀候选。
+        let states = n <= 40 ? beam(chars) : []
         for j in 1...n {
             for (sc, ws) in states[j] {
                 if ws.isEmpty { continue }
@@ -886,8 +948,11 @@ final class PinyinEngine {
         // 不是最优解 —— 这正是「长句组句不如百度」的直接原因。放到 14 / 1800：
         // 实测仍是一次按键毫秒级（states[i] 大多为空，边缘惰性展开），
         // 换来的候选质量提升远大于这点开销。
-        let width = n > 12 ? 14 : min(20, max(12, n * 2))
-        let edgeCap = n > 12 ? 1800 : 3000
+        // 长句（>12 字母）：0.9.31 曾放大到 14/1800，长句候选确实更全，
+        // 但每次按键的分配量跟着涨（每个状态都复制一份路径数组），
+        // 在扩展里会推高内存峰值。回退到 12/1500 —— 拿回一半收益，风险减半。
+        let width = n > 12 ? 12 : min(20, max(12, n * 2))
+        let edgeCap = n > 12 ? 1500 : 3000
         var edgeCache = [[(j: Int, word: String, logp: Double)]?](repeating: nil, count: n)
 
         var states = [[(Double, [String])]](repeating: [], count: n + 1)

@@ -32,6 +32,15 @@ final class InputEngine {
 
     /// 取候选（热路径）
     func candidates(for raw: String) -> [PinyinCandidate] {
+        // 整条解码链会有大量临时对象（词图状态、路径数组、候选字典）。
+        // 包一层 autoreleasepool：每次按键结束就把这些临时对象放掉，
+        // 不让它们堆到自动释放池边界（扩展的 jetsam 红线只有 60~70MB）。
+        autoreleasepool {
+            candidatesInner(for: raw)
+        }
+    }
+
+    private func candidatesInner(for raw: String) -> [PinyinCandidate] {
         // librime 没起来：整条链路退回纯自研引擎
         guard RimeService.shared.isReady else {
             return applyPin(PinyinEngine.shared.candidates(for: raw), raw: raw)

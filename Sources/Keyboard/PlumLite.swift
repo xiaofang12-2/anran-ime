@@ -163,12 +163,17 @@ final class PlumLite {
         var pins: [String: String]
     }
 
+    /// 落盘走后台串行队列：JSON 编码 + 写文件在扩展里都是真 IO，
+    /// 卡在按键/上屏的主线程上就是掉帧甚至被 watchdog 打断。
+    private let ioQueue = DispatchQueue(label: "anran.plumlite.io", qos: .utility)
+
     private func persist() {
         guard dirty else { return }
-        let s = Store(hits: hits, pins: pins)
-        if let d = try? JSONEncoder().encode(s) {
+        dirty = false
+        let snapshot = Store(hits: hits, pins: pins)   // 值类型，跨线程安全
+        ioQueue.async {
+            guard let d = try? JSONEncoder().encode(snapshot) else { return }
             SharedStore.write("ime_plumlite.json", d)
-            dirty = false
         }
     }
 
