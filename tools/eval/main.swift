@@ -53,6 +53,9 @@ func run(_ cases: [(String, String)], label: String,
     var failures: [String] = []
 
     for (py, want) in cases {
+        // 逐条打印：万一引擎在某条输入上崩了，日志最后一行就是崩点
+        print("· \(py)")
+        fflush(stdout)
         let list = PinyinEngine.shared.candidates(for: py)
         let words = topN(list, 3)
         if words.first == want { hit1 += 1 }

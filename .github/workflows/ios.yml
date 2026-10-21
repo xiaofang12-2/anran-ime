@@ -42,7 +42,7 @@ jobs:
             tools/eval/main.swift tools/eval/stubs.swift \
             Sources/Keyboard/PinyinEngine.swift \
             Sources/Shared/SharedStore.swift Sources/Shared/SecVault.swift
-          ANRAN_DICT_DIR=/tmp/evaldict /tmp/evalbin | tee /tmp/eval.log
+          ANRAN_DICT_DIR=/tmp/evaldict SWIFT_BACKTRACE=enable=yes /tmp/evalbin 2>&1 | tee /tmp/eval.log
 
       - name: 编译（不签名）
         run: |
