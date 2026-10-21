@@ -115,8 +115,8 @@ def main():
                 if lp > best_old.get(w, -1e9):
                     best_old[w] = lp
             p = e + 1
-        if rows:
-            keys.append((key, rows))
+        # 空键也要保留一条（偏移表必须与原表等长，长度才不变）
+        keys.append((key, rows))
 
     print("条目 %d，不同词 %d" % (n, len(best_old)))
 
@@ -137,21 +137,53 @@ def main():
 
     lp_of = {w: new_lp(w) for w in best_old}
 
-    clamped = 0
-    total_rec = 0
+    # 3) 按新 logP 重排每个拼音键内的候选，并重建值块。
+    #
+    # 为什么不能只改分数、保持原顺序：
+    #   旧库里 ma 键的「嘛/吗/马/骂」是**同分并列**的（都 -9.77），
+    #   字节顺序纯属当年写库时的偶然。如果只改分数不排序，
+    #   真实词频更高的「吗」会被前一条「嘛」压住（实测 ma 首位出「嘛」）。
+    #   值块每条 entry 长度不变（2 字节分数 + 词），所以重排不改文件总长，
+    #   键块与键偏移表完全不用动，只需重写值偏移表和值块。
+    reordered = 0
+    new_vals = bytearray()
+    new_offs = [0]
     for key, rows in keys:
-        prev = 1e9
+        packed = []
         for off, w, _old in rows:
-            total_rec += 1
-            lp = lp_of.get(w, TAIL_LO)
-            if lp > prev:
-                lp = prev - 0.001
-                clamped += 1
-            prev = lp
-            d[off:off + 2] = quantize(lp)
+            packed.append((lp_of.get(w, TAIL_LO), w))
+        # 分数降序；同分按词长、字典序，保证可复现
+        packed.sort(key=lambda x: (-x[0], len(x[1]), x[1]))
+        if [w for _, w in packed] != [w for _, _o, w in rows]:
+            reordered += 1
+        # 原格式：entry 之间用 0x01 分隔，最后一个后面没有分隔符
+        for i, (lp, w) in enumerate(packed):
+            if i:
+                new_vals.append(0x01)
+            new_vals += quantize(lp)
+            new_vals += w.encode("utf-8")
+        new_offs.append(len(new_vals))
 
-    print("单调性保护：修正 %d / %d 条候选" % (clamped, total_rec))
-    open(dst, "wb").write(bytes(d))
+    # 头布局：magic(4)+pad(4) | n@8 | keyTbl@12 | valTbl@16 | keyBlk@20 | valBlk@24
+    val_tbl_pos = struct.unpack("<I", bytes(d[16:20]))[0]
+    val_blk_pos = struct.unpack("<I", bytes(d[24:28]))[0]
+    if len(new_offs) != n + 1:
+        print("!! 键数 %d 与表项 %d 不符，放弃重排" % (len(new_offs) - 1, n))
+        return 3
+    if val_tbl_pos + 4 * len(new_offs) > val_blk_pos:
+        print("!! 值偏移表会撑爆值块起点，放弃重排")
+        return 3
+    # 值块长度可能与原来差几十 KB：扫描时跳过了 len<3 的空词条（score+空词，
+    # 引擎读出来也是空串，本来就没用）。ANPY 头里没有「文件总长」字段，
+    # 偏移表全量重写过，所以长度变化是安全的。
+    delta = len(new_vals) - (len(d) - val_blk_pos)
+    for i, o in enumerate(new_offs):
+        struct.pack_into("<I", d, val_tbl_pos + 4 * i, val_blk_pos + o)
+    d = d[:val_blk_pos] + new_vals
+    print("值块长度变化 %+d 字节（丢弃空词条后的正常差异）" % delta)
+
+    print("按键重排：%d / %d 个键的候选顺序发生变化" % (reordered, len(keys)))
+
     print("写出 %s（%.1fMB）" % (dst, os.path.getsize(dst) / 1048576))
 
     for w in ["的", "是", "我", "公司", "攻丝", "刀功", "香水", "想睡", "着急", "钥匙", "到", "你好"]:

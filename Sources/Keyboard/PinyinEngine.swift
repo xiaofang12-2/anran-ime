@@ -954,8 +954,20 @@ final class PinyinEngine {
         // 1~2 字母：吃「短输入补全表」。它按打字概率预排（单字优先），
         // 拿 raw logP 排会被 在线/咱们 这类长词霸榜。
         if n <= 2 {
+            // ① 精确音节：打 ne 必须给「呢」、打 wo 必须给「我」。
+            //    以前这一步没有，2 字母全靠补全表，于是 ne 首位成了「能」
+            //    （能 的全局词频高得多，但它不是 ne 这个音节的字）。
+            if let ei = exactIndex(input) {
+                for c in candidatesAt(ei) { put(c.word, n, c.logp, tier: 0) }
+            }
+            // ② 短输入补全表：**必须保留它的预排顺序**。
+            //    表是按打字概率预排的（单字优先），如果拿 raw logP 重排，
+            //    「在线/咱们」这类长词会霸榜，表就白建了。
+            //    用位次构造递减分数：既保住顺序，又整体落在精确音节之后。
             if let ai = exactIndex(input + "\u{7f}") {
-                for c in candidatesAt(ai) { put(c.word, n, c.logp) }
+                for (idx, c) in candidatesAt(ai).enumerated() {
+                    put(c.word, n, -8.0 - Double(idx) * 0.6, tier: 1)
+                }
             }
             // nb/sb/tm/wx/nh 这类两字母缩写切不成音节，走缩写表
             if set.abbrevInput && !splitOK {
