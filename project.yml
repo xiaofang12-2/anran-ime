@@ -72,9 +72,12 @@ targets:
       # 词级 n-gram 语言模型（ANWG v2，自研兜底引擎的上下文项升级）
       - path: Support/dict/assoc_w.bin.enc
         buildPhase: resources
-      # 三元语言模型（ANWT v1)：虚词/同音序列判定
-      - path: Support/dict/assoc_t.bin.enc
-        buildPhase: resources
+      # 三元语言模型（ANWT v1）默认不打进包：实测句级首位 0 提升、P95 8.3→18.7ms。
+      # 原因是语料（rime 短语 / jieba 词表 / 百度 seed 词条）全是「词组集合」，
+      # 不含「一下再」「别着急」这类虚词序列，三元表恰好缺的正是要判的那一类。
+      # 代码路径保留（PinyinEngine.loadTrigram），拿到真实句子语料后加回这两行即可启用。
+      # - path: Support/dict/assoc_t.bin.enc
+      #   buildPhase: resources
       # 百度内置词条 cell（口语片段/成语/软件名，10,736 条，解析自百度 APK 的 .bcd）
       - path: Support/dict/seed.bin.enc
         buildPhase: resources

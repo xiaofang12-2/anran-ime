@@ -129,10 +129,11 @@ func measure(_ cases: [(String, String)]) -> Result {
         times.append((CFAbsoluteTimeGetCurrent() - t) * 1000)
         let words = list.prefix(3).map { $0.word }
         r.total += 1
-        if words.first == want { r.hit1 += 1 }
-        if words.contains(want) { r.hit3 += 1 } else {
-            r.fails.append("\(py) 期望「\(want)」实际 \(words.joined(separator: " / "))")
+        if words.first == want { r.hit1 += 1 } else {
+            r.fails.append("\(py) 期望「\(want)」首位是「\(words.first ?? "-")」"
+                + "（前三 \(words.joined(separator: " / "))）")
         }
+        if words.contains(want) { r.hit3 += 1 }
     }
     times.sort()
     if !times.isEmpty {

@@ -33,8 +33,9 @@ jobs:
           # macOS runner 的 python3 是 externally-managed，不能直接 pip install
           python3 -m venv /tmp/ev
           /tmp/ev/bin/python -m pip install --quiet cryptography
+          # 注意：assoc_t（三元）不进包，这里也不解密 —— 评测必须与线上行为一致
           mkdir -p /tmp/evaldict
-          for n in pinyin assoc assoc_w seed assoc_t; do
+          for n in pinyin assoc assoc_w seed; do
             /tmp/ev/bin/python tools/vault_enc.py dec2 "Support/dict/$n.bin.enc" "/tmp/evaldict/$n.bin"
           done
 
