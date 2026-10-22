@@ -40,6 +40,9 @@ struct SettingsView: View {
                         arDivider()
                         ARToggleRow(title: "特殊字体（加密）",
                                     isOn: $s.antiDetect)
+                        arDivider()
+                        ARToggleRow(title: "拆字（最强）",
+                                    isOn: $s.antiRadical)
                     }
 
                     ARTheme.sectionTitle("个性化")

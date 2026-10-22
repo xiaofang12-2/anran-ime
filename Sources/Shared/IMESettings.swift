@@ -32,6 +32,8 @@ struct IMESettings: Codable, Equatable {
     var tailSymbol = ""
     /// 特殊字体：开启后输出内容插零宽字符加密，视觉不变、绕过平台检测
     var antiDetect = false
+    /// 拆字：敏感字拆成偏旁部首，纯文本最强反检测（视觉变偏旁）
+    var antiRadical = false
     /// 版本戳
     var rev: Int = 0
 
@@ -45,7 +47,7 @@ struct IMESettings: Codable, Equatable {
         case fuzzyPinyin, abbrevInput, smartCorrect, autoCapitalize
         case keySound, vibration, candidateCount, outputSpeed, brushSpeed
         case clearLearnToken, tailEnabled, tailSymbol, rev
-        case antiDetect
+        case antiDetect, antiRadical
     }
 
     /// 老版本存的 JSON 缺新字段也能解（缺的补默认值），设置不会被整体重置
@@ -66,6 +68,7 @@ struct IMESettings: Codable, Equatable {
         tailEnabled     = try c.decodeIfPresent(Bool.self, forKey: .tailEnabled) ?? false
         tailSymbol      = try c.decodeIfPresent(String.self, forKey: .tailSymbol) ?? ""
         antiDetect      = try c.decodeIfPresent(Bool.self, forKey: .antiDetect) ?? false
+        antiRadical     = try c.decodeIfPresent(Bool.self, forKey: .antiRadical) ?? false
         rev             = try c.decodeIfPresent(Int.self, forKey: .rev) ?? 0
     }
 
