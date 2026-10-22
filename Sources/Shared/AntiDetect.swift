@@ -8,8 +8,10 @@ import Foundation
 /// 「原文」匹配就会落空。随机混用多种零宽字符，避免被统一 strip。
 enum AntiDetect {
 
-    /// 零宽字符池：零宽空格 / 零宽非连接符 / 零宽连接符 / 零宽无断空格
-    private static let zws: [Character] = ["\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}"]
+    /// 零宽字符池：零宽空格 / 零宽非连接符 / 零宽连接符。
+    /// 刻意不含 U+FEFF（零宽无断空格）：它是 no-break 字符，插在行尾会把
+    /// 后面的换行「粘」住，导致两句话糊成一行（分行丢失的元凶之一）。
+    private static let zws: [Character] = ["\u{200B}", "\u{200C}", "\u{200D}"]
 
     /// 是否开启（读「输入设置 → 特殊字体」）
     static var enabled: Bool { IMESettingsStore.current.antiDetect }

@@ -381,14 +381,22 @@ struct KeyboardRootView: View {
         startNextBrushLine()
     }
 
-    /// 刷天帝内容按行拆（同思想库的 enumerateLines，支持任意内容分行）
+    /// 刷天帝内容按行拆（显式处理所有换行符，保证粘贴的两句话不糊成一行）
     private func brushContentLines(_ content: String) -> [String] {
-        var lines: [String] = []
-        content.enumerateLines { line, _ in
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if !t.isEmpty { lines.append(t) }
-        }
-        return lines
+        splitContentLines(content)
+    }
+
+    /// 统一的按行拆内容：显式处理 \n / \r\n / \r / U+2028 / U+2029，
+    /// 任何来源（微信/网页/备忘录）粘进来的多行内容都一句是一句，绝不糊成一行。
+    private func splitContentLines(_ content: String) -> [String] {
+        let normalized = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\u{2028}", with: "\n")
+            .replacingOccurrences(of: "\u{2029}", with: "\n")
+        return normalized.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     /// 逐行输出：整句上屏（sendInstant，不逐字），
@@ -577,15 +585,9 @@ struct KeyboardRootView: View {
     }
 
     /// 关键词内容按行拆（去空行去首尾空白）
-    /// 智能分行：按 Unicode 标准换行拆（\n / \r\n / \r / U+2028/U+2029 全认），
-    /// 不管从微信、网页还是备忘录粘进来的多行内容，一句是一句，绝不叠成一行。
+    /// 走 splitContentLines：显式处理所有换行符，一句是一句，绝不叠成一行。
     private func thoughtContentLines(_ content: String) -> [String] {
-        var lines: [String] = []
-        content.enumerateLines { line, _ in
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if !t.isEmpty { lines.append(t) }
-        }
-        return lines
+        splitContentLines(content)
     }
 
     /// 尾巴：开启后思想库发出去的每句尾部带设置的符号。

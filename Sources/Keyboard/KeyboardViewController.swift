@@ -139,7 +139,9 @@ final class KeyboardViewController: UIInputViewController {
             self?.textDocumentProxy.insertText(AntiDetect.apply(text))
             try? await Task.sleep(nanoseconds: 60_000_000)
             self?.textDocumentProxy.insertText("\n")
-            try? await Task.sleep(nanoseconds: gap)
+            // 换行后给宿主足够时间处理（聊天框要花一拍触发发送/换行），
+            // 至少 220ms，否则下一句抢跑会把两行糊成一行（分行丢失）。
+            try? await Task.sleep(nanoseconds: max(gap, 220_000_000))
             done()
         }
     }
