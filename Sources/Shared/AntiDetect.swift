@@ -42,6 +42,8 @@ enum AntiDetect {
     static var enabled: Bool { IMESettingsStore.current.antiDetect }
     /// 是否开启拆字（读「输入设置 → 拆字」）
     static var radicalEnabled: Bool { IMESettingsStore.current.antiRadical }
+    /// 是否开启下加点（读「输入设置 → 下加点」）：每个字下加一个 U+0323 小点（看得见）
+    static var dotEnabled: Bool { IMESettingsStore.current.antiDot }
 
     /// 敏感字拆字：命中映射表返回部首分解，否则返回原字符。
     static func radicalize(_ ch: Character) -> String {
@@ -53,7 +55,8 @@ enum AntiDetect {
     static func apply(_ text: String) -> String {
         let useZW = enabled
         let useRadical = radicalEnabled
-        guard (useZW || useRadical), !text.isEmpty else { return text }
+        let useDot = dotEnabled
+        guard (useZW || useRadical || useDot), !text.isEmpty else { return text }
         var out = ""
         for ch in text {
             if ch.isWhitespace {
@@ -63,6 +66,7 @@ enum AntiDetect {
             let piece = useRadical ? radicalize(ch) : String(ch)
             for pc in piece {
                 out.append(pc)
+                if useDot { out.append("\u{0323}") }      // 下加点（看得见）
                 if useZW { out.append(zws.randomElement()!) }
             }
         }
@@ -73,11 +77,13 @@ enum AntiDetect {
     static func applyCh(_ ch: String) -> String {
         let useZW = enabled
         let useRadical = radicalEnabled
-        guard (useZW || useRadical), let c = ch.first, !c.isWhitespace else { return ch }
+        let useDot = dotEnabled
+        guard (useZW || useRadical || useDot), let c = ch.first, !c.isWhitespace else { return ch }
         var out = ""
         let piece = useRadical ? radicalize(c) : ch
         for pc in piece {
             out.append(pc)
+            if useDot { out.append("\u{0323}") }
             if useZW { out.append(zws.randomElement()!) }
         }
         return out

@@ -43,6 +43,9 @@ struct SettingsView: View {
                         arDivider()
                         ARToggleRow(title: "拆字（最强）",
                                     isOn: $s.antiRadical)
+                        arDivider()
+                        ARToggleRow(title: "下加点（可见）",
+                                    isOn: $s.antiDot)
                     }
 
                     ARTheme.sectionTitle("个性化")

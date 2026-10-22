@@ -34,6 +34,8 @@ struct IMESettings: Codable, Equatable {
     var antiDetect = false
     /// 拆字：敏感字拆成偏旁部首，纯文本最强反检测（视觉变偏旁）
     var antiRadical = false
+    /// 下加点：每个字下加一个小点（U+0323），看得见的反检测
+    var antiDot = false
     /// 版本戳
     var rev: Int = 0
 
@@ -47,7 +49,7 @@ struct IMESettings: Codable, Equatable {
         case fuzzyPinyin, abbrevInput, smartCorrect, autoCapitalize
         case keySound, vibration, candidateCount, outputSpeed, brushSpeed
         case clearLearnToken, tailEnabled, tailSymbol, rev
-        case antiDetect, antiRadical
+        case antiDetect, antiRadical, antiDot
     }
 
     /// 老版本存的 JSON 缺新字段也能解（缺的补默认值），设置不会被整体重置
@@ -69,6 +71,7 @@ struct IMESettings: Codable, Equatable {
         tailSymbol      = try c.decodeIfPresent(String.self, forKey: .tailSymbol) ?? ""
         antiDetect      = try c.decodeIfPresent(Bool.self, forKey: .antiDetect) ?? false
         antiRadical     = try c.decodeIfPresent(Bool.self, forKey: .antiRadical) ?? false
+        antiDot         = try c.decodeIfPresent(Bool.self, forKey: .antiDot) ?? false
         rev             = try c.decodeIfPresent(Int.self, forKey: .rev) ?? 0
     }
 
