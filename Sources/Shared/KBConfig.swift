@@ -65,6 +65,12 @@ struct KBTheme: Codable, Equatable {
 
     static let classic = KBTheme()
 
+    /// 默认主题：樱花粉（少女风）
+    static let sakura = KBTheme(name: "樱花粉", bg: "#FDEBF2", key: "#FFFFFF", keyPressed: "#FAD3E2",
+                                special: "#F7C9DB", specialPressed: "#F0B0C9",
+                                text: "#5A2A3C", specialText: "#5A2A3C",
+                                bar: "#C7FFFFFF", candidateText: "#5A2A3C", accent: "#E85D92")
+
     /// 内置预设：不用导皮肤也有得挑
     static let presets: [KBTheme] = [
         classic,
@@ -72,10 +78,7 @@ struct KBTheme: Codable, Equatable {
                 special: "#2A2B31", specialPressed: "#3A3B42",
                 text: "#F2F2F5", specialText: "#E8E8EE",
                 bar: "#CC26272D", candidateText: "#F2F2F5", accent: "#5B9BFF"),
-        KBTheme(name: "樱花粉", bg: "#FBE8EE", key: "#FFFFFF", keyPressed: "#F7CFDD",
-                special: "#F3BFD2", specialPressed: "#EBA8C2",
-                text: "#5A2A3C", specialText: "#5A2A3C",
-                bar: "#B3FFFFFF", candidateText: "#5A2A3C", accent: "#E85D92"),
+        sakura,
         KBTheme(name: "深海蓝", bg: "#E3ECF7", key: "#FFFFFF", keyPressed: "#C2D6EF",
                 special: "#AFC8E8", specialPressed: "#93B4DD",
                 text: "#16324F", specialText: "#16324F",
@@ -99,7 +102,7 @@ struct KBConfig: Codable, Equatable {
     /// 行与行的纵向间距（对标 iOS：纵向明显比横向松）
     var rowGap: Double = 10
     /// 键帽圆角
-    var corner: Double = 4
+    var corner: Double = 10
     /// 字号缩放（1.0 为基准）
     var fontScale: Double = 1.0
     /// 键盘左右边距
@@ -145,7 +148,7 @@ struct KBConfig: Codable, Equatable {
     }
 
     /// 当前生效主题（没设过就是经典白）
-    var activeTheme: KBTheme { theme ?? .classic }
+    var activeTheme: KBTheme { theme ?? .sakura }
 }
 
 // MARK: - 键位覆盖应用

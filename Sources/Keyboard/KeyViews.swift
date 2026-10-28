@@ -45,7 +45,7 @@ struct KeyCap: View {
         ZStack {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
                 .fill(fill(pressed))
-                .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
+                .shadow(color: Color.black.opacity(0.13), radius: 1.5, x: 0, y: 1)
             capLabel
         }
         .scaleEffect(pressed && !spec.special ? 0.96 : 1)
@@ -149,7 +149,7 @@ struct RepeatKey: View {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
                 .fill(pressed ? KBMetrics.themeKeyPressedColor
                               : KBMetrics.themeSpecialColor)
-                .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
+                .shadow(color: Color.black.opacity(0.13), radius: 1.5, x: 0, y: 1)
             capLabel
         }
         .contentShape(Rectangle())
@@ -231,7 +231,7 @@ struct SpaceKey: View {
             RoundedRectangle(cornerRadius: KBMetrics.corner, style: .continuous)
                 .fill(pressed ? KBMetrics.themeKeyPressedColor
                               : KBMetrics.themeKeyColor)
-                .shadow(color: .black.opacity(0.30), radius: 0, x: 0, y: 1)
+                .shadow(color: Color.black.opacity(0.13), radius: 1.5, x: 0, y: 1)
             Text(spec.label)
                 .font(.system(size: 15 * KBMetrics.fontScale))
                 .foregroundColor(KBMetrics.themeTextColor)
