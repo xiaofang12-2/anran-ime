@@ -41,7 +41,7 @@
 		     真正的安全靠 AnRanAPI 里的证书固定（只认打包的 server.crt） -->
 		<key>NSExceptionDomains</key>
 		<dict>
-			<key>47.76.120.53</key>
+			<key>8.218.160.91</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>

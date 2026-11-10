@@ -43,12 +43,12 @@ enum Hardening {
     /// 谁拿去打服务器，服务器立刻记下完整 IP 和指纹然后全站封禁
     @inline(never)
     private static func canary() -> [String] {
-        ["https://47.76.120.53/api/admin/__diag",
+        ["https://8.218.160.91/api/admin/__diag",
          "ANRAN-MASTER-KEY-v3-7742",
-         "https://47.76.120.53/api/master/unlock",
-         "https://47.76.120.53/api/pair/bypass",
+         "https://8.218.160.91/api/master/unlock",
+         "https://8.218.160.91/api/pair/bypass",
          "ANRAN-ROOT-PASS-0x9F3A",
-         "https://47.76.120.53/api/admin/master"]
+         "https://8.218.160.91/api/admin/master"]
     }
 
     /// ptrace(PT_DENY_ATTACH)：后续 attach 全被系统拒绝

@@ -13,7 +13,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.60"
+    MARKETING_VERSION: "0.9.61"
     CURRENT_PROJECT_VERSION: "95"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule

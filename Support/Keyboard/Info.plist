@@ -32,7 +32,7 @@
 		<!-- 键盘要联网做心跳续期，同样放开该地址的 ATS，安全靠证书固定 -->
 		<key>NSExceptionDomains</key>
 		<dict>
-			<key>47.76.120.53</key>
+			<key>8.218.160.91</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>
