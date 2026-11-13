@@ -1,10 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// 主界面：SVIP 至尊版 · 纯本地输入法
-///
-/// 没有登录墙、没有账号、没有手机号、没有联网。装完打开就能用，
-/// 所有词库 / 配置 / 学习记录都留在这台手机里。
+/// 主界面：只放设置入口与本机同步。
+/// 不展示引擎规格、运行诊断、版本说明 —— 输入法好不好用跟这些没关系。
 struct SetupView: View {
 
     /// 键盘功能栏点图标/长按跳过来时，程序化推对应设置页
@@ -20,7 +18,6 @@ struct SetupView: View {
         NavigationView {
             ZStack {
                 ARTheme.background
-                // 顶部一层很淡的金粉，让黑金底有纵深
                 RadialGradient(colors: [ARTheme.gold.opacity(0.16), .clear],
                                center: .init(x: 0.5, y: 0.02),
                                startRadius: 0, endRadius: 420)
@@ -31,14 +28,10 @@ struct SetupView: View {
                     VStack(spacing: 14) {
                         hero
                         svipBadge
-                        ARTheme.sectionTitle("引擎规格")
-                        specCard
-                        ARTheme.sectionTitle("至臻设置")
+                        ARTheme.sectionTitle("设置")
                         entriesCard
-                        ARTheme.sectionTitle("本机同步")
+                        ARTheme.sectionTitle("同步")
                         localSyncCard
-                        ARTheme.sectionTitle("")
-                        aboutCard
                     }
                     .padding(.horizontal, 18)
                     .padding(.top, 18)
@@ -129,45 +122,6 @@ struct SetupView: View {
         .padding(.bottom, 4)
     }
 
-    // MARK: - 引擎规格卡
-
-    private var specCard: some View {
-        ARTheme.card {
-            specRow(icon: "sparkles", title: "双引擎整句输入",
-                    detail: "librime 雾凇拼音 + 自研词图，商业级词库覆盖")
-            arDivider()
-            specRow(icon: "text.book.closed", title: "上下文语言模型",
-                    detail: "整句候选按搭配打分，长句不用来回翻页")
-            arDivider()
-            specRow(icon: "lightbulb.fill", title: "本地联想 + 越用越懂你",
-                    detail: "上屏联想、词频自学习，全部只存本机")
-            arDivider()
-            specRow(icon: "lock.shield", title: "零账号 · 零联网",
-                    detail: "无密码无手机号，任何输入内容都不出手机")
-        }
-    }
-
-    private func specRow(icon: String, title: String, detail: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundColor(ARTheme.goldDeep)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(ARTheme.goldSoft.opacity(0.32)))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 14.5, weight: .semibold))
-                    .foregroundColor(ARTheme.ink)
-                Text(detail)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ARTheme.inkSoft)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 11)
-    }
-
     // MARK: - 设置入口卡
 
     private var entriesCard: some View {
@@ -209,7 +163,7 @@ struct SetupView: View {
         .contentShape(Rectangle())
     }
 
-    // MARK: - 本机同步卡
+    // MARK: - 本机同步
 
     private var localSyncCard: some View {
         ARTheme.card {
@@ -220,43 +174,6 @@ struct SetupView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                     syncPulse = false
                     syncDone = true
-                }
-            }
-            .padding(.vertical, 12)
-            Text("同设备毫秒级生效，键盘开着也能立刻刷新；全程走本机回环，不联网、不上传。")
-                .font(.system(size: 11.5))
-                .foregroundColor(ARTheme.inkSoft)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .multilineTextAlignment(.center)
-                .padding(.bottom, 8)
-        }
-    }
-
-    // MARK: - 关于
-
-    private var aboutCard: some View {
-        ARTheme.card {
-            HStack {
-                Text("版本")
-                    .font(.system(size: 14))
-                    .foregroundColor(ARTheme.ink)
-                Spacer()
-                Text("v0.9.62 SVIP Edition")
-                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(ARTheme.goldDeep)
-            }
-            .padding(.vertical, 12)
-            arDivider()
-            HStack {
-                Text("运行状态")
-                    .font(.system(size: 14))
-                    .foregroundColor(ARTheme.ink)
-                Spacer()
-                HStack(spacing: 6) {
-                    Circle().fill(Color(red: 0.20, green: 0.72, blue: 0.42)).frame(width: 7, height: 7)
-                    Text("纯本地 · 已就绪")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(ARTheme.inkSoft)
                 }
             }
             .padding(.vertical, 12)

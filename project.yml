@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.62"
-    CURRENT_PROJECT_VERSION: "97"
+    MARKETING_VERSION: "0.9.63"
+    CURRENT_PROJECT_VERSION: "98"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -169,6 +169,15 @@ targets:
             cp -R /tmp/rl/. "$SHARED"/ 2>/dev/null
           fi
 
+          # ---- 3.4 关掉雾凇的 Emoji 开关与滤镜：候选栏不出现任何表情 ----
+          # 雾凇默认 emoji: reset: 1（开），且 filters 里挂 simplifier@emoji，
+          # 打 xiao / ai 这类音会冒出笑脸。这里从方案层直接拔掉，配合
+          # InputEngine.isClean 做双保险（自定义短语不走候选，不受影响）。
+          if [ -f "$SHARED/rime_ice.schema.yaml" ]; then
+            python3 -c 'import sys,re; p=sys.argv[1]; s=open(p,encoding="utf-8").read(); s=re.sub(r"(- name: emoji[\s\S]{0,160}?)reset: 1", r"\1reset: 0", s, count=1); s=s.replace("states: [ 💀, 😄 ]", "states: [ 关, 开 ]"); s="\n".join(l for l in s.splitlines() if "simplifier@emoji" not in l)+"\n"; open(p,"w",encoding="utf-8").write(s)' "$SHARED/rime_ice.schema.yaml"
+            echo "== emoji 开关/滤镜已移除 =="
+          fi
+
           echo "== 方案就位情况 =="
           ls -l "$SHARED/rime_ice.schema.yaml" 2>/dev/null || echo "（没拿到 rime-ice）"
           ls -l "$SHARED/luna_pinyin.dict.yaml" 2>/dev/null || true
@@ -185,10 +194,10 @@ targets:
           # 写死 5，键盘就只拿得到 5 条，看着就比百度/搜狗少一大截。
           # 放到 30 —— 词库一点没变，只是把现成的候选多吐出来，这才叫用上商业级词库。
           if [ -f "$SHARED/rime_ice.schema.yaml" ]; then
-            printf 'patch:\n  menu/page_size: 30\n  schema_list:\n    - schema: rime_ice\n    - schema: melt_eng\n' \
+            printf 'patch:\n  menu/page_size: 50\n  schema_list:\n    - schema: rime_ice\n    - schema: melt_eng\n' \
               > "$SHARED/default.custom.yaml"
           else
-            printf 'patch:\n  menu/page_size: 30\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
+            printf 'patch:\n  menu/page_size: 50\n  schema_list:\n    - schema: luna_pinyin_simp\n    - schema: luna_pinyin\n' \
               > "$SHARED/default.custom.yaml"
           fi
 
@@ -209,10 +218,13 @@ targets:
             echo "== 八股文语言模型就位：$(ls -l "$GRAM") =="
             cat > "$SHARED/rime_ice.custom.yaml" <<'YAML'
           patch:
-            menu/page_size: 30
+            menu/page_size: 50
+            translator/enable_sentence: true
+            translator/enable_completion: true
+            translator/enable_word_completion: true
             grammar:
               language: zh-hans-t-essay-bgc
-              collocation_max_length: 5
+              collocation_max_length: 6
               collocation_min_length: 2
             translator/contextual_suggestions: true
             translator/initial_quality: 1.2

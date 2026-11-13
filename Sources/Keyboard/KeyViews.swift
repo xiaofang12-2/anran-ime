@@ -355,10 +355,6 @@ struct TopBar: View {
     let onPin: (String) -> Void
     /// 候选展开栏开着（按钮点亮 + 网格铺开）
     var expandOn: Bool = false
-    /// 双拼角标：方案开启时常显（如「小鹤」），空串不显示
-    var schemeBadge: String = ""
-    /// 引擎角标：当前出字引擎（雾凇·30 / 自研兜底），常显，一眼看出在跑哪个引擎
-    var engineBadge: String = ""
     let onToggleExpand: () -> Void
     let onClipboard: () -> Void
     let onThought: () -> Void
@@ -421,8 +417,6 @@ struct TopBar: View {
             } else {
                 pinyinChip
             }
-            if !schemeBadge.isEmpty { badge }
-            if !engineBadge.isEmpty { engineBadgeView }
             Group {
                 if shown.isEmpty {
                     Text(composing.isEmpty ? "" : "无候选")
@@ -497,34 +491,6 @@ struct TopBar: View {
         Rectangle()
             .fill(KBMetrics.themeCandidateTextColor.opacity(0.07))
             .frame(width: 0.5, height: 15)
-    }
-
-    /// 双拼角标：让用户随时看得见自己在哪个方案里
-    /// （切了双拼又忘了，打出来的字母全是两键一音节，没个标识能急死人）
-    private var badge: some View {
-        Text(schemeBadge)
-            .font(.system(size: 10 * scale, weight: .medium))
-            .foregroundColor(KBMetrics.themeAccentColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2.5)
-            .background(
-                Capsule().fill(KBMetrics.themeAccentColor.opacity(0.14)))
-            .padding(.leading, 6)
-            .fixedSize()
-    }
-
-    /// 引擎角标：雾凇就绪显主题色、自研兜底显橙，颜色直接暗示当前拼音质量档位
-    private var engineBadgeView: some View {
-        let isFallback = engineBadge.hasPrefix("自研")
-        let tint = isFallback ? Color.orange : KBMetrics.themeAccentColor
-        return Text(engineBadge)
-            .font(.system(size: 10 * scale, weight: .medium))
-            .foregroundColor(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2.5)
-            .background(Capsule().fill(tint.opacity(0.16)))
-            .padding(.leading, 6)
-            .fixedSize()
     }
 
     private var logo: some View {

@@ -30,11 +30,6 @@ struct KeyboardRootView: View {
     @State private var returnLabel = "换行"
     /// 上一次从本地链路重拉配置的时间（起词时节流重拉用）
     @State private var lastSyncAt = Date.distantPast
-    /// 引擎诊断串（方案 id + 真实候选条数）。没有 App Groups，键盘沙箱里
-    /// 的东西主程序读不到，候选栏空闲时露这一串是确认 librime 干没干活的唯一途径。
-    @State private var engineDiag = ""
-    @State private var engineBadge = ""
-
     // 顶部功能栏 / 浮层面板
     @State private var panel: KBPanel = .none
     @State private var expandedCandidates = false          // 展开候选栏（网格）
@@ -127,25 +122,6 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranLocalBusRing)) { _ in
             pullLocalIfNew()
         }
-        // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
-        // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
-        .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in
-            engineDiag = Self.diag
-            // 引擎角标（rime_ice·30）会挡候选视野，用户明确不要 —— 
-            // 诊断信息仍保留在 engineDiag 里，需要时再看
-            engineBadge = ""
-        }
-    }
-
-    /// 诊断串 = 引擎状态 + 内存足迹。内存那截是闪退排查的抓手：
-    /// 键盘扩展被 jetsam 杀掉不留现场，只有这条串能看出是不是顶着红线跑。
-    private static var diag: String {
-        var s = RimeService.shared.diagnostics + " " + CrashReporter.memoryDiag()
-        // 自研引擎上一次全量解码耗时：性能调度调优的唯一抓手
-        // （ms 数只在 librime 没起来/候选稀薄走全量路径时才有意义）
-        s += String(format: " dec%.1fms", PinyinEngine.shared.lastDecodeMs)
-        if !CrashReporter.lastCrash().isEmpty { s += " CRASH" }
-        return s
     }
 
     // MARK: - 正常键盘
@@ -192,8 +168,6 @@ struct KeyboardRootView: View {
                onForget: panel == .thought ? { _ in } : forget,
                onPin: panel == .thought ? { _ in } : pin,
                expandOn: expandedCandidates,
-               schemeBadge: "",
-               engineBadge: "",
                onToggleExpand: toggleExpandCandidates,
                onClipboard: toggleClipboard,
                onThought: toggleThought,
@@ -937,8 +911,6 @@ struct KeyboardRootView: View {
         // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
         // 没就绪前候选走自研引擎，就绪后自动切过去。
         RimeService.shared.prepare()
-        engineDiag = Self.diag
-        engineBadge = ""
         // 思想库面板没被主动关过就还原
         if panel == .none,
            UserDefaults.standard.bool(forKey: "anran_thought_panel_on") {

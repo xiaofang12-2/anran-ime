@@ -35,12 +35,6 @@ final class RimeService {
         return readyFlag
     }
 
-    /// librime 版本号（没起来就是空串），用于「设置 → 关于」显示引擎状态
-    var engineVersion: String {
-        lock.lock(); defer { lock.unlock() }
-        return bridge?.rimeVersion() ?? ""
-    }
-
     /// 首次准备。异步，不阻塞键盘首帧。
     func prepare() {
         lock.lock()
@@ -127,37 +121,6 @@ final class RimeService {
                 self?.doPrepare()
             }
         }
-    }
-
-    /// 引擎诊断串：「方案 候选数」，没起来就是「未就绪」。
-    /// 键盘空闲时会把这一串显示在候选栏 —— 免费签名没有 App Groups，
-    /// 键盘沙箱里的东西主程序读不到，这是确认 librime 到底有没有干活的唯一途径。
-    var diagnostics: String {
-        lock.lock()
-        let b = bridge
-        let ok = readyFlag
-        let reason = lastFailureReason
-        lock.unlock()
-        guard ok, let b, let schema = b.activeSchemaId() as String?, !schema.isEmpty else {
-            return reason.isEmpty ? "未就绪" : "未就绪·\(reason)"
-        }
-        return "\(schema) \(b.probeCandidateCount())"
-    }
-
-    /// 顶栏用的简短引擎角标：用户一眼看出当前是谁在出字。
-    /// 雾凇/鼠须管方案就绪 → "雾凇·30"（30 = 打 nihao 能出的候选数，越大越健康）；
-    /// 没起来 → "自研兜底" 或 "自研兜底·缺方案" / "自研兜底·部署失败" 等，
-    /// 把退回自研的真实原因亮出来 —— 这是「为什么我打出来跟百度差这么远」的第一手线索。
-    var engineBadge: String {
-        lock.lock()
-        let b = bridge
-        let ok = readyFlag
-        let reason = lastFailureReason
-        lock.unlock()
-        guard ok, let b else { return reason.isEmpty ? "自研兜底" : "自研兜底·\(reason)" }
-        let sch = (b.activeSchemaId() as String?) ?? ""
-        let cnt = b.probeCandidateCount()
-        return "\(sch)·\(cnt)"
     }
 
     // MARK: - 候选
