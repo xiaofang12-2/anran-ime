@@ -6,37 +6,45 @@ import UIKit
 /// 设置里的每一页都从这套件里取料，风格永远统一。
 enum ARTheme {
 
-    // MARK: - 樱花色板
+    // MARK: - 黑金 SVIP 色板
 
-    /// 主粉（按钮/强调）
-    static let sakura = Color(red: 1.00, green: 0.560, blue: 0.700)        // #FF8FB3
-    /// 深粉（按下/描边/导航）
-    static let sakuraDeep = Color(red: 0.937, green: 0.435, blue: 0.616)   // #EF6F9D
-    /// 浅粉（光斑/底纹）
-    static let sakuraLight = Color(red: 1.00, green: 0.780, blue: 0.855)   // #FFC7DA
-    /// 薰衣草紫
-    static let lav = Color(red: 0.718, green: 0.545, blue: 1.00)           // #B78BFF
-    static let lavDeep = Color(red: 0.596, green: 0.412, blue: 0.910)      // #9869E8
-    /// 卡片上的深色文字
-    static let ink = Color(red: 0.29, green: 0.18, blue: 0.24)             // #4A2E3D
-    static let inkSoft = Color(red: 0.54, green: 0.39, blue: 0.47)
+    /// 主金（强调 / 按钮 / 徽章）
+    static let gold = Color(red: 0.90, green: 0.74, blue: 0.40)            // #E6BD66
+    /// 浅金（标题 / 高光）
+    static let goldLight = Color(red: 0.99, green: 0.90, blue: 0.68)       // #FCE5AD
+    /// 深金（描边 / 描字）
+    static let goldDeep = Color(red: 0.70, green: 0.52, blue: 0.22)        // #B38538
+    /// 金粉（底纹）
+    static let goldSoft = Color(red: 0.99, green: 0.93, blue: 0.79)        // #FCEEC9
+    /// 墨黑
+    static let inkBlack = Color(red: 0.055, green: 0.052, blue: 0.062)
+    static let inkBrown = Color(red: 0.13, green: 0.105, blue: 0.085)
 
-    // 兼容旧名（别处还引用着）
-    static let navy = sakuraDeep
-    static let blue = sakura
-    static let blueLight = sakuraLight
+    /// 卡片上的深色文字（白卡保留：黑金底 + 磨砂白卡才有高级感，也保住可读性）
+    static let ink = Color(red: 0.18, green: 0.15, blue: 0.12)
+    static let inkSoft = Color(red: 0.48, green: 0.43, blue: 0.38)
 
-    /// 主页面背景：樱花粉 → 薰衣草紫 对角渐变 + 两团柔光
+    // 兼容旧名（设置子页里还引用着）
+    static let sakura = gold
+    static let sakuraDeep = goldDeep
+    static let sakuraLight = goldLight
+    static let lav = Color(red: 0.16, green: 0.15, blue: 0.17)
+    static let lavDeep = Color(red: 0.10, green: 0.09, blue: 0.11)
+    static let navy = goldDeep
+    static let blue = gold
+    static let blueLight = goldLight
+
+    /// 主页面背景：深墨 → 暖黑金 对角渐变 + 两团金色柔光
     static var background: some View {
         ZStack {
-            LinearGradient(colors: [sakura, lav],
+            LinearGradient(colors: [inkBlack, inkBrown, inkBlack],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
-            RadialGradient(colors: [Color.white.opacity(0.38), .clear],
-                           center: .init(x: 0.16, y: 0.06),
-                           startRadius: 0, endRadius: 300)
-            RadialGradient(colors: [sakuraLight.opacity(0.45), .clear],
-                           center: .init(x: 0.92, y: 0.88),
-                           startRadius: 0, endRadius: 340)
+            RadialGradient(colors: [gold.opacity(0.20), .clear],
+                           center: .init(x: 0.16, y: 0.04),
+                           startRadius: 0, endRadius: 320)
+            RadialGradient(colors: [goldDeep.opacity(0.16), .clear],
+                           center: .init(x: 0.92, y: 0.92),
+                           startRadius: 0, endRadius: 360)
         }
         .ignoresSafeArea()
     }
@@ -53,21 +61,21 @@ enum ARTheme {
         .ignoresSafeArea()
     }
 
-    /// 白色立体卡片（粉调柔光 + 顶部高光描边）
+    /// 磨砂白立体卡片（金边 + 金色柔光）
     static func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(spacing: 0) { content() }
             .padding(.horizontal, 16)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.white.opacity(0.96))
+                    .fill(Color.white.opacity(0.97))
                     .overlay(
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .stroke(LinearGradient(
-                                colors: [Color.white.opacity(0.95),
-                                         sakuraLight.opacity(0.55)],
+                                colors: [goldLight.opacity(0.95),
+                                         goldDeep.opacity(0.45)],
                                 startPoint: .topLeading, endPoint: .bottomTrailing),
                                 lineWidth: 1))
-                    .shadow(color: sakuraDeep.opacity(0.20), radius: 18, y: 8)
+                    .shadow(color: goldDeep.opacity(0.28), radius: 18, y: 8)
                     .shadow(color: Color.black.opacity(0.05), radius: 4, y: 2))
     }
 
@@ -75,10 +83,10 @@ enum ARTheme {
     static func sectionTitle(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12.5, weight: .semibold))
-            .foregroundColor(.white.opacity(0.88))
+            .foregroundColor(goldLight.opacity(0.92))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 6)
-            .shadow(color: sakuraDeep.opacity(0.35), radius: 3, y: 1)
+            .shadow(color: goldDeep.opacity(0.45), radius: 3, y: 1)
     }
 
     /// 全局安装：系统 List 的底透明化（子页渐变能透出来），导航条统一成樱花粉
@@ -88,17 +96,17 @@ enum ARTheme {
 
         let nav = UINavigationBarAppearance()
         nav.configureWithOpaqueBackground()
-        nav.backgroundColor = UIColor(sakuraDeep)
-        nav.titleTextAttributes = [.foregroundColor: UIColor.white]
+        nav.backgroundColor = UIColor(inkBlack)
+        nav.titleTextAttributes = [.foregroundColor: UIColor(goldLight)]
         nav.shadowColor = .clear
         UINavigationBar.appearance().standardAppearance = nav
         UINavigationBar.appearance().scrollEdgeAppearance = nav
-        UINavigationBar.appearance().tintColor = .white
+        UINavigationBar.appearance().tintColor = UIColor(gold)
 
-        // 系统控件统一粉色
-        UISwitch.appearance().onTintColor = UIColor(sakuraDeep)
-        UISlider.appearance().minimumTrackTintColor = UIColor(sakuraDeep)
-        UIStepper.appearance().tintColor = UIColor(sakuraDeep)
+        // 系统控件统一金色
+        UISwitch.appearance().onTintColor = UIColor(goldDeep)
+        UISlider.appearance().minimumTrackTintColor = UIColor(goldDeep)
+        UIStepper.appearance().tintColor = UIColor(goldDeep)
     }
 }
 

@@ -3,19 +3,18 @@ import UIKit
 
 /// 键盘界面
 ///
-/// 先过授权门：没登录（或票据过期）就只显示一块「未授权」面板，
-/// 授权通过才放出真正的键盘。这样账号被禁用/解绑后键盘立刻失效。
+/// 纯本地：没有登录墙、没有账号、没有授权校验，打开即打字。
 struct KeyboardRootView: View {
 
     let controller: KeyboardViewController
 
-    @State private var authorized = AuthStore.isLoggedIn
-    @State private var hint = ""
 
     // 输入状态
     @State private var composing = ""                    // 拼音串（双拼模式下是双拼键串）
     @State private var enginePy = ""                     // 喂给引擎的全拼（双拼模式下是解码结果）
     @State private var candidates: [PinyinCandidate] = []
+    /// 当前候选栏展示的是「上屏联想」而不是拼音候选（点选行为不同）
+    @State private var assocMode = false
     @State private var layer: KBLayer = .letters
     @State private var shiftOn = false
     @State private var capsLock = false
@@ -60,24 +59,6 @@ struct KeyboardRootView: View {
         return IMESettingsStore.current.brushSpeed
     }()
 
-    // 登录墙：6位配对码输入（主程序「同步数据」出的码 在这里领登录态）
-    @State private var pairCode = ""
-    @State private var pairing = false
-    /// 登录墙已把键盘撑高过（配对码小键盘比普通键盘高一截）
-    @State private var gateExpanded = false
-
-    /// 登录墙需要放下配对码键盘：撑高；授权通过后收回去
-    private func updateGateExtra() {
-        if !authorized {
-            gateExpanded = true
-            controller.setExtraHeight(210)
-        } else if gateExpanded {
-            gateExpanded = false
-            panel = .none
-            controller.setExtraHeight(0)
-        }
-    }
-
     /// 每个关键词各自记住输出到第几行（永久书签）的内存镜像。
     /// 用 @State 而不直接读 UserDefaults：回车一按预览条立刻跳到下一句，
     /// 不用等整句逐字发完那一下 @State 变动才重画（「预览跟着回车走」就是它）。
@@ -112,9 +93,7 @@ struct KeyboardRootView: View {
     }
 
     var body: some View {
-        Group {
-            if authorized { keyboard } else { gate }
-        }
+        keyboard
         .padding(.horizontal, KBMetrics.sideInset)
         .padding(.top, KBMetrics.topInset)
         .padding(.bottom, KBMetrics.bottomInset)
@@ -148,17 +127,6 @@ struct KeyboardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .anranLocalBusRing)) { _ in
             pullLocalIfNew()
         }
-        // 后台把账号禁用/解绑后，心跳回调广播踢人 —— 立刻收掉键盘切回登录墙
-        .onReceive(NotificationCenter.default.publisher(for: .anranAuthKicked)) { _ in
-            authorized = false
-            composing = ""
-            enginePy = ""
-            candidates = []
-            panel = .none
-            // 面板是被系统踢下去的不是用户主动关的：记忆保留 只收面板
-            UserDefaults.standard.set(false, forKey: "anran_thought_panel_on")
-            updateGateExtra()
-        }
         // librime 后台部署跑完（成功或失败）都会广播，这时候诊断串才有意义：
         // 部署在后台线程，首帧读到的必然还是「未就绪」，不补这一下永远看不到结果。
         .onReceive(NotificationCenter.default.publisher(for: .anranRimeReady)) { _ in
@@ -180,7 +148,7 @@ struct KeyboardRootView: View {
         return s
     }
 
-    // MARK: - 已授权：正常键盘
+    // MARK: - 正常键盘
 
     private var keyboard: some View {
         VStack(spacing: KBMetrics.rowGap) {
@@ -286,7 +254,7 @@ struct KeyboardRootView: View {
     private var typing: Bool {
         panel == .thought
             ? (!thoughtQuery.isEmpty || !thoughtComposing.isEmpty)
-            : !composing.isEmpty
+            : (!composing.isEmpty || assocMode)
     }
 
     // MARK: - 功能栏 / 面板
@@ -722,6 +690,8 @@ struct KeyboardRootView: View {
 
     private func handle(_ spec: KeySpec) {
         if panel == .thought { handleThoughtKey(spec); return }
+        // 联想态下任何新按键都先收掉联想栏（字母键随后由 refresh 重算候选）
+        clearAssociates()
         switch spec.action {
         case .letter(let c):
             // 只有「拼音串是空的、且手动按了 ⇧ / 大写锁」才把字母当英文直接上屏。
@@ -807,6 +777,27 @@ struct KeyboardRootView: View {
         }
     }
 
+    /// 上屏联想：把本地 bigram 命中的后继词摆进候选栏。
+    /// 没有命中就安静收起，不留一块空白栏。
+    private func showAssociates(for word: String) {
+        let list = InputEngine.shared.associate(word)
+        guard !list.isEmpty else {
+            assocMode = false
+            candidates = []
+            return
+        }
+        assocMode = true
+        candidates = list.map {
+            PinyinCandidate(word: $0, score: 0, consumed: 0, literal: false)
+        }
+    }
+
+    private func clearAssociates() {
+        guard assocMode else { return }
+        assocMode = false
+        candidates = []
+    }
+
     /// 长按候选：把它从用户词频里抹掉，下次不再冒头
     private func forget(_ word: String) {
         PinyinEngine.shared.forget(word)
@@ -884,6 +875,7 @@ struct KeyboardRootView: View {
 
     /// 拼音串变了：重算候选
     private func refresh() {
+        assocMode = false
         // 拼音行显隐 → 键盘整体高度要跟着变（多一行拼音行）
         controller.setComposingRow(!composing.isEmpty)
         if composing.isEmpty {
@@ -908,6 +900,13 @@ struct KeyboardRootView: View {
 
     /// 点了候选栏里的词（含联想）
     private func pick(_ c: PinyinCandidate) {
+        if assocMode {
+            // 联想词直接上屏，并顺着新词继续联想（可以一路点下去）
+            controller.commit(c.word)
+            lastOutput = (c.word, false)
+            showAssociates(for: c.word)
+            return
+        }
         applyCommit(c, pinyin: enginePy.isEmpty ? composing : enginePy)
     }
 
@@ -922,8 +921,8 @@ struct KeyboardRootView: View {
         composing = restPy
         controller.setComposingRow(!composing.isEmpty)
         if composing.isEmpty {
-            // 上屏完就完 不做联想：候选拦只跟着拼音串走
-            candidates = []
+            // 商业级上屏联想：按刚打的词给后继词（本地 bigram，不联网）
+            showAssociates(for: c.word)
         } else {
             enginePy = composing
             controller.setComposing(composing)
@@ -931,136 +930,23 @@ struct KeyboardRootView: View {
         }
     }
 
-    // MARK: - 未授权：授权门（配对码连接器）
-
-    private var gate: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 26))
-                .foregroundColor(.secondary)
-            Text("未授权")
-                .font(.system(size: 16, weight: .semibold))
-            Text(hint.isEmpty
-                 ? "主程序登录后点「同步数据」出一个6位配对码\n（重装 / 换机后点「重新配对键盘」）\n在下面输入配对码  一次配对 永久自动同步\n系统设置需给本键盘开「允许完全访问」"
-                 : hint)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-
-            // 配对码格子
-            HStack(spacing: 8) {
-                ForEach(0..<6, id: \.self) { i in
-                    Text(i < pairCode.count ? String(pairCode[pairCode.index(pairCode.startIndex, offsetBy: i)]) : "")
-                        .font(.system(size: 20, weight: .semibold, design: .monospaced))
-                        .foregroundColor(KBMetrics.themeCandidateTextColor)
-                        .frame(width: 34, height: 44)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(KBMetrics.themeKeyColor.opacity(0.92)))
-                }
-            }
-            .padding(.top, 2)
-
-            // 数字小键盘：1-9 / 删除 0 配对
-            VStack(spacing: 8) {
-                ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
-                    HStack(spacing: 8) {
-                        ForEach(row, id: \.self) { n in
-                            padButton(String(n)) { pairCode += String(n) }
-                        }
-                    }
-                }
-                HStack(spacing: 8) {
-                    padButton("删除") {
-                        if !pairCode.isEmpty { pairCode.removeLast() }
-                    }
-                    padButton("0") { pairCode += "0" }
-                    padButton(pairing ? "配对中" : "配对") { doPairClaim() }
-                        .opacity((pairCode.count == 6 && !pairing) ? 1 : 0.55)
-                }
-            }
-
-            GateButton(label: "打开主程序") { controller.openHostApp() }
-            if !hint.isEmpty {
-                GateButton(label: "重试") { check() }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func padButton(_ label: String, action: @escaping () -> Void) -> some View {
-        Button {
-            KeySound.play()
-            action()
-        } label: {
-            Text(label)
-                .font(.system(size: 16, weight: .medium, design: .monospaced))
-                .foregroundColor(KBMetrics.themeCandidateTextColor)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(KBMetrics.themeKeyColor.opacity(0.92))
-                        .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 1))
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// 配对码换登录态，成了立刻拉一次整包配置
-    private func doPairClaim() {
-        guard pairCode.count == 6, !pairing else { return }
-        pairing = true
-        AnRanAPI.shared.pairClaim(code: pairCode) { res in
-            pairing = false
-            if res.ok, !res.ticket.isEmpty {
-                AuthStore.write(AuthState(username: res.username,
-                                          ticket: res.ticket,
-                                          machine: res.machine,
-                                          expireAt: res.expireAt,
-                                          savedAt: Int(Date().timeIntervalSince1970),
-                                          logoutSeq: res.logoutSeq))
-                pairCode = ""
-                hint = ""
-                check()
-            } else if res.error == "bad_or_expired" {
-                hint = "配对码不对或已过期  主程序重新点「同步数据」拿新码"
-            } else {
-                hint = "配对失败（\(res.error.isEmpty ? "网络不通" : res.error)）"
-            }
-        }
-    }
-
     private func check() {
-        // 先把本地已落盘的配置刷一遍，再异步从服务器拉新包（配对/主程序推送的）
         loadThoughtProgress()
         pullSettings()
         refreshReturnLabel()
-        authorized = AuthStore.isLoggedIn
-        updateGateExtra()
-        if authorized {
-            hint = ""
-            // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
-            // 没就绪前候选走自研引擎，就绪后自动切过去。
-            RimeService.shared.prepare()
-            engineDiag = Self.diag
-            // 引擎角标（rime_ice·30）会挡候选视野，用户明确不要 —— 
-            // 诊断信息仍保留在 engineDiag 里，需要时再看
-            engineBadge = ""
-            controller.refreshAuth()
-            // 思想库面板没被主动关过就还原（键盘收起再弹出 / 扩展进程被杀重开）：
-            // 面板和关键词进度都接回去 接着上次那句走 只有主动关了才从头开始
-            if panel == .none,
-               UserDefaults.standard.bool(forKey: "anran_thought_panel_on") {
-                setPanel(.thought)
-            }
-        } else {
-            composing = ""
-            enginePy = ""
-            candidates = []
+        // librime 后台部署（首次要把预编译词库落到沙盒），不阻塞首帧；
+        // 没就绪前候选走自研引擎，就绪后自动切过去。
+        RimeService.shared.prepare()
+        engineDiag = Self.diag
+        engineBadge = ""
+        // 思想库面板没被主动关过就还原
+        if panel == .none,
+           UserDefaults.standard.bool(forKey: "anran_thought_panel_on") {
+            setPanel(.thought)
         }
     }
 
-    /// 主程序下发的配置：本地已落盘的先刷上，服务器有新包拉到再刷一遍
+    /// 主程序下发的配置：只读本机落盘的那份，不联网
     private func refreshLocalStores() {
         KBMetrics.cfg = KBConfigStore.current
         PinyinEngine.shared.setPhrases(PhraseStore.current.items)
@@ -1073,17 +959,8 @@ struct KeyboardRootView: View {
 
     private func pullSettings() {
         refreshLocalStores()
-        // 本地链路先拉：主 app 秒推的那份走回环 TCP（几十毫秒），比服务器
-        // 拉取快几个数量级。真落盘了下面的服务器拉取会因 appliedKey 去重
-        // 自动跳过，不会重复刷一遍；主 app 没在跑则 1.5 秒超时后走服务器。
+        // 本地链路：主 app 秒推的那份走回环 TCP（几十毫秒），全程不联网。
         pullLocalIfNew()
-        ConfigSync.pullFromServer { changed in
-            guard changed else { return }
-            refreshLocalStores()
-            controller.setRows(KBMetrics.rows)
-            cfgRev += 1
-            if !composing.isEmpty { refresh() }
-        }
     }
 
     /// 秒同步落盘 + 界面刷新：本地拉回的整包比上次新才动。
@@ -1107,26 +984,5 @@ struct KeyboardRootView: View {
         guard token > done else { return }
         PinyinEngine.shared.clearLearning()
         UserDefaults.standard.set(token, forKey: key)
-    }
-}
-
-private struct GateButton: View {
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundColor(.black)
-                .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.white)
-                        .shadow(color: .black.opacity(0.2),
-                                radius: 0, x: 0, y: 1))
-        }
-        .buttonStyle(.plain)
     }
 }

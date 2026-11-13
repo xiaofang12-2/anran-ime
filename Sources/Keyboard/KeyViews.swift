@@ -49,6 +49,7 @@ struct KeyCap: View {
             capLabel
         }
         .scaleEffect(pressed && !spec.special ? 0.96 : 1)
+        .animation(.easeOut(duration: 0.09), value: pressed)
         .overlay(alignment: .top) {
             if pressed && spec.popup { bubble }
         }

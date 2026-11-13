@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.61"
-    CURRENT_PROJECT_VERSION: "96"
+    MARKETING_VERSION: "0.9.62"
+    CURRENT_PROJECT_VERSION: "97"
     SWIFT_VERSION: "5.0"
     SWIFT_COMPILATION_MODE: wholemodule
     # 出的是未签名包 签名交给用户手机那头的 Sideloadly
@@ -39,8 +39,6 @@ targets:
     sources:
       - path: Sources/HostApp
       - path: Sources/Shared
-      - path: Support/server.crt
-        buildPhase: resources
       - path: Support/Assets.xcassets
         buildPhase: resources
     settings:
@@ -62,8 +60,6 @@ targets:
     sources:
       - path: Sources/Keyboard
       - path: Sources/Shared
-      - path: Support/server.crt
-        buildPhase: resources
       # 自研词库（librime 起不来时的兜底引擎用）
       - path: Support/dict/pinyin.bin.enc
         buildPhase: resources

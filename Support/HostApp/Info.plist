@@ -8,22 +8,18 @@
 	<string>黯然输入法</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -35,27 +31,21 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- 服务端是自签证书，这里放开该地址的 ATS 限制，
-		     真正的安全靠 AnRanAPI 里的证书固定（只认打包的 server.crt） -->
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>8.218.160.91</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSExceptionRequiresForwardSecrecy</key>
-				<false/>
-			</dict>
-		</dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
 	<key>NSContactsUsageDescription</key>
 	<string>用于识别联系人备注与 @ 目标，不开启无法使用本软件</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于读取图片素材配合思想库使用，不开启无法使用本软件</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于保存生成的图片到相册</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于读取图片素材配合思想库使用，不开启无法使用本软件</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

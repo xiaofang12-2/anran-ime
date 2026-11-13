@@ -4,7 +4,8 @@ import SwiftUI
 /// 键盘扩展入口
 ///
 /// 拼音引擎在 `PinyinEngine`（本地词库 + 前缀/切分出候选），
-/// 界面在 `KeyboardRootView`。这里只负责往当前输入框塞字、管占位文本与授权心跳。
+/// 界面在 `KeyboardRootView`。这里只负责往当前输入框塞字、管占位文本。
+/// 纯本地：没有账号、没有票据、没有授权心跳、没有联网。
 final class KeyboardViewController: UIInputViewController {
 
     private var hosting: UIHostingController<KeyboardRootView>?
@@ -16,7 +17,6 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        Hardening.arm()
         CrashReporter.install()
 
         let root = KeyboardRootView(controller: self)
@@ -164,14 +164,6 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        refreshAuth()
-        // 会话中每 30 秒再心跳一次：后台禁用账号后，用户不用收起键盘
-        // 也会在半分钟内被踢下线（服务端对禁用账号的心跳直接回 403 disabled）
-        if hbTimer == nil {
-            hbTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-                self?.refreshAuth()
-            }
-        }
         // 秒同步门铃：主 app 改设置/短语/思想库后按铃，键盘听到直连它的
         // 回环 server 拉整包（LocalSyncLink，不碰剪贴板），几十毫秒内
         // 落盘刷新 —— 键盘哪怕正开着也生效。
@@ -194,45 +186,17 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        hbTimer?.invalidate()
-        hbTimer = nil
         ringHandle = nil
     }
 
-    private var hbTimer: Timer?
     /// 秒同步门铃句柄：nil = 没在听
     private var ringHandle: RingHandle?
 
-    // MARK: - 授权
+    // MARK: - 主程序跳转（纯本地，无登录页）
 
-    /// 心跳续票据：能连上就刷新，连不上先用本机缓存撑着（离线宽限）
-    /// 只有服务端明确说禁用 / 解绑 / 无此账号，或账号在别处退登过（登出序号
-    /// 对不上），才把登录态清掉 —— 键盘立刻锁死切回登录墙
-    func refreshAuth() {
-        guard let s = AuthStore.current, !s.ticket.isEmpty else { return }
-        AnRanAPI.shared.heartbeat(ticket: s.ticket, machine: s.machine,
-                                  client: "kb") { res in
-            if ["disabled", "unbound", "no_account",
-                "machine_mismatch"].contains(res.error) {
-                AuthStore.clear()
-                // 界面层立刻收到广播切回登录墙，不等下一次 pull
-                NotificationCenter.default.post(name: .anranAuthKicked, object: nil)
-            } else if res.ok {
-                if let seq = res.logoutSeq, seq != (s.logoutSeq ?? 0) {
-                    AuthStore.clear()
-                    NotificationCenter.default.post(name: .anranAuthKicked, object: nil)
-                    return
-                }
-                AuthStore.save(username: s.username, ticket: res.ticket,
-                               expireAt: res.expireAt,
-                               logoutSeq: res.logoutSeq ?? s.logoutSeq)
-            }
-        }
-    }
-
-    /// 跳到主程序登录（主程序声明了 anranime:// 这个 scheme）
+    /// 跳到主程序首页（主程序声明了 anranime:// 这个 scheme）
     func openHostApp() {
-        openHost("login")
+        openHost("home")
     }
 
     /// 跳到主程序某个页面：anranime://phrases / anranime://thoughts
@@ -255,9 +219,6 @@ extension KeyboardViewController: UIInputViewAudioFeedback {
 extension Notification.Name {
     /// 键盘每次弹出时广播一次，界面据此重新拉取主程序下发的配置
     static let anranKeyboardWillAppear = Notification.Name("anran.keyboard.willAppear")
-
-    /// 服务端踢人（禁用/解绑）后广播一次，键盘界面立刻切回登录墙
-    static let anranAuthKicked = Notification.Name("anran.auth.kicked")
 
     /// librime 后台部署收尾时广播一次（成功失败都发），界面据此刷新引擎诊断串
     static let anranRimeReady = Notification.Name("anran.rime.ready")
